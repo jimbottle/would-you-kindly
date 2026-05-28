@@ -8,6 +8,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (nothing yet)
 
+## [0.3.0] — 2026-05-28
+
+Supersedes the v0.3.0-alpha prerelease. Cuts as a non-prerelease
+so `go install ...@latest` finally resolves to a current binary —
+the v0.3.0-alpha tag had pulled users back to v0.2.3 via Go's
+"@latest skips prereleases" rule, which was the exact trap this
+release exists to close.
+
+### Added (since v0.3.0-alpha)
+
+- **`wyk update`** subcommand. Reads the cached release snapshot,
+  compares against the running binary's build info, and runs the
+  right `go install ...@<tag>` with a `[y/N]` confirm. Flags:
+  `-y` skip prompt, `-dry-run` print without exec, `-channel
+  stable` skip prereleases (default: include them).
+- **Update-available nudge** in the TUI and `wyk doctor`. A
+  one-line "↑ wyk vX.Y.Z available — run `wyk update`" appears
+  above the TUI status bar; doctor adds a WARN row with the same
+  info. Both read from a 24h-TTL cache at `$XDG_CACHE_HOME/wyk/
+  update.json`; refresh happens out of band in a background
+  goroutine launched at TUI startup so the hot path stays free of
+  network I/O.
+- **`internal/updater` package** — `LatestLive` (hits the GitHub
+  releases API including prereleases), `LatestCached` (TTL +
+  stale-fallback on network error), `IsNewer` (semver ordering),
+  `InstallCommand`. Reusable from any caller; unit-tested
+  end-to-end with stub clients.
+- **Status lifecycle** is documented across the convention
+  surfaces (skill, conventions, contract, bd-remember). The new
+  rule: reach for `deferred` instead of holding-open when the
+  blocker is "the rest of the project hasn't caught up yet"; reach
+  for `blocked` (with `--add-dependency`) when the blocker is
+  another tracked issue.
+- **Inbox imperative**: the agent's default move on a non-empty
+  `wyk inbox` is to WORK the highest-priority item, not to
+  acknowledge and move on. Surfaced via skill, conventions,
+  contract, `bd remember`, and CLAUDE.md.
+- **Meta-rule in CLAUDE.md**: feedback on the wyk experience IS
+  wyk product feedback — file a bd issue, then handle the symptom.
+
+### Notes
+
+Everything from [0.3.0-alpha] below is also in this release —
+that section captures the bulk of the work (agent discoverability,
+TUI layout polish, scroll/refresh robustness, registry CLI,
+handoff convention tightening). v0.3.0 adds the update mechanism,
+the lifecycle/inbox/meta-rule guidance, and the retroactive bd
+paper trail for three earlier UI changes that landed without
+tracking.
+
+The deferred TUI screenshot work (`would-you-kindly-md3`) ships
+later when the TUI layout stabilises further.
+
 ## [0.3.0-alpha] — 2026-05-28
 
 The alpha-quality version. Everything in v0.2.3 plus a wide round of
@@ -544,7 +597,8 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.0-alpha...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0
 [0.3.0-alpha]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0-alpha
 [0.2.3]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.3
 [0.2.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.2
