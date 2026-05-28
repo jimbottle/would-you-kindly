@@ -59,6 +59,25 @@ follow-up work. The agent picks it up, either closes it (work is
 done) or re-applies `human` after another step (back to the human
 for another round). The label flips trace the conversation.
 
+**Assumption: one agent per workspace.** The `src:agent` label is
+collective, not per-identity. If two agents share a workspace
+(e.g. Claude and another assistant running concurrently, or two
+sessions of the same agent), they will both see — and may both act
+on — the same inbox items. This contract version (`wyk-contract/v1`)
+does not address that race. A future revision could introduce a
+`src:agent:<name>` convention; until then, scope multi-agent
+collaboration to separate workspaces (one bd workspace per agent
+identity).
+
+**Partial-failure visibility for `wyk inbox -json`.** When one
+registered repo's bd is broken (moved, deleted, daemon unreachable),
+`wyk inbox` silently omits its contribution and returns the union
+from the working repos. The exit code is non-zero only if *every*
+repo fails. An LLM consuming the JSON should treat an unexpectedly
+empty inbox as a possible-failure signal rather than ground truth —
+the silent-partial-failure policy matches the multi-repo TUI's
+behaviour but is worth knowing.
+
 ### The agent's side: `pkg/handoff` and `wyk handoff`
 
 When an agent decides to hand a task back, the canonical call is
@@ -87,6 +106,17 @@ description with the runbook. If the description write fails after
 the label landed, the issue is left flagged with the previous
 description — a retry preserves the flag, so the human can still
 discover the handoff while the agent figures out the recovery.
+
+**`-create` mode and the orphan policy.** `wyk handoff -create
+"<title>"` runs `bd create` first, then `BounceToHuman` against the
+new ID. The two steps are NOT transactional: if `bd create` succeeds
+but `BounceToHuman` fails afterwards, the issue exists with the
+`src:agent` label and the bd-default description, but without the
+`human` label or the runbook. We deliberately do NOT auto-delete the
+orphan — losing data on a transient bd hiccup is worse than the
+orphan, and a recoverable orphan can be retried. The CLI prints an
+explicit WARNING with the orphan ID and cleanup commands; agents
+consuming the CLI's exit codes should check stderr too.
 
 ## Exact bd commands
 

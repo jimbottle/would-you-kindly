@@ -727,8 +727,30 @@ func (m Model) viewHelp() string {
 		}
 	}
 	b.WriteString("\n")
+	b.WriteString(detailLabelStyle.Render("Notes"))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  IDs in the table are shown without the repeated workspace prefix\n"))
+	b.WriteString(helpStyle.Render("  (e.g. \"ma5.2.1\" stands for \"" + exampleFullID(m) + "ma5.2.1\").\n"))
+	b.WriteString(helpStyle.Render("  Press ⏎ to expand a row and see the full ID in the detail view.\n"))
+	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("esc / ? / q to close"))
 	return b.String()
+}
+
+// exampleFullID returns a workspace-prefix string suitable for the
+// help text — uses the model's commonPrefix (single-repo) or the
+// first multi-repo row's Repo prefix if available. Falls back to a
+// generic placeholder if nothing's loaded yet.
+func exampleFullID(m Model) string {
+	if m.commonPrefix != "" {
+		return m.commonPrefix
+	}
+	for _, i := range m.all {
+		if i.Repo != "" {
+			return i.Repo + "-"
+		}
+	}
+	return "<workspace>-"
 }
 
 func (m Model) viewList() string {
