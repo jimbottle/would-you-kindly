@@ -145,8 +145,17 @@ func runInit(args []string) int {
 			if *dryRun {
 				switch {
 				case *chain:
-					fmt.Printf("wyk init: would chain foreign hook at %s (move to %s, install wyk wrapper)\n",
-						hookPath, preWykPath)
+					// The real -chain run refuses if .pre-wyk already
+					// exists (would clobber a previously-preserved
+					// hook). Mirror that here so the dry-run accurately
+					// previews the outcome.
+					if _, err := os.Stat(preWykPath); err == nil {
+						fmt.Printf("wyk init: would refuse to chain at %s (because %s already exists — would clobber a previously-preserved hook)\n",
+							hookPath, preWykPath)
+					} else {
+						fmt.Printf("wyk init: would chain foreign hook at %s (move to %s, install wyk wrapper)\n",
+							hookPath, preWykPath)
+					}
 				case *force:
 					fmt.Printf("wyk init: would overwrite foreign hook at %s (-force)\n", hookPath)
 				default:

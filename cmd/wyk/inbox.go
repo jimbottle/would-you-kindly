@@ -55,8 +55,20 @@ func runInbox(args []string) int {
 
 	all, firstErr := fetchInbox(subs)
 	if len(all) == 0 && firstErr != nil {
-		fmt.Fprintln(os.Stderr, "wyk inbox:", firstErr)
-		return 1
+		// Distinguish the typed bd sentinels so the documented exit
+		// codes (2 for bd-missing / no-workspace) actually fire,
+		// matching wyk handoff's behavior.
+		switch {
+		case errors.Is(firstErr, beads.ErrBDNotFound):
+			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
+			return 2
+		case errors.Is(firstErr, beads.ErrNoWorkspace):
+			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
+			return 2
+		default:
+			fmt.Fprintln(os.Stderr, "wyk inbox:", firstErr)
+			return 1
+		}
 	}
 
 	if *asJSON {
@@ -72,9 +84,10 @@ func runInbox(args []string) int {
 	return 0
 }
 
-// inboxSub bundles a client with its display name and an optional
-// branch lookup — same shape as the multi-repo TUI source but local
-// to the inbox subcommand to keep the dependency graph clean.
+// inboxSub bundles a client with its display name — same shape as
+// the multi-repo TUI source but local to the inbox subcommand to
+// keep the dependency graph clean. (No branch field today; the inbox
+// is repo-scoped, not branch-scoped.)
 type inboxSub struct {
 	client *beads.Client
 	name   string

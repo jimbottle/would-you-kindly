@@ -160,6 +160,34 @@ func TestInit_ChainAndForceMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestInit_ChainDryRunReflectsRuntimeRefusal(t *testing.T) {
+	// Symmetry with TestInit_ChainRefusesWhenPreWykAlreadyExists:
+	// when .pre-wyk is already in place, the real -chain run refuses
+	// (exit 64). The dry-run shouldn't claim "would chain" — that's
+	// false advertising. Should still exit 0 (it's a dry-run) but
+	// print the would-refuse message.
+	dir := gitInit(t)
+	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
+	preWykPath := hookPath + ".pre-wyk"
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\n# fresh foreign hook\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(preWykPath, []byte("#!/bin/sh\n# previously preserved\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := runInitIn(t, dir, "-chain", "-dry-run", "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Errorf("-chain -dry-run should exit 0 even when .pre-wyk exists; got %d", code)
+	}
+	// Nothing should have been written.
+	body, _ := os.ReadFile(hookPath)
+	if !strings.Contains(string(body), "fresh foreign hook") {
+		t.Errorf("dry-run modified the foreign hook; got:\n%s", body)
+	}
+}
+
 func TestInit_DryRunDoesNotWrite(t *testing.T) {
 	dir := gitInit(t)
 	if code := runInitIn(t, dir, "-dry-run", "-skip-bd-init", "-skip-register"); code != 0 {

@@ -214,6 +214,7 @@ func runHandoff(args []string) int {
 
 	// -create mode: file the issue first, then hand off the resulting ID.
 	var id string
+	createdViaFlag := false
 	if *createTitle != "" {
 		newID, err := client.Create(context.Background(), beads.CreateOptions{
 			Title:     *createTitle,
@@ -225,12 +226,26 @@ func runHandoff(args []string) int {
 			return handoffErrExit(err, "wyk handoff: create:")
 		}
 		id = newID
+		createdViaFlag = true
 		fmt.Printf("created %s — %q\n", id, *createTitle)
 	} else {
 		id = fs.Arg(0)
 	}
 
 	if err := handoff.BounceToHuman(context.Background(), client, id, runbook); err != nil {
+		// Non-transactional create+handoff: if Create succeeded but the
+		// label / description writes failed, we leave behind an orphan
+		// issue with src:agent and no human/runbook. Name it explicitly
+		// so the user can clean it up (we don't auto-delete — losing
+		// data on a transient bd hiccup would be worse than the orphan).
+		if createdViaFlag {
+			fmt.Fprintf(os.Stderr,
+				"wyk handoff: WARNING: created %s but the handoff (label/description) failed.\n"+
+					"  The issue exists with the src:agent label but no human label and no runbook.\n"+
+					"  Clean up with: bd close %s --reason=handoff-failed --dolt-auto-commit=on\n"+
+					"  Or retry with: wyk handoff %s < <runbook>\n",
+				id, id, id)
+		}
 		return handoffErrExit(err, "wyk handoff:")
 	}
 	fmt.Printf("handed %s to human (%d-byte runbook)\n", id, len(runbook))
