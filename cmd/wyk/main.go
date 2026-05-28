@@ -2,7 +2,10 @@
 // tracker. It surfaces tasks an agent has handed to a human — see
 // docs/CONTRACT.md for the convention it follows.
 //
-// This is the Phase 1 entry point: read-only TUI over real bd JSON.
+// Modes:
+//   wyk                  TUI (default)
+//   wyk --probe          non-TTY one-shot listing the human-flagged issues
+//   wyk handoff <id>     hand <id> back to a human; runbook read from stdin
 package main
 
 import (
@@ -10,6 +13,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -19,9 +23,17 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
+	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
 
 func main() {
+	// Subcommand dispatch happens before flag.Parse so each subcommand
+	// can own its own FlagSet without interfering with the top-level
+	// flags. The TUI/probe path keeps the existing flat flag layout.
+	if len(os.Args) >= 2 && os.Args[1] == "handoff" {
+		os.Exit(runHandoff(os.Args[2:]))
+	}
+
 	dir := flag.String("C", "", "run as if bd had been started in this directory")
 	me := flag.String("me", "", "current user, used by the 'mine' preset (default: git user.email or $USER)")
 	probe := flag.Bool("probe", false, "non-TTY: print the human-flagged issues and exit (useful in scripts/CI)")
@@ -47,6 +59,61 @@ func main() {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
 		os.Exit(1)
 	}
+}
+
+// runHandoff implements `wyk handoff <id>`: read a runbook from stdin
+// (or --file), then call pkg/handoff.BounceToHuman against the bd
+// CLI client. Designed for invocation from an agent skill — short,
+// non-interactive, idempotent.
+//
+// Exit codes match the rest of the CLI:
+//   0  success
+//   1  generic failure (bd error, IO error, …)
+//   2  bd missing or no workspace
+func runHandoff(args []string) int {
+	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
+	dir := fs.String("C", "", "run as if bd had been started in this directory")
+	file := fs.String("file", "", "read the runbook from this file (default: stdin)")
+	fs.SetOutput(os.Stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: wyk handoff [-C <dir>] [-file <path>] <issue-id>")
+		return 2
+	}
+	id := fs.Arg(0)
+
+	var runbookBytes []byte
+	var err error
+	if *file != "" {
+		runbookBytes, err = os.ReadFile(*file)
+	} else {
+		runbookBytes, err = io.ReadAll(os.Stdin)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk handoff:", err)
+		return 1
+	}
+	runbook := strings.TrimRight(string(runbookBytes), "\n")
+
+	client := beads.NewClient()
+	client.Dir = *dir
+	if err := handoff.BounceToHuman(context.Background(), client, id, runbook); err != nil {
+		switch {
+		case errors.Is(err, beads.ErrBDNotFound):
+			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
+			return 2
+		case errors.Is(err, beads.ErrNoWorkspace):
+			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
+			return 2
+		default:
+			fmt.Fprintln(os.Stderr, "wyk handoff:", err)
+			return 1
+		}
+	}
+	fmt.Printf("handed %s to human (%d-byte runbook)\n", id, len(runbook))
+	return 0
 }
 
 // runProbe fetches the human preset and prints a one-line summary

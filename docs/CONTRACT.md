@@ -34,10 +34,40 @@ Two supporting conventions complete the contract:
 
 ### Closing the loop
 
-When the human finishes the task, they close the issue (`bd close <id>`).
-If they cannot complete it and want to bounce it back, they remove the
-`human` label (`bd label remove <id> human`). The agent — via its own tooling
-in a later phase — discovers the un-labeled issue and resumes.
+When the human finishes the task, they close the issue (`bd close <id>`,
+or `c` in the TUI). If they cannot complete it and want to bounce it
+back to the agent, they remove the `human` label (`bd label remove
+<id> human`, or `H` in the TUI). The agent then discovers the un-
+labeled issue and resumes.
+
+### The agent's side: `pkg/handoff` and `wyk handoff`
+
+When an agent decides to hand a task back, the canonical call is
+[`pkg/handoff.BounceToHuman`](../pkg/handoff/handoff.go):
+
+```go
+import "github.com/jimbottle/would-you-kindly/pkg/handoff"
+
+// c is any handoff.Mutator — beads.Client satisfies it directly.
+err := handoff.BounceToHuman(ctx, c, "wyk-42", runbook)
+```
+
+For agents that aren't Go programs, `wyk handoff` exposes the same
+operation at the CLI:
+
+```bash
+cat <<EOF | wyk handoff wyk-42
+1. Open 1Password vault 'Engineering / Staging'.
+2. Rotate the entry 'staging-postgres'.
+3. Update Heroku config: heroku config:set …
+EOF
+```
+
+Both routes tag the issue with `human` first, then overwrite its
+description with the runbook. If the description write fails after
+the label landed, the issue is left flagged with the previous
+description — a retry preserves the flag, so the human can still
+discover the handoff while the agent figures out the recovery.
 
 ## Exact bd commands
 

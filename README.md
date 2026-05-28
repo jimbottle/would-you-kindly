@@ -68,6 +68,21 @@ wyk --probe
 Exits 0 on success, 2 if bd is missing or there's no workspace, 1 on
 other errors.
 
+### Handing a task to a human (agent side)
+
+For an agent that wants to bounce an issue back for human attention:
+
+```bash
+cat runbook.md | wyk handoff wyk-42
+# handed wyk-42 to human (327-byte runbook)
+```
+
+`wyk handoff` tags the issue with the `human` label and replaces its
+description with the runbook from stdin (or `--file <path>`). Same
+contract as the TUI's `H` key — see
+[`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
+[`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.
+
 ## Keys
 
 ### Reading

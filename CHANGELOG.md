@@ -91,9 +91,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trigger a refetch on success; failures surface the bd error message
   in the same banner without losing the current list.
 
+### Phase 2.C — agent-side handoff
+
+- New `pkg/handoff` package with `BounceToHuman(ctx, mutator, id,
+  runbook)` — the single call an agent makes to hand a beads issue
+  back to a human. Tags the issue with `human`, then overwrites its
+  description with the runbook. Partial-failure contract is explicit:
+  if the description write fails after the label landed, the issue
+  stays flagged so a retry preserves the handoff signal.
+- New `wyk handoff <id>` CLI subcommand exposing the same operation
+  for non-Go agents. Reads the runbook from stdin or `--file`.
+
 ### Out of scope (still deferred)
 
-- The agent-side `pkg/handoff` skill (Phase 2.C — next).
 - A `wyk init` command and post-commit hook (Phase 2.D — deferred).
 - Any background daemon.
 
