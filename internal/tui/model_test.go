@@ -31,40 +31,27 @@ func (s *stubSource) Fetch(_ context.Context, p filter.Preset) ([]beads.Issue, e
 // it through.
 type stubMutator struct {
 	stubSource
-	closed     []string
-	added      []labelOp
-	removed    []labelOp
-	notes      []labelOp // reuse the {id,label} shape for {id, text}
-	writeErr   error
+	closed  []string
+	added   []labelOp
+	removed []labelOp
+	notes   []labelOp // reuse the {id,label} shape for {id, text}
 }
 
 type labelOp struct{ id, label string }
 
 func (s *stubMutator) Close(_ context.Context, id string) error {
-	if s.writeErr != nil {
-		return s.writeErr
-	}
 	s.closed = append(s.closed, id)
 	return nil
 }
 func (s *stubMutator) AddLabel(_ context.Context, id, label string) error {
-	if s.writeErr != nil {
-		return s.writeErr
-	}
 	s.added = append(s.added, labelOp{id, label})
 	return nil
 }
 func (s *stubMutator) RemoveLabel(_ context.Context, id, label string) error {
-	if s.writeErr != nil {
-		return s.writeErr
-	}
 	s.removed = append(s.removed, labelOp{id, label})
 	return nil
 }
 func (s *stubMutator) Note(_ context.Context, id, text string) error {
-	if s.writeErr != nil {
-		return s.writeErr
-	}
 	s.notes = append(s.notes, labelOp{id, text})
 	return nil
 }
@@ -330,7 +317,7 @@ func TestToggleHuman_AddsThenRemovesLabel(t *testing.T) {
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = model.(Model)
 	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
-	_ = model
+	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("H on non-human issue should dispatch a write")
 	}
@@ -431,6 +418,72 @@ func TestWriteResult_FailureSurfacesInBanner(t *testing.T) {
 	}
 	if !strings.Contains(m.status, "pinned") {
 		t.Errorf("status should include the underlying error; got %q", m.status)
+	}
+}
+
+func TestConfirmCloseTargetsCapturedIDNotCursor(t *testing.T) {
+	// Open the confirm prompt on issue 0, then have a refetch
+	// reorder the list (issue 1 now first). Pressing y must close
+	// the originally-targeted issue, not whatever's currently at
+	// m.visible[m.cursor].
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	originalFirstID := s.issues[0].ID
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = model.(Model)
+	if m.pendingTargetID != originalFirstID {
+		t.Fatalf("setup: expected pendingTargetID=%q, got %q", originalFirstID, m.pendingTargetID)
+	}
+
+	// Simulate a refetch that reorders: original first issue now at index 1.
+	reordered := []beads.Issue{s.issues[1], s.issues[0], s.issues[2]}
+	model, _ = m.Update(fetchedMsg{preset: m.preset, issues: reordered})
+	m = model.(Model)
+
+	// y confirms — should still close the originally-targeted ID.
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("y should dispatch a close")
+	}
+	if msg := cmd().(writeMsg); msg.id != originalFirstID {
+		t.Errorf("closed wrong issue: got %q, want %q (cursor was at index 0 = %q after reorder)",
+			msg.id, originalFirstID, reordered[0].ID)
+	}
+	if len(s.closed) != 1 || s.closed[0] != originalFirstID {
+		t.Errorf("Close(%q) not dispatched; got %+v", originalFirstID, s.closed)
+	}
+}
+
+func TestConfirmCloseCancelsIfTargetVanishes(t *testing.T) {
+	// User opens the confirm prompt on an issue; a refetch removes
+	// that issue entirely (closed elsewhere, deleted, filtered out).
+	// Pressing y must NOT panic and must NOT close some other issue —
+	// the prompt should cancel with a status banner.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = model.(Model)
+
+	// refetch with the target removed
+	model, _ = m.Update(fetchedMsg{preset: m.preset, issues: s.issues[1:]})
+	m = model.(Model)
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if cmd != nil {
+		t.Error("y with vanished target should NOT dispatch a write")
+	}
+	if len(s.closed) != 0 {
+		t.Errorf("Close should not have been called; got %+v", s.closed)
+	}
+	if !strings.Contains(m.status, "no longer") {
+		t.Errorf("status should explain the cancellation; got %q", m.status)
+	}
+	if m.mode != modeList {
+		t.Errorf("mode should return to list; got %v", m.mode)
 	}
 }
 

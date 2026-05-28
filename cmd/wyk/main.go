@@ -66,23 +66,42 @@ func main() {
 // CLI client. Designed for invocation from an agent skill — short,
 // non-interactive, idempotent.
 //
-// Exit codes match the rest of the CLI:
-//   0  success
-//   1  generic failure (bd error, IO error, …)
-//   2  bd missing or no workspace
+// Exit codes:
+//   0   success (also returned for --help, which is a deliberate request)
+//   1   generic failure (bd error, IO error, …)
+//   2   bd missing or no workspace
+//   64  usage error (bad flags / missing args / TTY-stdin without --allow-empty)
 func runHandoff(args []string) int {
 	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
 	dir := fs.String("C", "", "run as if bd had been started in this directory")
 	file := fs.String("file", "", "read the runbook from this file (default: stdin)")
+	allowEmpty := fs.Bool("allow-empty", false,
+		"permit an empty runbook (clears the issue's description). Required when stdin is a TTY.")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		if errors.Is(err, flag.ErrHelp) {
+			// --help is a successful request; flag printed usage already.
+			return 0
+		}
+		return 64
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: wyk handoff [-C <dir>] [-file <path>] <issue-id>")
-		return 2
+		fmt.Fprintln(os.Stderr, "usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] <issue-id>")
+		return 64
 	}
 	id := fs.Arg(0)
+
+	// Reading from a TTY would block waiting for user input — easy to
+	// hit by accident when invoked interactively without a redirect.
+	// If the user then closes stdin with ^D, we'd silently wipe the
+	// issue's description. Refuse unless they opted in.
+	if *file == "" && !*allowEmpty {
+		if stat, err := os.Stdin.Stat(); err == nil && (stat.Mode()&os.ModeCharDevice) != 0 {
+			fmt.Fprintln(os.Stderr,
+				"wyk handoff: stdin is a TTY. Pipe a runbook in, pass -file <path>, or use -allow-empty to deliberately clear the description.")
+			return 64
+		}
+	}
 
 	var runbookBytes []byte
 	var err error
@@ -96,6 +115,11 @@ func runHandoff(args []string) int {
 		return 1
 	}
 	runbook := strings.TrimRight(string(runbookBytes), "\n")
+	if runbook == "" && !*allowEmpty {
+		fmt.Fprintln(os.Stderr,
+			"wyk handoff: empty runbook would clear the description. Pass -allow-empty to confirm.")
+		return 64
+	}
 
 	client := beads.NewClient()
 	client.Dir = *dir

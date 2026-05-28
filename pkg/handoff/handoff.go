@@ -46,6 +46,15 @@ const HumanLabel = "human"
 // than silently un-flagged — the agent (or the human) can re-issue
 // the call to retry without losing the flag.
 //
+// The retry story depends on `bd label add` being idempotent —
+// adding an already-present label must succeed, not error. This is
+// the documented behavior of the bd version this project pins
+// (verified against bd 1.0.4: a second `bd label add <id> <label>`
+// returns exit 0 with the same "✓ Added label" message). If a future
+// bd version changes that contract, this function would also need
+// to swallow an "already labeled" error from AddLabel before
+// proceeding to UpdateDescription.
+//
 // runbook may be multi-line and arbitrarily long; the underlying bd
 // client pipes it via stdin so argv length and shell quoting are not
 // concerns. An empty runbook is allowed and will clear the existing

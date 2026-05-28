@@ -80,6 +80,16 @@ type Model struct {
 	// needing a timer.
 	status string
 
+	// pendingTargetID is the issue ID captured at the moment the user
+	// entered modeConfirmClose or modeNote. The cursor's position is
+	// NOT a safe source of truth at confirm/enter time — an in-flight
+	// fetch (auto-tick or recovery) can re-order or remove issues
+	// between the prompt opening and the user's confirmation. Acting
+	// on the captured ID, with a re-presence check against m.all,
+	// prevents close/note from targeting the wrong issue or panicking
+	// when the list empties under the prompt.
+	pendingTargetID string
+
 	// tickGen identifies the currently-live tick chain. Each suspend
 	// or restart bumps it; stale ticks (e.g. one scheduled before a
 	// refresh restart) carry an older gen and are dropped, preventing
@@ -205,10 +215,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWriteResult(msg)
 
 	case tea.KeyMsg:
-		// Any key press in list/detail/confirm modes clears the last
-		// status banner, since the user has acknowledged it by acting.
-		// Prompt modes (filter, note) preserve the banner so the user
-		// can see context while typing.
+		// Any keystroke processed in modeList — including the ones
+		// that open the filter or note prompts — clears the previous
+		// status banner. Once inside a prompt mode, subsequent
+		// keystrokes do NOT clear it (the prompt handlers leave
+		// m.status alone), so a banner set just before opening the
+		// prompt will be wiped here on entry but a banner set by a
+		// failed write during a prompt would persist for context.
 		switch m.mode {
 		case modeFilter:
 			return m.updateFilter(msg)
@@ -308,7 +321,9 @@ func (m Model) mutator() Mutator {
 
 // beginClose enters the confirm-close mode so a stray `c` doesn't
 // destroy work. Confirmation is just the next keystroke: y proceeds,
-// anything else cancels.
+// anything else cancels. The target ID is captured here so a
+// concurrent refetch can't shift the cursor onto a different issue
+// between the prompt opening and the user's confirmation.
 func (m Model) beginClose() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
 		m.status = "read-only mode (no Mutator wired up)"
@@ -318,6 +333,7 @@ func (m Model) beginClose() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode = modeConfirmClose
+	m.pendingTargetID = m.visible[m.cursor].ID
 	return m, nil
 }
 
@@ -325,18 +341,36 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
+	target := m.pendingTargetID
+	m.pendingTargetID = ""
 	if msg.String() == "y" || msg.String() == "Y" {
-		i := m.visible[m.cursor]
+		if !m.issueExists(target) {
+			m.mode = modeList
+			m.status = "close cancelled: " + target + " is no longer in the list"
+			return m, nil
+		}
 		mu := m.mutator()
 		m.mode = modeList
-		return m, runWrite("close", i.ID, func(ctx context.Context) error {
-			return mu.Close(ctx, i.ID)
+		return m, runWrite("close", target, func(ctx context.Context) error {
+			return mu.Close(ctx, target)
 		})
 	}
 	// any other key cancels
 	m.mode = modeList
 	m.status = "close cancelled"
 	return m, nil
+}
+
+// issueExists reports whether the given ID is still present in the
+// model's current full-fetch result. Used by the prompt handlers to
+// detect a refetch that removed the originally-targeted issue.
+func (m Model) issueExists(id string) bool {
+	for _, i := range m.all {
+		if i.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // toggleHuman flips the `human` label on the cursor issue. No
@@ -361,7 +395,9 @@ func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 	})
 }
 
-// beginNote opens the textinput prompt for a new note.
+// beginNote opens the textinput prompt for a new note. The target ID
+// is captured here for the same reason as beginClose — see comment
+// on Model.pendingTargetID.
 func (m Model) beginNote() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
 		m.status = "read-only mode (no Mutator wired up)"
@@ -371,6 +407,7 @@ func (m Model) beginNote() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode = modeNote
+	m.pendingTargetID = m.visible[m.cursor].ID
 	m.input.SetValue("")
 	m.input.Prompt = "note ▸ "
 	m.input.Placeholder = "append a note to this issue"
@@ -387,10 +424,12 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		m.input.Blur()
 		m.restoreFilterPrompt()
+		m.pendingTargetID = ""
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
-		i := m.visible[m.cursor]
+		target := m.pendingTargetID
+		m.pendingTargetID = ""
 		mu := m.mutator()
 		m.mode = modeList
 		m.input.Blur()
@@ -399,8 +438,12 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "note cancelled (empty)"
 			return m, nil
 		}
-		return m, runWrite("note", i.ID, func(ctx context.Context) error {
-			return mu.Note(ctx, i.ID, text)
+		if !m.issueExists(target) {
+			m.status = "note cancelled: " + target + " is no longer in the list"
+			return m, nil
+		}
+		return m, runWrite("note", target, func(ctx context.Context) error {
+			return mu.Note(ctx, target, text)
 		})
 	}
 	var cmd tea.Cmd
@@ -564,10 +607,12 @@ func (m Model) viewList() string {
 		b.WriteString("\n")
 		b.WriteString(m.input.View())
 	case modeConfirmClose:
-		b.WriteString("\n")
-		if len(m.visible) > 0 {
+		// Render the captured ID, not the cursor's current target —
+		// a refetch may have shifted things since the prompt opened.
+		if m.pendingTargetID != "" {
+			b.WriteString("\n")
 			b.WriteString(confirmStyle.Render(
-				fmt.Sprintf("close %s? [y/N]", m.visible[m.cursor].ID)))
+				fmt.Sprintf("close %s? [y/N]", m.pendingTargetID)))
 		}
 	}
 

@@ -102,6 +102,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `wyk handoff <id>` CLI subcommand exposing the same operation
   for non-Go agents. Reads the runbook from stdin or `--file`.
 
+### Fixed (Phase 2 review pass)
+
+- **TUI confirm/note race**: `c` and `n` now capture the target issue
+  ID on prompt entry; a refetch arriving before the user confirms
+  can no longer close or note a different issue, and if the target
+  vanishes from the list the prompt cancels with an explanatory
+  banner instead of panicking on an out-of-range cursor.
+- **`wyk handoff --help` exit code**: `flag.ErrHelp` is now a
+  successful exit (0), no longer the "bd missing / no workspace"
+  code (2). Genuine usage errors get a dedicated 64 instead of
+  overloading 2.
+- **`wyk handoff` empty / TTY-stdin guard**: refuses to run with an
+  empty runbook (which would silently wipe the description) unless
+  `-allow-empty` is passed, and detects TTY stdin to print a usage
+  hint instead of blocking on `io.ReadAll`.
+- **`BounceToHuman` retry contract**: documented the dependency on
+  `bd label add` being idempotent (verified against bd 1.0.4) so the
+  retry-after-partial-failure story holds.
+
 ### Out of scope (still deferred)
 
 - A `wyk init` command and post-commit hook (Phase 2.D — deferred).
