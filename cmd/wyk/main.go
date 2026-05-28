@@ -3,9 +3,11 @@
 // docs/CONTRACT.md for the convention it follows.
 //
 // Modes:
-//   wyk                  TUI (default)
-//   wyk --probe          non-TTY one-shot listing the human-flagged issues
-//   wyk handoff <id>     hand <id> back to a human; runbook read from stdin
+//   wyk                      TUI (default)
+//   wyk --probe              non-TTY one-shot listing the human-flagged issues
+//   wyk handoff <id>         hand <id> back to a human; runbook read from stdin
+//   wyk init                 install the post-commit auto-close hook
+//   wyk hook post-commit     called by the installed hook; closes referenced issues
 package main
 
 import (
@@ -30,8 +32,15 @@ func main() {
 	// Subcommand dispatch happens before flag.Parse so each subcommand
 	// can own its own FlagSet without interfering with the top-level
 	// flags. The TUI/probe path keeps the existing flat flag layout.
-	if len(os.Args) >= 2 && os.Args[1] == "handoff" {
-		os.Exit(runHandoff(os.Args[2:]))
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "handoff":
+			os.Exit(runHandoff(os.Args[2:]))
+		case "init":
+			os.Exit(runInit(os.Args[2:]))
+		case "hook":
+			os.Exit(runHook(os.Args[2:]))
+		}
 	}
 
 	dir := flag.String("C", "", "run as if bd had been started in this directory")

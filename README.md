@@ -83,6 +83,27 @@ contract as the TUI's `H` key — see
 [`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
 [`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.
 
+### Auto-closing issues on commit (`wyk init`)
+
+```bash
+wyk init
+# wyk init: installed post-commit hook at .git/hooks/post-commit
+```
+
+After `wyk init`, every commit whose message contains a
+`Closes:`, `Fixes:`, or `Resolves:` trailer (case-insensitive) auto-
+closes the referenced bd issue. Hierarchical IDs work too:
+
+```
+Closes: would-you-kindly-ma5.4
+Fixes #bd-42
+Resolves: my-project-abc
+```
+
+If `.git/hooks/post-commit` already exists from another tool,
+`wyk init` refuses to overwrite without `-force`. Use
+`wyk init -dry-run` to preview, or `wyk init -force` to replace.
+
 ## Keys
 
 ### Reading

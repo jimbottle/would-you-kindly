@@ -121,9 +121,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bd label add` being idempotent (verified against bd 1.0.4) so the
   retry-after-partial-failure story holds.
 
-### Out of scope (still deferred)
+### Phase 2.D — repo binding (`wyk init` + auto-close hook)
 
-- A `wyk init` command and post-commit hook (Phase 2.D — deferred).
+- New `wyk init` subcommand installs a `.git/hooks/post-commit` that
+  scans the commit message for `Closes:`, `Fixes:`, or `Resolves:`
+  trailers (case-insensitive, optional `#`/`:` separator, hierarchical
+  IDs supported) and auto-closes each referenced bd issue. Refuses
+  to overwrite a non-wyk hook without `-force`; idempotent when the
+  hook is already a wyk one. `-dry-run` previews.
+- New `wyk hook post-commit [<sha>]` subcommand invoked by the
+  installed hook. The hook script defers to it so upgrading the wyk
+  binary updates the parsing/close logic without needing to
+  reinstall the hook. Per-issue close failures (already-closed,
+  unknown ID) are logged but never fail the hook — git has already
+  made the commit by the time post-commit runs.
+- Pure parser (`parseCloseRefs`) is regex-driven and unit-tested
+  across a broad range of trailer shapes.
+
+### Out of scope (deferred to a later phase)
+
+- Composing with an existing post-commit hook from another tool
+  (today's behavior is "refuse with -force escape hatch").
+- A pre-commit hook that validates `Closes:` references resolve to
+  real bd issues.
 - Any background daemon.
 
 [Unreleased]: https://github.com/jimbottle/would-you-kindly/commits/main
