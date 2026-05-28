@@ -16,8 +16,29 @@ var (
 	statusClosed     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Strikethrough(true)
 	statusOther      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
+	// humanBadge is the fallback rendering when an issue carries the
+	// `human` label but no `src:` source label — older issues from
+	// before the contract was formalised.
 	humanBadge = lipgloss.NewStyle().
 			Background(lipgloss.Color("212")).
+			Foreground(lipgloss.Color("232")).
+			Bold(true).
+			Padding(0, 1)
+
+	// humanBadgeAgent renders the "agent handed this back" case —
+	// hot pink, the visual signal that something needs your attention.
+	// Reuses humanBadge's pink so the variant stays recognisable.
+	humanBadgeAgent = lipgloss.NewStyle().
+			Background(lipgloss.Color("212")).
+			Foreground(lipgloss.Color("232")).
+			Bold(true).
+			Padding(0, 1)
+
+	// humanBadgeSelf renders the "I filed this for myself" case —
+	// muted blue. Different enough at a glance that the eye can sort
+	// the two without reading the badge text.
+	humanBadgeSelf = lipgloss.NewStyle().
+			Background(lipgloss.Color("39")).
 			Foreground(lipgloss.Color("232")).
 			Bold(true).
 			Padding(0, 1)

@@ -191,6 +191,56 @@ func TestFuzzyFilterMatchesSubsequence(t *testing.T) {
 	}
 }
 
+func TestDisplayID_TrimsCommonPrefix(t *testing.T) {
+	// Single-repo: all IDs share `would-you-kindly-`. displayID
+	// strips it down to the suffix.
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "would-you-kindly-2oa", Title: "a"},
+		{ID: "would-you-kindly-1ej", Title: "b"},
+		{ID: "would-you-kindly-ma5", Title: "c"},
+	}}
+	m := applyFetched(New(src), src)
+	if got := m.displayID(m.all[0]); got != "2oa" {
+		t.Errorf("displayID single-repo: got %q, want %q", got, "2oa")
+	}
+	if m.commonPrefix != "would-you-kindly-" {
+		t.Errorf("commonPrefix: got %q, want would-you-kindly-", m.commonPrefix)
+	}
+}
+
+func TestDisplayID_MultiRepoStripsPerRowRepo(t *testing.T) {
+	// Multi-repo: each issue carries its own Repo and the trim is
+	// per-row, not from a shared prefix.
+	m := Model{
+		all: []beads.Issue{
+			{ID: "alpha-1", Repo: "alpha", Title: "a"},
+			{ID: "beta-9", Repo: "beta", Title: "b"},
+		},
+	}
+	if got := m.displayID(m.all[0]); got != "1" {
+		t.Errorf("alpha-1 → %q, want %q", got, "1")
+	}
+	if got := m.displayID(m.all[1]); got != "9" {
+		t.Errorf("beta-9 → %q, want %q", got, "9")
+	}
+}
+
+func TestHumanBadge_DistinguishesSource(t *testing.T) {
+	agent := beads.Issue{Labels: []string{"human", "src:agent"}}
+	self := beads.Issue{Labels: []string{"human", "src:human"}}
+	plain := beads.Issue{Labels: []string{"human"}}
+
+	if got := humanBadgeFor(agent); !strings.Contains(got, "←") {
+		t.Errorf("src:agent badge should contain a left-arrow; got %q", got)
+	}
+	if got := humanBadgeFor(self); !strings.Contains(got, "·") {
+		t.Errorf("src:human badge should contain a middle-dot; got %q", got)
+	}
+	if got := humanBadgeFor(plain); strings.Contains(got, "←") || strings.Contains(got, "·") {
+		t.Errorf("unlabeled badge should be plain HUMAN; got %q", got)
+	}
+}
+
 func TestErrorStateShowsFriendlyMessage(t *testing.T) {
 	src := &stubSource{err: beads.ErrBDNotFound}
 	m := New(src)

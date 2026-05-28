@@ -93,7 +93,11 @@ type Model struct {
 
 	all      []beads.Issue // last full fetch result
 	visible  []beads.Issue // after fuzzy filter
-	cursor   int
+	// commonPrefix is the longest shared ID prefix (ending in `-`)
+	// across m.all. Recomputed on each fetch; used by displayID to
+	// strip noise from the ID column in single-repo mode.
+	commonPrefix string
+	cursor       int
 	width    int
 	height   int
 	lastErr  error
@@ -218,6 +222,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastErr = msg.err
 		if msg.err == nil {
 			m.all = msg.issues
+			m.commonPrefix = commonIDPrefix(m.all)
 			m.recomputeVisible()
 		}
 		if recovered {
@@ -783,10 +788,15 @@ func (m Model) viewList() string {
 // row and the data rows stay aligned without duplicating numbers.
 // The Repo and Branch columns are only rendered in multi-repo mode
 // (when at least one fetched Issue carries a populated Repo field).
+//
+// colID shrank from 22 → 12 once the common prefix trimming landed
+// (commonIDPrefix): with the repeated `<prefix>-` stripped, the
+// remaining suffix is usually ≤ 8 chars (e.g. `ma5.2.1`), so the
+// extra width was just whitespace in every row.
 const (
 	colRepo    = 18
 	colBranch  = 10
-	colID      = 22
+	colID      = 12
 	colType    = 4
 	colStatus  = 8
 	colPrio    = 2
@@ -806,10 +816,68 @@ func (m Model) isMultiRepo() bool {
 	return false
 }
 
-// renderHeader prints the column-titles row above the issue list.
-// The leading two spaces line up with the cursor column on data rows
-// so the title and ID columns share a left edge. Repo and Branch
-// only appear when the current list spans multiple workspaces.
+// displayID returns the ID with its repeated workspace prefix
+// stripped — the part that's identical for every row in the same
+// view. For multi-repo mode the prefix is `<issue.Repo>-`; for
+// single-repo it's the longest common prefix of m.all ending in
+// `-`. If no trim applies the original ID is returned.
+func (m Model) displayID(i beads.Issue) string {
+	if i.Repo != "" {
+		// Use the issue's own Repo to pick the prefix so cross-repo
+		// rows in the same view each get the right strip.
+		if rest, ok := strings.CutPrefix(i.ID, i.Repo+"-"); ok {
+			return rest
+		}
+		return i.ID
+	}
+	if m.commonPrefix != "" {
+		if rest, ok := strings.CutPrefix(i.ID, m.commonPrefix); ok {
+			return rest
+		}
+	}
+	return i.ID
+}
+
+// commonIDPrefix returns the longest common prefix of every issue's
+// ID that ends in `-` so the trimmed suffix is still readable.
+// Returns "" if there's no consistent prefix (or fewer than 2 rows).
+func commonIDPrefix(issues []beads.Issue) string {
+	if len(issues) < 2 {
+		return ""
+	}
+	pref := issues[0].ID
+	for _, i := range issues[1:] {
+		pref = lcp(pref, i.ID)
+		if pref == "" {
+			return ""
+		}
+	}
+	if idx := strings.LastIndex(pref, "-"); idx >= 0 {
+		return pref[:idx+1]
+	}
+	return ""
+}
+
+// lcp is the longest-common-prefix of two strings.
+func lcp(a, b string) string {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return a[:i]
+		}
+	}
+	return a[:n]
+}
+
+// renderHeader prints the column-titles row above the issue list,
+// followed by a thin divider so the header doesn't visually merge
+// with the first data row. The leading two spaces line up with the
+// cursor column on data rows so the title and ID columns share a
+// left edge. Repo and Branch only appear when the current list
+// spans multiple workspaces.
 func (m Model) renderHeader() string {
 	const cursor = "  "
 	var prefix string
@@ -841,7 +909,7 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		prefix = repo + "  " + br + "  "
 	}
 
-	id := idStyle.Render(fmt.Sprintf("%-*s", colID, trunc(i.ID, colID)))
+	id := idStyle.Render(fmt.Sprintf("%-*s", colID, trunc(m.displayID(i), colID)))
 	tp := typeStyle.Render(fmt.Sprintf("%-*s", colType, abbrevType(i.IssueType)))
 	st := statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status)))
 	pri := fmt.Sprintf("P%d", i.Priority)
@@ -849,9 +917,25 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 
 	row := fmt.Sprintf("%s%s%s  %s  %s  %s  %s  %s", cursor, prefix, id, tp, st, pri, upd, i.Title)
 	if i.IsHuman() {
-		row += "  " + humanBadge.Render("HUMAN")
+		row += "  " + humanBadgeFor(i)
 	}
 	return row
+}
+
+// humanBadgeFor distinguishes the two states the contract supports:
+// src:agent means an agent handed this back ("← HUMAN"), src:human
+// means the person filed it themselves ("· HUMAN"). The leading
+// glyph is the cheap, high-readability signal; a hover or expanded
+// view could carry more.
+func humanBadgeFor(i beads.Issue) string {
+	switch {
+	case i.HasLabel("src:agent"):
+		return humanBadgeAgent.Render("← HUMAN")
+	case i.HasLabel("src:human"):
+		return humanBadgeSelf.Render("· HUMAN")
+	default:
+		return humanBadge.Render("HUMAN")
+	}
 }
 
 // abbrevType returns a fixed-width type slug. Most bd types fit in
@@ -913,7 +997,7 @@ func (m Model) viewDetail() string {
 		i.Priority,
 	)
 	if i.IsHuman() {
-		meta += "  " + humanBadge.Render("HUMAN")
+		meta += "  " + humanBadgeFor(i)
 	}
 	b.WriteString(meta)
 	b.WriteString("\n\n")
