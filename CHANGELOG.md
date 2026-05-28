@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step is independently idempotent. New flags `-skip-bd-init` and
   `-skip-register` let you opt out of either.
 
+### Added (continued)
+
+- **Multi-repo TUI**: when the registry has 2+ entries, `wyk` (no
+  args) builds a `MultiBDSource` that queries every registered
+  workspace and unions the results. The TUI renders extra `Repo`
+  and `Branch` columns at the front of the table (hidden in
+  single-repo mode so `wyk -C <dir>` stays compact). Writes route
+  by ID → repo lookup, populated on every fetch; per-repo errors
+  are tolerated as long as some repo returned data.
+- **`MultiBDSource` partial-failure tolerance**: one bad workspace
+  (e.g. moved/deleted on disk) does not poison the whole view; only
+  if every sub fails does the user see an error.
+
 ### Changed
 
 - **TUI list now renders as a table** with a column header row and

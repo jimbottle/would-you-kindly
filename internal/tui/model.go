@@ -772,7 +772,11 @@ func (m Model) viewList() string {
 
 // Column widths for the list view. Kept as constants so the header
 // row and the data rows stay aligned without duplicating numbers.
+// The Repo and Branch columns are only rendered in multi-repo mode
+// (when at least one fetched Issue carries a populated Repo field).
 const (
+	colRepo    = 18
+	colBranch  = 10
 	colID      = 22
 	colType    = 4
 	colStatus  = 8
@@ -780,13 +784,31 @@ const (
 	colUpdated = 7
 )
 
+// isMultiRepo reports whether the current list contains issues from
+// more than one bd workspace. The Repo/Branch columns are rendered
+// only when this is true so single-repo users don't pay column space
+// for fields that would just be empty.
+func (m Model) isMultiRepo() bool {
+	for _, i := range m.all {
+		if i.Repo != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // renderHeader prints the column-titles row above the issue list.
 // The leading two spaces line up with the cursor column on data rows
-// so the title and ID columns share a left edge.
+// so the title and ID columns share a left edge. Repo and Branch
+// only appear when the current list spans multiple workspaces.
 func (m Model) renderHeader() string {
 	const cursor = "  "
-	h := fmt.Sprintf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %s",
-		cursor,
+	var prefix string
+	if m.isMultiRepo() {
+		prefix = fmt.Sprintf("%-*s  %-*s  ", colRepo, "Repo", colBranch, "Branch")
+	}
+	h := fmt.Sprintf("%s%s%-*s  %-*s  %-*s  %-*s  %-*s  %s",
+		cursor, prefix,
 		colID, "ID",
 		colType, "T",
 		colStatus, "Status",
@@ -803,13 +825,20 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		cursor = cursorStyle.Render("▶ ")
 	}
 
+	var prefix string
+	if m.isMultiRepo() {
+		repo := typeStyle.Render(fmt.Sprintf("%-*s", colRepo, trunc(i.Repo, colRepo)))
+		br := typeStyle.Render(fmt.Sprintf("%-*s", colBranch, trunc(i.Branch, colBranch)))
+		prefix = repo + "  " + br + "  "
+	}
+
 	id := idStyle.Render(fmt.Sprintf("%-*s", colID, trunc(i.ID, colID)))
 	tp := typeStyle.Render(fmt.Sprintf("%-*s", colType, abbrevType(i.IssueType)))
 	st := statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status)))
 	pri := fmt.Sprintf("P%d", i.Priority)
 	upd := updatedStyle.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt)))
 
-	row := fmt.Sprintf("%s%s  %s  %s  %s  %s  %s", cursor, id, tp, st, pri, upd, i.Title)
+	row := fmt.Sprintf("%s%s%s  %s  %s  %s  %s  %s", cursor, prefix, id, tp, st, pri, upd, i.Title)
 	if i.IsHuman() {
 		row += "  " + humanBadge.Render("HUMAN")
 	}

@@ -24,6 +24,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
 	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
@@ -55,9 +56,11 @@ func main() {
 		*me = defaultMe()
 	}
 
-	client := beads.NewClient()
-	client.Dir = *dir
-	src := &tui.BDSource{Client: client, Me: *me}
+	src, err := buildSource(*dir, *me)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk:", err)
+		os.Exit(1)
+	}
 
 	if *probe {
 		os.Exit(runProbe(src))
@@ -68,6 +71,46 @@ func main() {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
 		os.Exit(1)
 	}
+}
+
+// buildSource picks single-repo vs multi-repo wiring based on the
+// flags and the registry state:
+//
+//   - -C <dir>: explicit single-repo, scoped to that workspace.
+//   - empty -C and registry has 2+ repos: multi-repo source.
+//   - empty -C and registry has 0 or 1 repo: single-repo against cwd
+//     (the v0.1.0 behavior, kept as the no-config fallback so users
+//     who haven't run `wyk init` anywhere still get a working TUI).
+func buildSource(dir, me string) (tui.Source, error) {
+	if dir != "" {
+		c := beads.NewClient()
+		c.Dir = dir
+		return &tui.BDSource{Client: c, Me: me}, nil
+	}
+
+	regPath, err := registry.DefaultPath()
+	if err != nil {
+		return nil, err
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(reg.Repos) >= 2 {
+		clients := make([]*beads.Client, len(reg.Repos))
+		names := make([]string, len(reg.Repos))
+		for i, r := range reg.Repos {
+			c := beads.NewClient()
+			c.Dir = r.Path
+			clients[i] = c
+			names[i] = r.Name
+		}
+		return tui.NewMultiBDSource(clients, names, me), nil
+	}
+
+	// Zero or one registered repo: behave like v0.1.0 with the cwd.
+	c := beads.NewClient()
+	return &tui.BDSource{Client: c, Me: me}, nil
 }
 
 // runHandoff implements `wyk handoff <id>`: read a runbook from stdin
@@ -156,7 +199,7 @@ func runHandoff(args []string) int {
 // runProbe fetches the human preset and prints a one-line summary
 // per issue. Returns the process exit code: 0 on success (any count),
 // 2 if bd is missing or there's no workspace, 1 on other errors.
-func runProbe(src *tui.BDSource) int {
+func runProbe(src tui.Source) int {
 	issues, err := src.Fetch(context.Background(), filter.PresetHuman)
 	if err != nil {
 		switch {

@@ -24,6 +24,14 @@ type Issue struct {
 	DependencyCount int `json:"dependency_count"`
 	DependentCount  int `json:"dependent_count"`
 	CommentCount    int `json:"comment_count"`
+
+	// Repo and Branch are decorations a multi-repo Source attaches
+	// after fetching — they are NOT part of bd's JSON. The json:"-"
+	// tags prevent them from leaking back into any Marshal call that
+	// re-serialises an Issue, and the absent fields just stay empty
+	// in single-repo mode.
+	Repo   string `json:"-"`
+	Branch string `json:"-"`
 }
 
 // HasLabel reports whether the issue carries the given label.

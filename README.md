@@ -45,17 +45,27 @@ go build -o ./bin/wyk ./cmd/wyk
 
 ## Run
 
-From any directory that contains a `.beads/` workspace:
+After running `wyk init` in each repo you want to track, just:
 
 ```bash
 wyk
 ```
 
-Or against a specific repo:
+— and the TUI shows issues from every registered repo, with a
+`Repo` and `Branch` column on the left of the table. Writes (`c`,
+`H`, `n`) route to the correct repo automatically. The registry
+lives at `~/.config/wyk/repos.json` (or `$XDG_CONFIG_HOME/wyk/...`)
+and is plain editable JSON.
+
+For a single repo (without going through the registry):
 
 ```bash
 wyk -C /path/to/repo
 ```
+
+If the registry is empty or has only one entry, `wyk` (no args)
+falls back to running against the current directory — the v0.1.0
+single-repo behaviour.
 
 ### Non-TTY one-shot
 
