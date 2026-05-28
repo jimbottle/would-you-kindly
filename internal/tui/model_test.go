@@ -260,22 +260,31 @@ func TestStaleFetchIsDroppedAfterPresetChange(t *testing.T) {
 	// A tick fires while the user is on the default preset, then the
 	// user switches to PresetHuman before the fetch returns. The late
 	// fetched message must not overwrite the model's state.
+	//
+	// The "no-blank-on-switch" change keeps the OLD preset's rows
+	// visible during the switch (so users don't see a wiped table
+	// for the duration of bd's round-trip); the dropped-stale
+	// invariant is about NEW data not overwriting NEWER state, so
+	// we check that the stale fetch leaves m.all == the old rows
+	// rather than asserting m.all is cleared.
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)
+	wantCount := len(m.all)
 
-	// switch to human, model.all clears
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m = model.(Model)
-	if len(m.all) != 0 {
-		t.Fatalf("preset switch should clear m.all, got %d", len(m.all))
+	if !m.refreshing {
+		t.Errorf("preset switch should set refreshing=true; got false")
 	}
 
-	// late fetch for the OLD preset arrives
+	// late fetch for the OLD preset arrives — must NOT clobber the
+	// current preset's rows even though they're still the OLD data
+	// on screen.
 	stale := []beads.Issue{{ID: "stale-1", Title: "stale", Labels: []string{}}}
 	model, _ = m.Update(fetchedMsg{preset: filter.PresetAll, issues: stale})
 	m = model.(Model)
-	if len(m.all) != 0 {
-		t.Errorf("stale fetch should have been dropped; m.all = %+v", m.all)
+	if len(m.all) != wantCount {
+		t.Errorf("stale fetch should have been dropped; m.all changed from %d to %d", wantCount, len(m.all))
 	}
 }
 
@@ -311,25 +320,99 @@ func TestCtrlCQuitsFromFilterPrompt(t *testing.T) {
 	}
 }
 
-func TestSwitchPresetClearsRowsAndShowsLoading(t *testing.T) {
+func TestTransientFetchErrorKeepsTableVisible(t *testing.T) {
+	// The "no-blank-on-refresh" invariant: once we have data on
+	// screen, a transient bd error during an auto-refresh tick
+	// surfaces as a small banner — the table stays put. Pre-fix,
+	// any non-nil m.lastErr caused viewList to replace the whole
+	// table with a full-screen "press r to retry" stand-in, which
+	// is the "TUI blanks on refresh" symptom the user reported.
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)
+	out := m.View()
+	if !strings.Contains(out, sampleIssues()[0].Title) {
+		t.Fatalf("setup: initial view should show issue rows; got:\n%s", out)
+	}
+
+	// Simulate a flaky bd query: tick → fetch returns error.
+	model, _ := m.Update(fetchedMsg{preset: m.preset, err: errors.New("bd: transient flake")})
+	m = model.(Model)
+
+	out = m.View()
+	if !strings.Contains(out, sampleIssues()[0].Title) {
+		t.Errorf("transient fetch error should leave the table visible; got:\n%s", out)
+	}
+	if strings.Contains(out, "press r to retry") {
+		t.Errorf("transient fetch error should not show the full-screen retry hint; got:\n%s", out)
+	}
+	if !strings.Contains(out, "refresh failed") {
+		t.Errorf("transient fetch error should surface as a 'refresh failed' banner; got:\n%s", out)
+	}
+}
+
+func TestRefreshKeyKeepsTableVisible(t *testing.T) {
+	// Pressing `r` no longer blanks the screen: the table stays
+	// up, a small ↻ refreshing hint appears in the status bar.
+	// Replaces the previous "loading…" full-screen blank that
+	// fired on every keypress of r.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = model.(Model)
+
+	if m.loading {
+		t.Error("manual refresh should not set loading=true (blanks the view)")
+	}
+	if !m.refreshing {
+		t.Error("manual refresh should set refreshing=true (status-bar indicator)")
+	}
+	out := m.View()
+	if strings.Contains(out, "loading…") {
+		t.Errorf("manual refresh view should not show full-screen loading…; got:\n%s", out)
+	}
+	if !strings.Contains(out, sampleIssues()[0].Title) {
+		t.Errorf("manual refresh view should still show issue rows; got:\n%s", out)
+	}
+	if !strings.Contains(out, "refreshing") {
+		t.Errorf("manual refresh view should show the ↻ refreshing indicator; got:\n%s", out)
+	}
+}
+
+func TestSwitchPresetKeepsRowsAndShowsRefreshIndicator(t *testing.T) {
+	// Switching presets no longer blanks the table — the previous
+	// rows stay on screen until the new fetch returns, with a
+	// subtle "↻ refreshing" hint in the status bar. The cursor
+	// still resets to 0 so the user lands at the top of the new
+	// view as soon as data arrives.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	preCount := len(m.all)
+	if preCount == 0 {
+		t.Fatal("setup: sampleIssues should yield at least one row")
+	}
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m = model.(Model)
 
-	if len(m.all) != 0 || len(m.visible) != 0 {
-		t.Errorf("switchPreset should clear all/visible; got all=%d visible=%d",
-			len(m.all), len(m.visible))
+	if len(m.all) != preCount {
+		t.Errorf("switchPreset must NOT clear all (blanks the screen); got all=%d, want %d", len(m.all), preCount)
 	}
 	if m.cursor != 0 {
 		t.Errorf("switchPreset should reset cursor; got %d", m.cursor)
 	}
-	if !m.loading {
-		t.Error("switchPreset should set loading=true")
+	if m.loading {
+		t.Error("switchPreset should NOT set loading=true (that's the full-screen blank path)")
 	}
-	if !strings.Contains(m.View(), "loading…") {
-		t.Error("view should render the loading indicator during a preset switch")
+	if !m.refreshing {
+		t.Error("switchPreset should set refreshing=true")
+	}
+	out := m.View()
+	if strings.Contains(out, "loading…") {
+		t.Errorf("view should not render the full-screen loading indicator on a preset switch:\n%s", out)
+	}
+	if !strings.Contains(out, "refreshing") {
+		t.Errorf("view should render the refresh indicator in the status bar:\n%s", out)
 	}
 }
 

@@ -166,6 +166,13 @@ type Model struct {
 	// bar so a sub that errors out doesn't disappear silently.
 	fetchErrors []FetchError
 
+	// refreshing is true while a manual-`r` or preset-switch
+	// fetch is in flight. Unlike loading (which gates the whole
+	// view), refreshing only triggers a subtle indicator in the
+	// status bar so the existing rows stay on screen during the
+	// round-trip. Cleared on fetchedMsg arrival.
+	refreshing bool
+
 	// input is the textinput shared by modeFilter and modeNote. The
 	// modes are mutually exclusive — only one prompt is on screen at
 	// a time — so a single field is enough; Prompt/Placeholder are
@@ -281,6 +288,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// alive whenever we leave the error state.
 		recovered := isTerminalErr(m.lastErr) && !isTerminalErr(msg.err)
 		m.loading = false
+		m.refreshing = false
 		m.lastSync = time.Now()
 		m.lastErr = msg.err
 		if msg.err == nil {
@@ -412,7 +420,13 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// suspended after a terminal error. Bumping tickGen retires
 		// any older tick that's still in-flight, so the new chain is
 		// the only one alive.
-		m.loading = true
+		//
+		// We do NOT set m.loading here: the existing rows stay on
+		// screen while the refresh runs in the background, and a
+		// small ↻ glyph appears in the status bar (see statusBar).
+		// Replacing the table with "loading…" on every keypress
+		// produced a jarring full-canvas blank.
+		m.refreshing = true
 		cmds := []tea.Cmd{m.fetchCmd()}
 		if isTerminalErr(m.lastErr) {
 			m.tickGen++
@@ -732,15 +746,17 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 
 // switchPreset clears the visible rows before dispatching the new
 // fetch so the UI doesn't flash the old preset's data under the new
-// header. The loading flag distinguishes the in-flight state from a
-// genuinely empty result. Any pending fuzzy filter stays — it re-
-// applies once the new data arrives.
+// header. The previous preset's rows stay visible until the new
+// fetch returns — clearing them would blank the screen for the
+// duration of the bd round-trip. The refreshing indicator in the
+// status bar signals that the on-screen data is stale-for-this-
+// preset; the cursor resets to 0 so the user lands at the top of
+// the new view as soon as data arrives. Any pending fuzzy filter
+// stays — it re-applies once the new data arrives.
 func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
 	m.preset = p
 	m.cursor = 0
-	m.all = nil
-	m.visible = nil
-	m.loading = true
+	m.refreshing = true
 	return m, m.fetchCmd()
 }
 
@@ -931,24 +947,32 @@ func (m Model) viewList() string {
 	}
 	b.WriteString("\n")
 
+	// Render the table whenever we have data. Transient states
+	// (a flaky fetch error, an in-flight refresh) become banners
+	// at the bottom instead of taking over the whole view — the
+	// user always sees the most recent rows. Only the very first
+	// paint, before any data has arrived, shows the full-screen
+	// "loading…" / error stand-in.
 	switch {
+	case len(m.all) > 0:
+		b.WriteString(m.renderHeader())
+		b.WriteByte('\n')
+		if len(m.visible) == 0 {
+			b.WriteString(emptyStyle.Render(fmt.Sprintf("no matches for %q", m.query)))
+		} else {
+			for i, issue := range m.visible {
+				b.WriteString(m.renderRow(issue, i == m.cursor))
+				b.WriteByte('\n')
+			}
+		}
 	case m.lastErr != nil:
 		b.WriteString(errorStyle.Render(friendlyError(m.lastErr)))
 		b.WriteString("\n\n")
 		b.WriteString(emptyStyle.Render("press r to retry, q to quit"))
 	case m.loading:
 		b.WriteString(emptyStyle.Render("loading…"))
-	case len(m.all) == 0:
-		b.WriteString(emptyStyle.Render("no issues — bd returned an empty list"))
-	case len(m.visible) == 0:
-		b.WriteString(emptyStyle.Render(fmt.Sprintf("no matches for %q", m.query)))
 	default:
-		b.WriteString(m.renderHeader())
-		b.WriteByte('\n')
-		for i, issue := range m.visible {
-			b.WriteString(m.renderRow(issue, i == m.cursor))
-			b.WriteByte('\n')
-		}
+		b.WriteString(emptyStyle.Render("no issues — bd returned an empty list"))
 	}
 
 	// modal prompts live just above the status bar
@@ -964,6 +988,17 @@ func (m Model) viewList() string {
 			b.WriteString(confirmStyle.Render(
 				fmt.Sprintf("close %s? [y/N]", m.pendingTarget.ID)))
 		}
+	}
+
+	// transient-fetch-error banner: when we have stale data on
+	// screen but the most recent refresh errored, surface it as a
+	// one-line banner instead of replacing the table. Without
+	// this, a flaky bd query during an auto-refresh tick would
+	// wipe the visible rows until the next tick recovered — the
+	// "screen blanks on refresh" symptom.
+	if m.lastErr != nil && len(m.all) > 0 {
+		b.WriteString("\n")
+		b.WriteString(fetchErrorStyle.Render("refresh failed: " + friendlyError(m.lastErr)))
 	}
 
 	// fetch-error banner: per-sub Fetch failures from a multi-repo
@@ -1260,6 +1295,13 @@ func (m Model) statusBar() string {
 	}
 	if !m.lastSync.IsZero() {
 		left += "  synced " + m.lastSync.Format("15:04:05")
+	}
+	// In-flight refresh indicator. Subtle on purpose — the table
+	// stays visible underneath; this just tells the user that
+	// hitting r (or switching presets) actually did something
+	// while bd's round-trip is in flight.
+	if m.refreshing {
+		left += "  ↻ refreshing"
 	}
 	help := "j/k  ⏎ open  / filter  h human  tab  r refresh  c close  H ±human  n note  q quit"
 	if m.mutator() == nil {
