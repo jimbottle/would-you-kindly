@@ -4,6 +4,7 @@
 //
 // Modes:
 //   wyk                      TUI (default)
+//   wyk --version            print version and exit
 //   wyk --probe              non-TTY one-shot listing the human-flagged issues
 //   wyk handoff <id>         hand <id> back to a human; runbook read from stdin
 //   wyk init                 install the post-commit auto-close hook
@@ -19,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,6 +50,9 @@ func main() {
 			os.Exit(runStats(os.Args[2:]))
 		case "doctor":
 			os.Exit(runDoctor(os.Args[2:]))
+		case "version", "--version", "-v":
+			fmt.Println(versionString())
+			os.Exit(0)
 		}
 	}
 
@@ -312,6 +317,54 @@ func runProbe(src tui.Source) int {
 		fmt.Printf("  %-24s P%d  %s\n", i.ID, i.Priority, i.Title)
 	}
 	return 0
+}
+
+// versionString returns the human-readable version line printed by
+// `wyk --version`. Pulls from Go's build info so module-installed
+// builds (go install ...@vX.Y.Z) carry their tag; source-tree
+// builds (go build, go run) report "(devel)" — which is honest:
+// they don't HAVE a tag. Includes the commit SHA and dirty marker
+// when present in the build info's VCS stamps. No hand-maintained
+// const to drift.
+func versionString() string {
+	const name = "wyk"
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return name + " (unknown — build info missing)"
+	}
+	v := info.Main.Version
+	if v == "" {
+		v = "(devel)"
+	}
+	// Go already appends "+dirty" to the pseudoversion when an
+	// installed build had local modifications; strip it so we
+	// don't double-stamp when vcs.modified is true below.
+	v = strings.TrimSuffix(v, "+dirty")
+	var rev string
+	var dirty bool
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if len(s.Value) >= 7 {
+				rev = s.Value[:7]
+			} else {
+				rev = s.Value
+			}
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	suffix := ""
+	if dirty {
+		suffix = "-dirty"
+	}
+	if rev != "" {
+		return fmt.Sprintf("%s %s (commit %s%s)", name, v, rev, suffix)
+	}
+	if dirty {
+		return name + " " + v + suffix
+	}
+	return name + " " + v
 }
 
 // defaultMe resolves the current identity the way bd itself does:

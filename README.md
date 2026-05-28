@@ -43,6 +43,13 @@ Or from a checkout:
 go build -o ./bin/wyk ./cmd/wyk
 ```
 
+Check what version you're running:
+
+```bash
+wyk --version
+# wyk v0.2.3 (commit 92ea3db)
+```
+
 ## Run
 
 After running `wyk init` in each repo you want to track, just:
