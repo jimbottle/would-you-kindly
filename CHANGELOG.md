@@ -8,6 +8,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (nothing yet)
 
+## [0.3.0-alpha] — 2026-05-28
+
+The alpha-quality version. Everything in v0.2.3 plus a wide round of
+agent-discoverability work, TUI layout polish, scroll/refresh
+robustness, registry CLI, version subcommand, scan validation, CI,
+and a tightened handoff convention. The remaining v0.3.0 work
+(README screenshots) ships in a follow-up; this tag is cut so
+`go install ...@latest` resolves to something current.
+
+### Added
+
+- **`wyk --version` / `-v` / `version`** subcommand. Reads
+  `runtime/debug.ReadBuildInfo`, so `go install ...@v0.3.0-alpha`
+  prints `wyk v0.3.0-alpha` and source-tree builds print
+  `wyk (devel) (commit <sha>)`. No hand-maintained const to drift.
+- **`wyk registry list / remove / prune`** for managing
+  `~/.config/wyk/repos.json` without hand-editing. `prune` confirms
+  with `[y/N]` (skip via `-y`) and removes entries whose path or
+  `.git` is gone — surfaced as a gap during the v0.2.3 audit.
+- **`wyk conventions`** subcommand prints the agent-ready label
+  contract; `-json` emits a stable schema (labels, queries,
+  preferred_command, bd_create_example, runbook_sections,
+  contract_url). Agents can dump this at session start to learn
+  the contract without reading source.
+- **`wyk doctor` Conventions stanza** — always-PASS line documenting
+  the `human` / `src:agent` labels and the agent inbox query, with
+  a pointer at `wyk conventions` for the full text.
+- **`wyk init` writes the convention into `bd remember`** with key
+  `wyk-handoff-convention`, so `bd prime` surfaces it on every
+  agent session start in repos wyk init has touched. Idempotent;
+  best-effort (failure WARNs but doesn't gate the hook install).
+- **`wyk init -scan` probes bd** (`bd query status!=closed` under a
+  2s timeout) before registering each candidate; jsonl-only
+  exports, abandoned shells, and other duds are skipped with a
+  stderr line. Bails with exit 1 once if `bd` is missing from PATH
+  (so a fresh machine without bd doesn't silently no-op).
+- **Top-level `wyk --help`** lists every subcommand. Pre-fix only
+  the bare top-level flags (-C, -me, -probe) were visible; the
+  recommended path for filing a human task (`wyk handoff`) was
+  invisible.
+- **TUI `wyk` column** (header was "W" briefly) — green `✓` for
+  repos with wyk's post-commit hook installed, blank for bd-only.
+  Detection routes through `git rev-parse --git-path` so
+  worktrees, submodules, and gitlink subdirs resolve correctly.
+- **TUI HUMAN column** — the `← HUMAN` / `· HUMAN` badge now rides
+  in its own column second-from-left (between cursor and `wyk`),
+  not appended to the title. The most important "needs your
+  attention" signal is now where the eye lands first instead of
+  clipped at the rightmost edge.
+- **TUI per-sub Fetch error banner** — `MultiBDSource` was
+  swallowing per-sub errors as long as one repo returned data,
+  hiding broken workspaces. A new `MultiSource.FetchWithSubErrors`
+  returns issues + per-sub errors atomically; an amber banner
+  surfaces failures (e.g. `1 repo failed to load: domo-mcp (press
+  r to retry; wyk doctor for details)`).
+- **TUI sticky-header viewport** — rows are now windowed around
+  the cursor instead of dumped as a flat list. The column header
+  stays visible regardless of how cramped the terminal gets, with
+  `↑ N more above` / `↓ N more below` hints when content is clipped.
+- **Handoff runbook structure (REQUIRED)** — every handoff
+  description carries three sections:
+  - `## Why this needs you (please confirm this is accurate)` —
+    agent's self-verification with three concrete attempts,
+    boundary hit, why no workaround.
+  - `## Steps` — numbered with verification + close.
+  - `## What unblocks me when this returns` — the concrete
+    artifact the agent expects on bounce-back.
+  Surfaced through the skill file, `wyk conventions`, the bd
+  remember memory, and `docs/CONTRACT.md`.
+- **CI** via `.github/workflows/test.yml` — `go vet`, `go build`,
+  `go test -race` on PR and main; README badge.
+
+### Changed
+
+- **TUI no-blank-on-refresh** — transient fetch errors and
+  in-flight refreshes no longer take over the canvas. A flaky bd
+  query during an auto-refresh tick surfaces as a small banner
+  above the status bar; the rows stay put. Terminal errors
+  (`bd not installed`) append `— press r to retry` to the banner
+  since auto-refresh suspends in that state.
+- **TUI title truncation** — long titles get `…` and the full
+  text lives behind `enter`. Pre-fix every issue title spilled
+  past the right edge.
+- **TUI `trunc` is rune-aware** — multi-byte content (issue
+  titles, repo names with diacritics) can no longer be split
+  mid-codepoint.
+- **`wyk doctor` resolves the hook via `git rev-parse`** instead
+  of a literal `<r.Path>/.git/hooks/post-commit` read. Gitlink
+  subdirs (worktrees, submodules) no longer false-FAIL.
+- **Cross-workspace leak guard** — multi-repo Fetch now validates
+  every issue ID against the registered sub name using longest-
+  prefix-match. bd-daemon-state leaks (broken workspace returning
+  another workspace's data) get dropped + surfaced as a fetch
+  error instead of silently misrendering.
+- **CLAUDE.md actually populated** — Build & Test, Architecture,
+  and Conventions sections now carry real content.
+
+### Fixed
+
+- Multi-byte names couldn't be split mid-codepoint in `trunc`
+  (was byte-cap, now rune-aware).
+- Status banner appearance shrank `bodyHeight()` without re-
+  clamping `scroll`, briefly hiding the cursor row.
+- Modal-entry handlers (modeFilter, modeNote, modeQuickAdd,
+  modeConfirmClose) didn't re-clamp scroll either.
+- Window resize didn't re-clamp scroll.
+- `wyk init -scan` registered any `.beads/` subdir without
+  validating bd could read it.
+- `wyk init` didn't announce `bd remember` step under `-dry-run`.
+- Conventions prose vs structured form could silently drift on
+  the inbox query — extracted to a shared const.
+- `human_tasks` query in the structured form lacked `status!=closed`
+  (now matches `agent_inbox`'s scoping).
+- Registry `prune` removed by Name (non-unique) — could drop the
+  alive entry when two repos shared a basename. Now removes by
+  Path (unique).
+- `findDeadEntries` treated non-IsNotExist Stat errors as alive
+  and crashed the `.git` check. Now any Stat error → dead.
+
+### Migration
+
+The handoff runbook structure is new but not enforced
+mechanically — existing handoffs continue to work. New handoffs
+written via the skill follow the structure; agents reading
+`wyk conventions` see it; `bd prime` carries it into new sessions
+via the `bd remember` memory.
+
 ## [0.2.3] — 2026-05-28
 
 Phase 10 (TUI completeness, round 2). Two visibility bugs surfaced
@@ -417,7 +544,8 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.0-alpha...HEAD
+[0.3.0-alpha]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0-alpha
 [0.2.3]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.3
 [0.2.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.2
 [0.2.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.1

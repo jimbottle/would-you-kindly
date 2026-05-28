@@ -33,7 +33,7 @@ You'll need Go 1.26+ (matching `go.mod`) and
 
 ```bash
 # Latest tagged release:
-go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.2.3
+go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.3.0-alpha
 
 # Or tip of main:
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest
@@ -357,11 +357,14 @@ Drop screenshots of the TUI here. Good captures:
 
 ## Status
 
-**v0.2.3 shipped** — Phase 10 TUI completeness round 2: a `W` column
-showing per-repo wyk-hook install state (with gitlink-safe
-detection), a per-sub Fetch error banner so a workspace that breaks
-no longer disappears silently, and the matching `wyk doctor` gitlink
-fix.
+**v0.3.0-alpha shipped** — agent discoverability (`wyk conventions`,
+doctor Conventions stanza, `bd remember` on init, top-level help
+with subcommand list), registry CLI (`list / remove / prune`),
+`wyk --version`, sticky-header TUI viewport, HUMAN column moved to
+second-from-left, title truncation, no-blank-on-refresh,
+cross-workspace leak guard, gitlink-safe everything, CI on PR + main,
+and a tightened handoff runbook with required self-verification +
+unblocker sections.
 
 ## License
 
