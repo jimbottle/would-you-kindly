@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
@@ -413,9 +416,39 @@ func resolveGitHookPath(repoDir, hook string) (string, error) {
 	return p, nil
 }
 
+// scanProbeTimeout caps each candidate's bd-readiness probe. Tight
+// enough that a registry with N dud workspaces doesn't multiply
+// total scan time by N*5s, loose enough that a real workspace on a
+// slow filesystem (NFS, Time Machine snapshot) gets a fair shot.
+const scanProbeTimeout = 2 * time.Second
+
+// probeBDFunc is the seam the scan path uses to ask "can bd actually
+// read this workspace?". The default implementation shells out to
+// `bd query`; tests inject a stub so they don't depend on a real bd
+// binary or a real DB.
+type probeBDFunc func(ctx context.Context, dir string) error
+
+// defaultProbeBD runs a cheap `bd query status!=closed` against dir.
+// Success means bd can read the workspace at all — distinguishing
+// real workspaces from jsonl-only exports, abandoned shells, and
+// workspaces whose Dolt DB is otherwise unreadable. The query
+// expression is the cheapest one that exercises the full bd-load
+// path; we discard the returned issues.
+func defaultProbeBD(ctx context.Context, dir string) error {
+	c := beads.NewClient()
+	c.Dir = dir
+	_, err := c.Query(ctx, "status!=closed")
+	return err
+}
+
 // runScanAndRegister walks the filesystem under root, finds every
-// .beads/ directory, and registers each containing repo into
-// ~/.config/wyk/repos.json. Already-registered paths are skipped.
+// .beads/ directory, probes each unregistered candidate with bd to
+// confirm it's a usable workspace, then registers the survivors
+// into ~/.config/wyk/repos.json. Candidates that fail the probe
+// (bd errors, jsonl-only export, abandoned shell) are SKIPPED with
+// a stderr line — the alternative was silently registering duds
+// that the user then has to clean up via `wyk registry remove`.
+//
 // Skipped during traversal: any .git, .cache, .beads itself,
 // node_modules, vendor, and any other hidden directory.
 //
@@ -425,6 +458,12 @@ func resolveGitHookPath(repoDir, hook string) (string, error) {
 //	1  filesystem / registry error (e.g. unreadable root, permission denied)
 //	2  root does not exist or isn't a directory
 func runScanAndRegister(root string, dryRun bool) int {
+	return runScanAndRegisterWithProbe(root, dryRun, defaultProbeBD)
+}
+
+// runScanAndRegisterWithProbe is the test seam — the real entry
+// point passes defaultProbeBD.
+func runScanAndRegisterWithProbe(root string, dryRun bool, probe probeBDFunc) int {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk init -scan:", err)
@@ -462,18 +501,35 @@ func runScanAndRegister(root string, dryRun bool) int {
 		return 1
 	}
 
-	var newOnes, alreadyRegistered []string
+	var newOnes, alreadyRegistered, skipped []string
 	for _, path := range found {
 		if reg.Has(path) {
 			alreadyRegistered = append(alreadyRegistered, path)
+			continue
+		}
+		// Probe before adding to newOnes — a candidate that bd
+		// can't read shouldn't pollute the registry just because
+		// it has a .beads/ subdir. Stderr the reason so the user
+		// can see what's being rejected.
+		ctx, cancel := context.WithTimeout(context.Background(), scanProbeTimeout)
+		perr := probe(ctx, path)
+		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+		cancel()
+		if perr != nil {
+			reason := perr.Error()
+			if timedOut {
+				reason = fmt.Sprintf("bd query timed out after %s", scanProbeTimeout)
+			}
+			fmt.Fprintf(os.Stderr, "wyk init -scan: skipping %s (bd query failed: %s)\n", path, reason)
+			skipped = append(skipped, path)
 			continue
 		}
 		newOnes = append(newOnes, path)
 	}
 
 	fmt.Printf("wyk init -scan: searched %s\n", abs)
-	fmt.Printf("  found %d bd workspace(s): %d new, %d already registered\n",
-		len(found), len(newOnes), len(alreadyRegistered))
+	fmt.Printf("  found %d bd workspace(s): %d new, %d already registered, %d skipped (bd failed)\n",
+		len(found), len(newOnes), len(alreadyRegistered), len(skipped))
 
 	if dryRun {
 		if len(newOnes) == 0 {

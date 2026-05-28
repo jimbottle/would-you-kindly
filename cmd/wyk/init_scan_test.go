@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +21,13 @@ func mkBeads(t *testing.T, root, sub string) string {
 	resolved, _ := filepath.EvalSymlinks(filepath.Join(root, sub))
 	return resolved
 }
+
+// alwaysProbeOK is the standard test probe: pretends every
+// candidate workspace is bd-readable. Existing scan tests work on
+// empty .beads/ subdirs that real bd would reject; the probe seam
+// lets them stay focused on the walk + registration semantics
+// instead of needing a real bd workspace per case.
+func alwaysProbeOK(ctx context.Context, dir string) error { return nil }
 
 func TestScanForBeadsRepos_FindsNestedWorkspaces(t *testing.T) {
 	root := t.TempDir()
@@ -83,7 +92,7 @@ func TestRunScanAndRegister_AddsAndDedupesAcrossRuns(t *testing.T) {
 	_ = mkBeads(t, root, "one")
 	_ = mkBeads(t, root, "two")
 
-	if code := runScanAndRegister(root, false); code != 0 {
+	if code := runScanAndRegisterWithProbe(root, false, alwaysProbeOK); code != 0 {
 		t.Fatalf("first scan: exit %d", code)
 	}
 	regPath := filepath.Join(cfgDir, "wyk", "repos.json")
@@ -96,7 +105,7 @@ func TestRunScanAndRegister_AddsAndDedupesAcrossRuns(t *testing.T) {
 	}
 
 	// Second run on the same tree: must dedupe, not double the entries.
-	if code := runScanAndRegister(root, false); code != 0 {
+	if code := runScanAndRegisterWithProbe(root, false, alwaysProbeOK); code != 0 {
 		t.Fatalf("second scan: exit %d", code)
 	}
 	second, _ := os.ReadFile(regPath)
@@ -112,7 +121,7 @@ func TestRunScanAndRegister_DryRunDoesNotWrite(t *testing.T) {
 	root := t.TempDir()
 	_ = mkBeads(t, root, "one")
 
-	if code := runScanAndRegister(root, true); code != 0 {
+	if code := runScanAndRegisterWithProbe(root, true, alwaysProbeOK); code != 0 {
 		t.Fatalf("dry-run scan: exit %d", code)
 	}
 	regPath := filepath.Join(cfgDir, "wyk", "repos.json")
@@ -122,7 +131,7 @@ func TestRunScanAndRegister_DryRunDoesNotWrite(t *testing.T) {
 }
 
 func TestRunScanAndRegister_NonExistentRootExits2(t *testing.T) {
-	code := runScanAndRegister("/path/that/does/not/exist/xyz", false)
+	code := runScanAndRegisterWithProbe("/path/that/does/not/exist/xyz", false, alwaysProbeOK)
 	if code != 2 {
 		t.Errorf("expected exit 2 for a missing root; got %d", code)
 	}
@@ -150,7 +159,7 @@ func TestRunScanAndRegister_PermissionDeniedExits1(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) }) // let TempDir clean up
 
-	if code := runScanAndRegister(bad, false); code != 1 {
+	if code := runScanAndRegisterWithProbe(bad, false, alwaysProbeOK); code != 1 {
 		t.Errorf("expected exit 1 for permission-denied stat; got %d", code)
 	}
 }
@@ -174,6 +183,68 @@ func TestInit_ScanRejectsIncompatibleFlags(t *testing.T) {
 		if code := runInit(args); code != 64 {
 			t.Errorf("runInit(%v) = %d, want 64 (incompatible flags)", args, code)
 		}
+	}
+}
+
+func TestRunScanAndRegister_SkipsProbeFailures(t *testing.T) {
+	// Two candidates: "good" probes clean, "bad" probes with an
+	// error. After the scan, registry must contain only "good".
+	// Pre-vo7 the scan registered everything with a .beads/ subdir,
+	// including jsonl-only exports and abandoned shells that real
+	// bd couldn't query — the bug that put domo-mcp into the
+	// registry as a silent failure.
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	root := t.TempDir()
+	goodPath := mkBeads(t, root, "good")
+	badPath := mkBeads(t, root, "bad")
+
+	probe := func(ctx context.Context, dir string) error {
+		if dir == badPath {
+			return errors.New("simulated bd failure")
+		}
+		return nil
+	}
+	if code := runScanAndRegisterWithProbe(root, false, probe); code != 0 {
+		t.Fatalf("scan exit %d", code)
+	}
+	regPath := filepath.Join(cfgDir, "wyk", "repos.json")
+	body, err := os.ReadFile(regPath)
+	if err != nil {
+		t.Fatalf("read registry: %v", err)
+	}
+	if !strings.Contains(string(body), goodPath) {
+		t.Errorf("registry missing good path %s\n%s", goodPath, body)
+	}
+	if strings.Contains(string(body), badPath) {
+		t.Errorf("registry should NOT contain bad path %s (probe failed)\n%s", badPath, body)
+	}
+	if strings.Count(string(body), `"path"`) != 1 {
+		t.Errorf("expected exactly 1 entry (good only); got:\n%s", body)
+	}
+}
+
+func TestRunScanAndRegister_AllProbeFailuresExitsZero(t *testing.T) {
+	// Every candidate failing the probe is not an error — the user
+	// has just discovered their tree has no usable bd workspaces.
+	// Exit 0, registry stays empty (or unwritten if no new ones to
+	// add at all). Stderr should carry skip messages but stdout's
+	// summary tells the same story.
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	root := t.TempDir()
+	_ = mkBeads(t, root, "one")
+	_ = mkBeads(t, root, "two")
+	probe := func(ctx context.Context, dir string) error {
+		return errors.New("nope")
+	}
+	if code := runScanAndRegisterWithProbe(root, false, probe); code != 0 {
+		t.Errorf("all-probes-fail scan should exit 0; got %d", code)
+	}
+	// Registry not written (no entries added).
+	regPath := filepath.Join(cfgDir, "wyk", "repos.json")
+	if _, err := os.Stat(regPath); !os.IsNotExist(err) {
+		t.Errorf("registry should not be written when no candidates pass; err=%v", err)
 	}
 }
 
