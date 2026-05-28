@@ -127,6 +127,33 @@ func TestFuzzyFilterNarrowsVisible(t *testing.T) {
 	}
 }
 
+func TestFuzzyFilterMatchesSubsequence(t *testing.T) {
+	// sahilm/fuzzy ranks by subsequence score, so a query that's
+	// NOT a substring but IS a subsequence still matches. This is
+	// the capability the brief's "fuzzy text filter" called for and
+	// the old strings.Contains implementation couldn't deliver.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	// "rpw" is not a substring of any issue but IS a subsequence of
+	// "rotate password" (r-o-t-a-te-P-asswo-W → r-p-w).
+	for _, r := range "rpw" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	if len(m.visible) == 0 {
+		t.Fatal("fuzzy filter should find 'rotate password' for query 'rpw'")
+	}
+	if m.visible[0].ID != "a-1" {
+		t.Errorf("best fuzzy match should be a-1 (rotate password); got %q", m.visible[0].ID)
+	}
+}
+
 func TestErrorStateShowsFriendlyMessage(t *testing.T) {
 	src := &stubSource{err: beads.ErrBDNotFound}
 	m := New(src)
