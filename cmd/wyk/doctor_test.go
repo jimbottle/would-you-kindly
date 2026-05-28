@@ -154,3 +154,49 @@ func TestCheckRepo_ChainedHookWithPreWykPasses(t *testing.T) {
 		t.Errorf("expected a PASS for chained hook with .pre-wyk among %+v", checks)
 	}
 }
+
+// TestCheckRepo_GitlinkSubdirHookResolves regresses would-you-kindly-2m9:
+// pre-fix doctor read `<r.Path>/.git/hooks/post-commit` directly,
+// which errored "not a directory" when `.git` was a *file*
+// containing `gitdir: <path>` (the layout `git worktree add` and
+// submodules create). The fix routes through `git rev-parse` so the
+// hook in the parent's resolved git dir is found and classified
+// normally.
+func TestCheckRepo_GitlinkSubdirHookResolves(t *testing.T) {
+	parent := t.TempDir()
+	if out, err := exec.Command("git", "init", "--quiet", parent).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	// Plant a wyk hook in the parent's resolved git dir.
+	hookPath := filepath.Join(parent, ".git", "hooks", "post-commit")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\n# Installed by `wyk init`.\nexec wyk hook post-commit\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Build the gitlink subdir: <parent>/sub/.git is a FILE with
+	// `gitdir: <parent>/.git`. Must also have a .beads/ so the
+	// hook check runs (it follows the .beads PASS branch).
+	sub := filepath.Join(parent, "sub")
+	if err := os.MkdirAll(filepath.Join(sub, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: "+filepath.Join(parent, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _ := filepath.EvalSymlinks(sub)
+	r := registry.Repo{Name: "sub", Path: resolved}
+	checks := checkRepo(r)
+	// Pre-fix this produced a FAIL with "open .../sub/.git/hooks/post-commit: not a directory".
+	// Post-fix: should classify as the plain wyk hook (PASS).
+	foundPlain := false
+	for _, c := range checks {
+		if c.status == statusFail {
+			t.Errorf("did not expect FAIL on gitlink subdir; got %q: %s", c.name, c.detail)
+		}
+		if strings.Contains(c.name, "post-commit hook (wyk)") && c.status == statusPass {
+			foundPlain = true
+		}
+	}
+	if !foundPlain {
+		t.Errorf("expected gitlink subdir's hook to be classified as plain wyk PASS; got %+v", checks)
+	}
+}

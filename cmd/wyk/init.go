@@ -382,6 +382,37 @@ func findGitPaths() (gitDir, repoRoot string, err error) {
 	return gitDir, repoRoot, nil
 }
 
+// resolveGitHookPath returns the absolute path to <hook> inside
+// repoDir's resolved git hooks directory. Shells out to
+// `git -C <repoDir> rev-parse --git-path hooks/<hook>` so gitlinks
+// (a `.git` file containing `gitdir: <path>`, common for submodules
+// and worktree-style subdirectory registrations), worktrees, and
+// custom GIT_DIR layouts all land on the same hook the installer
+// would have written. Callers should treat any non-nil error as
+// "couldn't resolve the path" and surface it; missing-hook is then
+// distinguishable from path-resolution-failure.
+func resolveGitHookPath(repoDir, hook string) (string, error) {
+	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--git-path", "hooks/"+hook)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("git rev-parse --git-path hooks/%s: %s", hook, msg)
+	}
+	p := strings.TrimSpace(stdout.String())
+	if p == "" {
+		return "", fmt.Errorf("git rev-parse --git-path hooks/%s returned empty path", hook)
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(repoDir, p)
+	}
+	return p, nil
+}
+
 // runScanAndRegister walks the filesystem under root, finds every
 // .beads/ directory, and registers each containing repo into
 // ~/.config/wyk/repos.json. Already-registered paths are skipped.

@@ -168,13 +168,14 @@ func checkRepo(r registry.Repo) []check {
 	prefix := "repo " + r.Name
 	var out []check
 
-	// .git directory present?
-	gitDir := filepath.Join(r.Path, ".git")
-	if _, err := os.Stat(gitDir); err != nil {
+	// .git present? Accepts either a directory or a gitlink file
+	// (`.git` containing `gitdir: <path>`, as worktrees and
+	// submodules produce). os.Stat handles both.
+	if _, err := os.Stat(filepath.Join(r.Path, ".git")); err != nil {
 		out = append(out, check{
 			name:   prefix + ": .git/ present",
 			status: statusFail,
-			detail: r.Path + " is registered but its .git directory is missing or unreadable (was the repo moved or deleted? consider `wyk init` from the new location or hand-edit ~/.config/wyk/repos.json)",
+			detail: r.Path + " is registered but its .git is missing or unreadable (was the repo moved or deleted? consider `wyk init` from the new location or hand-edit ~/.config/wyk/repos.json)",
 		})
 		return out
 	}
@@ -230,7 +231,18 @@ func checkRepo(r registry.Repo) []check {
 	}
 
 	// post-commit hook — is wyk's (plain or chained), foreign, or absent?
-	hookPath := filepath.Join(gitDir, "hooks", "post-commit")
+	// Resolve via git so gitlinks (.git as a file) and worktrees land on
+	// the right hook; raw filepath.Join(r.Path, ".git", ...) breaks for
+	// subdirectory registrations whose parent owns the actual git dir.
+	hookPath, herr := resolveGitHookPath(r.Path, "post-commit")
+	if herr != nil {
+		out = append(out, check{
+			name:   prefix + ": post-commit hook readable",
+			status: statusFail,
+			detail: herr.Error(),
+		})
+		return out
+	}
 	body, err := os.ReadFile(hookPath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
