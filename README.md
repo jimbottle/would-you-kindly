@@ -170,6 +170,20 @@ Aggregate snapshot: issue counts by status, currently human-flagged
 the last 7/30 days, and median/p95 time-to-close for human-flagged
 issues. Useful as a heartbeat for the handoff loop.
 
+### Looking up the convention (agents start here)
+
+```bash
+wyk conventions          # human-readable agent-ready tip
+wyk conventions -json    # structured for programmatic ingestion
+```
+
+If you're writing code that interacts with bd in a wyk-tracked repo,
+this is the first thing to run. It documents the two labels (`human`,
+`src:agent`), the inbox query, the preferred handoff command, and a
+concrete `bd create` example. `wyk init` also writes the same
+convention into bd's `remember` store, so `bd prime` surfaces it on
+every agent session start without an extra command.
+
 ### Picking up bounced-back work (agent inbox)
 
 The other direction of the handoff loop: when a human presses `H` to

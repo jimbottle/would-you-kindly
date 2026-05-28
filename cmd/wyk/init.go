@@ -147,6 +147,24 @@ func runInit(args []string) int {
 			fmt.Fprintln(os.Stderr, "wyk init: stat .beads:", err)
 			return 1
 		}
+
+		// Step 1.5: teach the project's bd workspace about wyk's
+		// labels. `bd remember` persists a memory that `bd prime`
+		// surfaces at the start of every agent session — so the
+		// next agent that opens this repo sees the human/src:agent
+		// convention without having to read source comments or
+		// docs/CONTRACT.md. Idempotent via --key. Best-effort:
+		// bd remember failure is WARNed to stderr but doesn't gate
+		// the rest of init (the hook install is the load-bearing
+		// part).
+		if !*dryRun {
+			if err := teachBDConvention(repoRoot); err != nil {
+				fmt.Fprintln(os.Stderr, "wyk init: bd remember (handoff convention) failed:", err)
+				fmt.Fprintln(os.Stderr, "wyk init: continuing — this enrichment is best-effort, the post-commit hook is the load-bearing install step")
+			} else {
+				fmt.Println("wyk init: stored handoff convention via `bd remember` (visible to agents via `bd prime`)")
+			}
+		}
 	}
 
 	hookPath := filepath.Join(gitDir, "hooks", "post-commit")
@@ -383,6 +401,33 @@ func findGitPaths() (gitDir, repoRoot string, err error) {
 		return "", "", errors.New("git rev-parse returned empty paths")
 	}
 	return gitDir, repoRoot, nil
+}
+
+// teachBDConvention writes a single bd memory describing the wyk
+// label convention into repoRoot's bd workspace. The --key makes
+// the call idempotent — repeated `wyk init` runs update in place
+// rather than duplicating. bd prime surfaces memories at session
+// start, so this is the channel by which the convention reaches
+// agents working in repos wyk init has touched.
+//
+// We pass --dolt-auto-commit=on per the project's bd write
+// convention (otherwise the memory lives in Dolt's working set
+// and won't survive `bd dolt push`).
+func teachBDConvention(repoRoot string) error {
+	const key = "wyk-handoff-convention"
+	const memory = "wyk handoff convention: tasks for a human carry label=human + label=src:agent. The agent's inbox is `label=src:agent AND NOT label=human AND status!=closed` (run `wyk inbox`). To file or hand off a human task, prefer `wyk handoff <id>` (or `wyk handoff -create \"<title>\"` for file+handoff in one step) over hand-rolling labels via `bd create`. Full text: `wyk conventions`."
+	cmd := exec.Command("bd", "remember", "--key", key, "--dolt-auto-commit=on", memory)
+	cmd.Dir = repoRoot
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
 }
 
 // resolveGitHookPath returns the absolute path to <hook> inside

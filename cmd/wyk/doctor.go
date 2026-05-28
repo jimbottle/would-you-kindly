@@ -82,6 +82,19 @@ func runDoctor(args []string) int {
 			hasFail = true
 		}
 	}
+
+	// Conventions stanza. Agent feedback flagged that the handoff
+	// labels (human + src:agent) are undiscoverable at runtime —
+	// agents reach for doctor when something feels off, and doctor
+	// didn't mention the convention at all. Always [PASS], purely
+	// informational. Terse on purpose: directs the reader at
+	// `wyk conventions` for the full text.
+	fmt.Println()
+	fmt.Printf("  [%s] handoff convention\n", statusPass)
+	fmt.Println("         human-flagged tasks carry: label=human + label=src:agent")
+	fmt.Println("         agent inbox: label=src:agent AND NOT label=human AND status!=closed")
+	fmt.Println("         prefer `wyk handoff <id>` over hand-rolling labels; full text in `wyk conventions`")
+
 	fmt.Println()
 	switch {
 	case hasFail:

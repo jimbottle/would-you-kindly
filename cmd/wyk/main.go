@@ -52,12 +52,15 @@ func main() {
 			os.Exit(runDoctor(os.Args[2:]))
 		case "registry":
 			os.Exit(runRegistry(os.Args[2:]))
+		case "conventions":
+			os.Exit(runConventions(os.Args[2:]))
 		case "version", "--version", "-v":
 			fmt.Println(versionString())
 			os.Exit(0)
 		}
 	}
 
+	flag.Usage = printTopLevelUsage
 	dir := flag.String("C", "", "run as if bd had been started in this directory")
 	me := flag.String("me", "", "current user, used by the 'mine' preset (default: git user.email or $USER)")
 	probe := flag.Bool("probe", false, "non-TTY: print the human-flagged issues and exit (useful in scripts/CI)")
@@ -367,6 +370,41 @@ func versionString() string {
 		return name + " " + v + suffix
 	}
 	return name + " " + v
+}
+
+// printTopLevelUsage is wired into flag.Usage so `wyk --help` (or any
+// flag-parse failure) prints a structured help block instead of the
+// bare flag list Go's default emits. Agent feedback flagged that the
+// subcommands — especially `handoff`, the recommended path for filing
+// a human task — were invisible from --help. Listing them here closes
+// the discoverability gap that produced wrong-labelled bd issues.
+func printTopLevelUsage() {
+	w := flag.CommandLine.Output()
+	fmt.Fprint(w, `wyk — terminal UI over the bd issue tracker, with a handoff convention
+                for the agent ↔ human round-trip.
+
+Usage:
+  wyk [flags]               run the TUI (default)
+  wyk <subcommand> [args]
+
+Subcommands:
+  handoff      hand a bd issue to a human (preferred over hand-rolling labels)
+  inbox        list issues a human bounced back to the agent
+  init         install the post-commit auto-close hook in this repo
+  doctor       diagnose installation / registry / per-repo configuration
+  stats        aggregate handoff metrics across registered repos
+  registry     list / remove / prune registered workspaces
+  conventions  print the agent-facing label convention (–json for structured)
+  version      print the version string
+  hook         internal: invoked by the installed post-commit hook
+
+Top-level flags (TUI / --probe mode):
+`)
+	flag.PrintDefaults()
+	fmt.Fprint(w, `
+For the agent-facing labels (`+"`human`"+`, `+"`src:agent`"+`) and the inbox
+query, run: wyk conventions
+`)
 }
 
 // defaultMe resolves the current identity the way bd itself does:
