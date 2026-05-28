@@ -7,8 +7,12 @@ var (
 			Foreground(lipgloss.Color("212")).
 			Bold(true)
 
-	idStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244"))
+	// idStyle is unstyled — table data cells use the terminal's
+	// default foreground so the Repo/Branch/ID/T/P/Updated columns
+	// read as bright as the Title. Earlier versions dimmed these
+	// columns to push attention toward the title, but the user
+	// preference is a flat uniform white table.
+	idStyle = lipgloss.NewStyle()
 
 	statusOpen       = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	statusInProgress = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
@@ -72,18 +76,15 @@ var (
 			Foreground(lipgloss.Color("244"))
 
 	// tableHeaderStyle renders the column-header row above the issue
-	// list — dim, underlined, no bold (the rows are the content; the
-	// header is scaffolding).
-	tableHeaderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Underline(true)
+	// list — underlined for visual separation from the data rows,
+	// otherwise unstyled (matches the data cells' default foreground).
+	tableHeaderStyle = lipgloss.NewStyle().Underline(true)
 
-	// typeStyle is muted so the type column doesn't compete with the
-	// title for the reader's attention.
-	typeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
-	// updatedStyle is similarly muted; recency is context, not headline.
-	updatedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	// typeStyle, updatedStyle: unstyled, same as idStyle. Kept as
+	// named values so the renderRow code stays symmetric and a
+	// future change can re-introduce per-column emphasis cheaply.
+	typeStyle    = lipgloss.NewStyle()
+	updatedStyle = lipgloss.NewStyle()
 
 	// confirmStyle renders the destructive-action confirmation prompt
 	// (e.g. "close wyk-42? [y/N]") with enough emphasis that the user
