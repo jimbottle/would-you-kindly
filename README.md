@@ -127,12 +127,14 @@ If `.git/hooks/post-commit` already exists from another tool,
 | --------- | ------------------------------------------------- |
 | `j` / `k` | Move down / up                                    |
 | `g` / `G` | Top / bottom of the list                          |
+| `]` / `[` | Next / previous human-flagged issue (wraps)       |
 | `enter`   | Open the selected issue (read its instructions)   |
 | `esc`     | Back to the list                                  |
 | `/`       | Open the fuzzy filter input (matches title + body)|
 | `h`       | Jump to the human-flagged view                    |
 | `tab`     | Cycle preset filters (all → ready → human → mine → blocked) |
 | `r`       | Refresh from bd now                               |
+| `?`       | Open the help overlay                             |
 | `q`       | Quit                                              |
 
 ### Writing

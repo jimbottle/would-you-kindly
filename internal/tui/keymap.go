@@ -19,9 +19,17 @@ type keyMap struct {
 
 	// Write actions (Phase 2). These are only honored when the Source
 	// also implements Mutator; otherwise they print a "read-only" hint.
-	Close        key.Binding // c — close the cursor issue (with confirmation)
-	ToggleHuman  key.Binding // H — add/remove the 'human' label on the cursor issue
-	AddNote      key.Binding // n — append a note to the cursor issue
+	Close       key.Binding // c — close the cursor issue (with confirmation)
+	ToggleHuman key.Binding // H — add/remove the 'human' label on the cursor issue
+	AddNote     key.Binding // n — append a note to the cursor issue
+
+	// Navigation jumps (Phase 3.B.2): bracket through the human-flagged
+	// subset of the current view without leaving the active preset.
+	JumpNextHuman key.Binding // ] — next human-flagged issue (wraps)
+	JumpPrevHuman key.Binding // [ — previous human-flagged issue (wraps)
+
+	// Help overlay (Phase 3.B.3).
+	Help key.Binding // ? — modal listing every binding
 }
 
 func defaultKeyMap() keyMap {
@@ -41,5 +49,10 @@ func defaultKeyMap() keyMap {
 		Close:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "close")),
 		ToggleHuman: key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "±human")),
 		AddNote:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "note")),
+
+		JumpNextHuman: key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next human")),
+		JumpPrevHuman: key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev human")),
+
+		Help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
 }

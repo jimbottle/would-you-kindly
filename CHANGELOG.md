@@ -163,6 +163,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only set or clear `m.status` on prompt resolution, not on every
   keystroke.
 
+### Phase 3.B — TUI polish
+
+- **True fuzzy matcher** (`github.com/sahilm/fuzzy` v0.1.2): `/`
+  filter now scores subsequence matches and stable-sorts results
+  best-first. Substring queries still work (subsumed by fuzzy);
+  `rpw` against "rotate password" — which the substring matcher
+  missed — now ranks first.
+- **`]` / `[` keys**: jump to the next / previous human-flagged
+  issue in the current view. Wraps. Status banner says
+  "no human-flagged issues in this view" when none exist.
+- **`?` help overlay**: modal listing every keybinding, grouped
+  (navigation / filters / writes / meta). Source of truth is the
+  keymap itself — no copy/paste of help strings. Opens from list
+  or detail mode; esc / ? / q dismisses and restores the previous
+  mode.
+
 ### Phase 3.A — Claude Code skill file
 
 - New `.claude/skills/handoff/SKILL.md` makes the handoff convention

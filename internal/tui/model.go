@@ -49,6 +49,7 @@ const (
 	modeFilter                   // / prompt active, typing into textinput
 	modeConfirmClose             // y/n confirmation prompt for close
 	modeNote                     // text input for a new note
+	modeHelp                     // modal listing every keybinding
 )
 
 // Source abstracts where issues come from so a test can plug in
@@ -102,6 +103,11 @@ type Model struct {
 	// prevents close/note from targeting the wrong issue or panicking
 	// when the list empties under the prompt.
 	pendingTargetID string
+
+	// helpReturnMode is the mode to restore when the user dismisses
+	// the ? overlay. ? can be opened from modeList or modeDetail; we
+	// drop the user back into whichever they came from.
+	helpReturnMode mode
 
 	// tickGen identifies the currently-live tick chain. Each suspend
 	// or restart bumps it; stale ticks (e.g. one scheduled before a
@@ -245,6 +251,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfirmClose(msg)
 		case modeNote:
 			return m.updateNote(msg)
+		case modeHelp:
+			return m.updateHelp(msg)
 		default:
 			m.status = ""
 			return m.updateList(msg)
@@ -310,7 +318,33 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleHuman()
 	case keyHit(msg, m.keys.AddNote):
 		return m.beginNote()
+	case keyHit(msg, m.keys.JumpNextHuman):
+		return m.jumpToHuman(+1)
+	case keyHit(msg, m.keys.JumpPrevHuman):
+		return m.jumpToHuman(-1)
+	case keyHit(msg, m.keys.Help):
+		return m.openHelp()
 	}
+	return m, nil
+}
+
+// jumpToHuman moves the cursor to the next (dir=+1) or previous
+// (dir=-1) issue in m.visible that carries the human label. Wraps.
+// If no human-flagged issues are visible, sets a status banner and
+// leaves the cursor put.
+func (m Model) jumpToHuman(dir int) (tea.Model, tea.Cmd) {
+	n := len(m.visible)
+	if n == 0 {
+		return m, nil
+	}
+	for offset := 1; offset <= n; offset++ {
+		idx := ((m.cursor + dir*offset) % n + n) % n
+		if m.visible[idx].IsHuman() {
+			m.cursor = idx
+			return m, nil
+		}
+	}
+	m.status = "no human-flagged issues in this view"
 	return m, nil
 }
 
@@ -531,6 +565,27 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 	case keyHit(msg, m.keys.Quit):
 		return m, tea.Quit
+	case keyHit(msg, m.keys.Help):
+		return m.openHelp()
+	}
+	return m, nil
+}
+
+// openHelp captures the current mode and switches to modeHelp; the
+// help overlay's dismiss handler restores the captured mode.
+func (m Model) openHelp() (tea.Model, tea.Cmd) {
+	m.helpReturnMode = m.mode
+	m.mode = modeHelp
+	return m, nil
+}
+
+func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	switch msg.String() {
+	case "esc", "?", "q":
+		m.mode = m.helpReturnMode
 	}
 	return m, nil
 }
@@ -588,9 +643,46 @@ func (m Model) View() string {
 	switch m.mode {
 	case modeDetail:
 		return m.viewDetail()
+	case modeHelp:
+		return m.viewHelp()
 	default:
 		return m.viewList()
 	}
+}
+
+// viewHelp renders the keybinding overlay, grouped so the writes and
+// navigation sections don't blur into each other. Source of truth is
+// the keymap itself — no copy/paste of help strings.
+func (m Model) viewHelp() string {
+	var b strings.Builder
+	b.WriteString(detailHeaderStyle.Render("Keys"))
+	b.WriteString("\n")
+
+	groups := []struct {
+		title    string
+		bindings []key.Binding
+	}{
+		{"Navigation", []key.Binding{
+			m.keys.Up, m.keys.Down, m.keys.Top, m.keys.Bottom,
+			m.keys.Open, m.keys.Back,
+			m.keys.JumpPrevHuman, m.keys.JumpNextHuman,
+		}},
+		{"Filters", []key.Binding{m.keys.Filter, m.keys.Human, m.keys.Cycle}},
+		{"Writes", []key.Binding{m.keys.Close, m.keys.ToggleHuman, m.keys.AddNote}},
+		{"Meta", []key.Binding{m.keys.Refresh, m.keys.Help, m.keys.Quit}},
+	}
+	for _, g := range groups {
+		b.WriteString("\n")
+		b.WriteString(detailLabelStyle.Render(g.title))
+		b.WriteString("\n")
+		for _, kb := range g.bindings {
+			h := kb.Help()
+			b.WriteString(fmt.Sprintf("  %-6s  %s\n", h.Key, h.Desc))
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("esc / ? / q to close"))
+	return b.String()
 }
 
 func (m Model) viewList() string {
