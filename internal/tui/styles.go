@@ -97,6 +97,14 @@ var (
 	statusBannerStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("84")).
 				Italic(true)
+
+	// setupHintStyle renders the onboarding nag (e.g. "no repos
+	// registered, run wyk init -scan ~/Projects"). Bright enough to
+	// be noticed on first run; not loud enough to keep dominating
+	// the eye on every subsequent paint.
+	setupHintStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("214")).
+				Italic(true)
 )
 
 func statusStyleFor(status string) lipgloss.Style {

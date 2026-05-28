@@ -62,7 +62,7 @@ func main() {
 		*me = defaultMe()
 	}
 
-	src, err := buildSource(*dir, *me)
+	src, hint, err := buildSource(*dir, *me)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
 		os.Exit(1)
@@ -72,7 +72,7 @@ func main() {
 		os.Exit(runProbe(src))
 	}
 
-	p := tea.NewProgram(tui.New(src), tea.WithAltScreen())
+	p := tea.NewProgram(tui.NewWithHint(src, hint), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
 		os.Exit(1)
@@ -91,31 +91,35 @@ func main() {
 //   - registry is empty: single-repo against cwd, the v0.1.0
 //     fallback so a user who hasn't run `wyk init` anywhere still
 //     gets a working TUI from inside a bd repo.
-func buildSource(dir, me string) (tui.Source, error) {
+func buildSource(dir, me string) (tui.Source, string, error) {
 	if dir != "" {
 		c := beads.NewClient()
 		c.Dir = dir
-		return &tui.BDSource{Client: c, Me: me}, nil
+		return &tui.BDSource{Client: c, Me: me}, "", nil
 	}
 
 	regPath, err := registry.DefaultPath()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	reg, err := registry.Load(regPath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	switch len(reg.Repos) {
 	case 0:
-		// Empty registry: behave like v0.1.0 with the cwd.
+		// Empty registry: behave like v0.1.0 with the cwd, but
+		// surface a banner in the TUI so the multi-repo feature
+		// isn't invisible to users who just installed.
 		c := beads.NewClient()
-		return &tui.BDSource{Client: c, Me: me}, nil
+		hint := "No repos registered yet — running against cwd only.\n" +
+			"  Run `wyk init` here, or `wyk init -scan ~/Projects` to discover every bd workspace under that tree."
+		return &tui.BDSource{Client: c, Me: me}, hint, nil
 	case 1:
 		// Single registered repo: use it (not cwd).
 		c := beads.NewClient()
 		c.Dir = reg.Repos[0].Path
-		return &tui.BDSource{Client: c, Me: me}, nil
+		return &tui.BDSource{Client: c, Me: me}, "", nil
 	default:
 		clients := make([]*beads.Client, len(reg.Repos))
 		names := make([]string, len(reg.Repos))
@@ -125,7 +129,8 @@ func buildSource(dir, me string) (tui.Source, error) {
 			clients[i] = c
 			names[i] = r.Name
 		}
-		return tui.NewMultiBDSource(clients, names, me)
+		src, err := tui.NewMultiBDSource(clients, names, me)
+		return src, "", err
 	}
 }
 

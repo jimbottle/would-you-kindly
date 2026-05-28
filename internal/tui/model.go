@@ -131,6 +131,12 @@ type Model struct {
 	// duplicate tick chains after a terminal-error → recovery cycle.
 	tickGen int
 
+	// setupHint is a one-line banner shown above the table — used
+	// to nag the user when wyk is running in the empty-registry
+	// fallback (single-repo cwd mode) so the multi-repo feature
+	// isn't invisible.
+	setupHint string
+
 	// input is the textinput shared by modeFilter and modeNote. The
 	// modes are mutually exclusive — only one prompt is on screen at
 	// a time — so a single field is enough; Prompt/Placeholder are
@@ -139,7 +145,8 @@ type Model struct {
 }
 
 // New constructs a Model with the given Source and a sensible default
-// preset (all).
+// preset (all). For a startup hint banner (e.g. "no repos registered;
+// run wyk init -scan ~/Projects to discover them"), use NewWithHint.
 func New(src Source) Model {
 	ti := textinput.New()
 	ti.Prompt = "/ "
@@ -154,6 +161,15 @@ func New(src Source) Model {
 		input:   ti,
 		loading: true, // first paint shows "loading…" until Init's fetch returns
 	}
+}
+
+// NewWithHint is New plus a setupHint banner shown above the issue
+// list. Used when the caller wants to surface an onboarding nag
+// (e.g. empty registry) without forcing all callers to pass a hint.
+func NewWithHint(src Source, hint string) Model {
+	m := New(src)
+	m.setupHint = hint
+	return m
 }
 
 // Init triggers the first fetch and starts the refresh tick.
@@ -758,7 +774,12 @@ func (m Model) viewList() string {
 
 	header := titleStyle.Render("would-you-kindly")
 	b.WriteString(header)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	if m.setupHint != "" {
+		b.WriteString(setupHintStyle.Render(m.setupHint))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	switch {
 	case m.lastErr != nil:

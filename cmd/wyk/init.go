@@ -74,6 +74,7 @@ func runInit(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print what would happen without writing the hook")
 	skipBD := fs.Bool("skip-bd-init", false, "do not run `bd init` even if .beads is missing")
 	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
+	scanRoot := fs.String("scan", "", "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -83,11 +84,17 @@ func runInit(args []string) int {
 	}
 	if fs.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "usage: wyk init [-force | -chain] [-dry-run] [-skip-bd-init] [-skip-register]")
+		fmt.Fprintln(os.Stderr, "   or: wyk init -scan <root> [-dry-run]")
 		return 64
 	}
 	if *force && *chain {
 		fmt.Fprintln(os.Stderr, "wyk init: -force and -chain are mutually exclusive")
 		return 64
+	}
+
+	// -scan short-circuits the per-repo init path; it only registers.
+	if *scanRoot != "" {
+		return runScanAndRegister(*scanRoot, *dryRun)
 	}
 
 	gitDir, repoRoot, err := findGitPaths()
@@ -351,6 +358,141 @@ func findGitPaths() (gitDir, repoRoot string, err error) {
 		return "", "", errors.New("git rev-parse returned empty paths")
 	}
 	return gitDir, repoRoot, nil
+}
+
+// runScanAndRegister walks the filesystem under root, finds every
+// .beads/ directory, and registers each containing repo into
+// ~/.config/wyk/repos.json. Already-registered paths are skipped.
+// Skipped during traversal: any .git, .cache, .beads itself,
+// node_modules, vendor, and any other hidden directory.
+//
+// Exit codes:
+//
+//	0  one or more new repos registered (or, with -dry-run, would be)
+//	1  filesystem / registry error
+//	2  root does not exist
+func runScanAndRegister(root string, dryRun bool) int {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init -scan:", err)
+		return 1
+	}
+	if st, err := os.Stat(abs); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init -scan:", err)
+		return 2
+	} else if !st.IsDir() {
+		fmt.Fprintln(os.Stderr, "wyk init -scan: not a directory:", abs)
+		return 2
+	}
+
+	regPath, err := registry.DefaultPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init -scan: resolve registry path:", err)
+		return 1
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init -scan: load registry:", err)
+		return 1
+	}
+
+	found, err := scanForBeadsRepos(abs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init -scan: walk:", err)
+		return 1
+	}
+
+	var newOnes, alreadyRegistered []string
+	for _, path := range found {
+		if reg.Has(path) {
+			alreadyRegistered = append(alreadyRegistered, path)
+			continue
+		}
+		newOnes = append(newOnes, path)
+	}
+
+	fmt.Printf("wyk init -scan: searched %s\n", abs)
+	fmt.Printf("  found %d bd workspace(s): %d new, %d already registered\n",
+		len(found), len(newOnes), len(alreadyRegistered))
+
+	if dryRun {
+		if len(newOnes) == 0 {
+			fmt.Println("  (dry-run) nothing new to register.")
+			return 0
+		}
+		fmt.Println("  (dry-run) would register:")
+		for _, p := range newOnes {
+			fmt.Printf("    + %s\n", p)
+		}
+		return 0
+	}
+
+	if len(newOnes) == 0 {
+		fmt.Println("  nothing new to register.")
+		return 0
+	}
+	for _, p := range newOnes {
+		if err := reg.Add(p); err != nil {
+			fmt.Fprintf(os.Stderr, "wyk init -scan: add %s: %v\n", p, err)
+			return 1
+		}
+		fmt.Printf("  + %s\n", p)
+	}
+	if err := reg.Save(regPath); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init -scan: save registry:", err)
+		return 1
+	}
+	fmt.Printf("  registered %d new repo(s) in %s\n", len(newOnes), regPath)
+	return 0
+}
+
+// scanForBeadsRepos walks root looking for .beads/ directories. The
+// repo root for each match is the directory containing .beads/. We
+// stop descending into hidden directories (e.g. .git, .cache) and
+// into common heavy directories (node_modules, vendor) to keep the
+// walk responsive on large project trees. We never descend into a
+// found .beads/ itself either — bd's own internals aren't repos.
+func scanForBeadsRepos(root string) ([]string, error) {
+	var out []string
+	skipDirs := map[string]bool{
+		"node_modules": true,
+		"vendor":       true,
+	}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			// Permission errors and unreadable directories: skip
+			// silently rather than abort the whole scan. The user
+			// can fix and re-run.
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		// Skip hidden directories (except the root itself, which
+		// might legitimately be named e.g. ~/.config/foo and contain
+		// repos).
+		if path != root && strings.HasPrefix(name, ".") {
+			if name == ".beads" {
+				// This IS a bd workspace marker — record the parent
+				// and don't descend into the bd internals.
+				repoRoot, _ := filepath.EvalSymlinks(filepath.Dir(path))
+				if repoRoot == "" {
+					repoRoot = filepath.Dir(path)
+				}
+				out = append(out, repoRoot)
+			}
+			return filepath.SkipDir
+		}
+		if skipDirs[name] {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return out, err
 }
 
 // preWykExists reports whether a .pre-wyk preservation file is
