@@ -16,11 +16,20 @@ import (
 // the preset → bd-command mapping so the TUI itself stays free of
 // command-line semantics. It also satisfies Mutator so the write
 // keystrokes (c / H / n) dispatch through it.
+//
+// When Name is non-empty, Fetch decorates each returned Issue with
+// Repo=Name and Branch=<git branch of Client.Dir>. The TUI uses
+// those to render the Repo/Branch columns; setting Name is the way
+// a caller in single-repo mode opts into the roborev-like layout
+// rather than hiding the columns.
 type BDSource struct {
 	Client *beads.Client
 	// Me is the current user, used by PresetMine. Empty means
 	// "mine" degrades to all open issues.
 	Me string
+	// Name is the display label for the Repo column. Empty leaves
+	// Repo blank on each issue (legacy behaviour).
+	Name string
 }
 
 // Compile-time check that BDSource satisfies both interfaces.
@@ -29,20 +38,34 @@ var (
 	_ Mutator = (*BDSource)(nil)
 )
 
-// Fetch dispatches to the right bd subcommand for the preset.
+// Fetch dispatches to the right bd subcommand for the preset, then
+// decorates the result with Repo/Branch when Name is set.
 func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, error) {
+	var issues []beads.Issue
+	var err error
 	switch p {
 	case filter.PresetReady:
 		// bd ready has blocker-aware semantics that bd query cannot
 		// reproduce; defer to it.
-		return s.Client.Ready(ctx)
+		issues, err = s.Client.Ready(ctx)
 	case filter.PresetAll:
 		// "all" in the TUI means "all non-closed" — opening wyk
 		// should show actionable work, not the full history.
-		return s.Client.List(ctx)
+		issues, err = s.Client.List(ctx)
 	default:
-		return s.Client.Query(ctx, filter.Query(p, s.Me))
+		issues, err = s.Client.Query(ctx, filter.Query(p, s.Me))
 	}
+	if err != nil {
+		return nil, err
+	}
+	if s.Name != "" {
+		branch := gitBranch(ctx, s.Client.Dir)
+		for i := range issues {
+			issues[i].Repo = s.Name
+			issues[i].Branch = branch
+		}
+	}
+	return issues, nil
 }
 
 // --- Mutator implementation (single-repo) ---

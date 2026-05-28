@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -95,7 +96,7 @@ func buildSource(dir, me string) (tui.Source, string, error) {
 	if dir != "" {
 		c := beads.NewClient()
 		c.Dir = dir
-		return &tui.BDSource{Client: c, Me: me}, "", nil
+		return &tui.BDSource{Client: c, Me: me, Name: filepath.Base(dir)}, "", nil
 	}
 
 	regPath, err := registry.DefaultPath()
@@ -110,16 +111,22 @@ func buildSource(dir, me string) (tui.Source, string, error) {
 	case 0:
 		// Empty registry: behave like v0.1.0 with the cwd, but
 		// surface a banner in the TUI so the multi-repo feature
-		// isn't invisible to users who just installed.
+		// isn't invisible to users who just installed. Repo column
+		// gets the cwd's basename so the layout stays consistent
+		// with the multi-repo view.
 		c := beads.NewClient()
 		hint := "No repos registered yet — running against cwd only.\n" +
 			"  Run `wyk init` here, or `wyk init -scan ~/Projects` to discover every bd workspace under that tree."
-		return &tui.BDSource{Client: c, Me: me}, hint, nil
+		var name string
+		if cwd, err := os.Getwd(); err == nil {
+			name = filepath.Base(cwd)
+		}
+		return &tui.BDSource{Client: c, Me: me, Name: name}, hint, nil
 	case 1:
 		// Single registered repo: use it (not cwd).
 		c := beads.NewClient()
 		c.Dir = reg.Repos[0].Path
-		return &tui.BDSource{Client: c, Me: me}, "", nil
+		return &tui.BDSource{Client: c, Me: me, Name: reg.Repos[0].Name}, "", nil
 	default:
 		clients := make([]*beads.Client, len(reg.Repos))
 		names := make([]string, len(reg.Repos))
