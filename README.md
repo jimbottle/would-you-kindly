@@ -26,8 +26,8 @@ records who filed it. The full contract lives in
 
 ## Install
 
-You'll need Go 1.22+ and [bd](https://github.com/gastownhall/beads) on
-your `PATH`.
+You'll need Go 1.26+ (matching `go.mod`) and
+[bd](https://github.com/gastownhall/beads) on your `PATH`.
 
 ```bash
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest

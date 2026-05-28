@@ -36,9 +36,12 @@ func sampleIssues() []beads.Issue {
 	}
 }
 
-// applyFetched simulates the first fetch completing.
+// applyFetched simulates the first fetch completing under the model's
+// current preset. The preset tag matters: the model now drops results
+// for any preset other than the one currently selected, so tests must
+// echo m.preset back into the message.
 func applyFetched(m Model, src *stubSource) Model {
-	model, _ := m.Update(fetchedMsg{issues: src.issues})
+	model, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
 	return model.(Model)
 }
 
@@ -96,9 +99,43 @@ func TestFuzzyFilterNarrowsVisible(t *testing.T) {
 func TestErrorStateShowsFriendlyMessage(t *testing.T) {
 	src := &stubSource{err: beads.ErrBDNotFound}
 	m := New(src)
-	model, _ := m.Update(fetchedMsg{err: src.err})
+	model, _ := m.Update(fetchedMsg{preset: m.preset, err: src.err})
 	out := model.(Model).View()
 	if !strings.Contains(out, "bd is not installed") {
 		t.Errorf("error view missing friendly bd-not-installed copy:\n%s", out)
+	}
+}
+
+func TestStaleFetchIsDroppedAfterPresetChange(t *testing.T) {
+	// A tick fires while the user is on the default preset, then the
+	// user switches to PresetHuman before the fetch returns. The late
+	// fetched message must not overwrite the model's state.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	// switch to human, model.all clears
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = model.(Model)
+	if len(m.all) != 0 {
+		t.Fatalf("preset switch should clear m.all, got %d", len(m.all))
+	}
+
+	// late fetch for the OLD preset arrives
+	stale := []beads.Issue{{ID: "stale-1", Title: "stale", Labels: []string{}}}
+	model, _ = m.Update(fetchedMsg{preset: filter.PresetAll, issues: stale})
+	m = model.(Model)
+	if len(m.all) != 0 {
+		t.Errorf("stale fetch should have been dropped; m.all = %+v", m.all)
+	}
+}
+
+func TestTickSuspendsOnTerminalError(t *testing.T) {
+	src := &stubSource{err: beads.ErrBDNotFound}
+	m := New(src)
+	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
+	m = model.(Model)
+	_, cmd := m.Update(tickMsg{})
+	if cmd != nil {
+		t.Error("tick should not re-arm while error state is terminal")
 	}
 }

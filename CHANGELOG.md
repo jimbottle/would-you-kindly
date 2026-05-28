@@ -27,6 +27,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Non-TTY probe mode** (`wyk --probe`) for scripts and CI: prints
   human-flagged issues and exits with a meaningful status code.
 
+### Fixed
+
+- **TUI fetch race**: `fetchedMsg` now carries the originating preset
+  and stale results are dropped so a tick can't clobber a user-initiated
+  preset switch.
+- **TUI auto-refresh**: the 10s tick suspends when bd is missing or the
+  workspace is absent (terminal errors), and resumes after a successful
+  manual refresh (`r`).
+- **TUI filter prompt**: `ctrl+c` now quits from the `/` prompt; cursor
+  blink ticks are forwarded to the textinput so the prompt's cursor
+  animates as expected.
+- **TUI preset switch**: the visible list is cleared on preset change
+  so the old preset's rows don't render under the new header during
+  the fetch in-flight.
+- **filter.Query**: `PresetReady` and `PresetAll` return an empty
+  string (sentinel) rather than a plausible-but-wrong query, so a
+  Source that forgets to special-case them fails loudly.
+- **`--me` resolution**: shells out to `git config user.email` only
+  when the flag is empty, removing a startup hitch and an implicit
+  dependency on git being on `PATH`.
+- **README**: lists Go 1.26+ to match `go.mod`.
+- **CI**: pinned to Go `1.26.x`, scoped `pull_request` to `main`,
+  added `permissions: contents: read` and a 10-minute job timeout.
+- **CHANGELOG**: `[Unreleased]` link points at `/commits/main` (a
+  resolvable URL) until there's a tag to compare against.
+- **docs/CONTRACT.md**: dropped the false "return the same set"
+  equivalence claim between `bd query` and the `bd list --status=…`
+  enumeration (the enumeration omits `deferred`); softened the
+  `src:agent`/`src:human` invariant to acknowledge legacy issues with
+  no source label.
+
 ### Out of scope (deferred to Phase 2+)
 
 - Write actions in the TUI (create, close, update, label, comment).
@@ -35,4 +66,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The agent-side skill that sets the `human` label on handoff.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/commits/main

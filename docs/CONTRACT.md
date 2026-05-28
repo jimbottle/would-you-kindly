@@ -16,7 +16,7 @@ Two supporting conventions complete the contract:
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Needs human action**| Label `human`. Set by an agent (or a person) the moment a task requires hands-on work that an agent cannot or should not perform.                       |
 | **Instructions**      | The issue **description** holds the specific, ordered steps the human must perform. Treat it as a runbook the human can follow without further context.|
-| **Who filed it**      | Label `src:agent` if an agent created the issue, `src:human` if a person did. Exactly one of the two should be present on every issue `wyk` tracks.     |
+| **Who filed it**      | Label `src:agent` if an agent created the issue, `src:human` if a person did. New issues created through `wyk` or the agent skill always set one; pre-existing issues with no `src:` label are treated as unknown source.|
 
 ### Why these and not others
 
@@ -74,14 +74,16 @@ The canonical query — used by `wyk`'s dedicated human-view keystroke — is:
 bd query "label=human AND status!=closed" --json
 ```
 
-Equivalent flag-based form (handy in shell pipelines):
+Near-equivalent flag-based form (handy in shell pipelines):
 
 ```bash
 bd list --label=human --status=open,in_progress,blocked --json
 ```
 
-Both return the same set. `wyk` uses the `bd query` form because it composes
-cleanly with future predicates (e.g. `AND priority<=1`).
+This omits `deferred` (and any future non-closed statuses bd may add),
+so it can return a strict subset of the canonical query. `wyk` uses the
+`bd query` form because it composes cleanly with future predicates
+(e.g. `AND priority<=1`) and won't drift if bd adds new statuses.
 
 ### Discover handoffs from an agent specifically
 

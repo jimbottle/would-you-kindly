@@ -38,14 +38,24 @@ func NextPreset(p Preset) Preset {
 	return presetOrder[0]
 }
 
-// Query returns the bd query expression that materialises a preset.
-// `me` is the current user, used by PresetMine; empty `me` falls
-// back to all open issues, since "mine" with no identity is moot.
+// Query returns the bd query expression that materialises a preset,
+// or the empty string for presets that have no `bd query` equivalent.
+// `me` is the current user, used by PresetMine; empty `me` falls back
+// to all open issues, since "mine" with no identity is moot.
 //
-// The PresetReady preset is special: bd's `bd ready` command applies
-// blocker-aware semantics that `bd query` cannot replicate exactly.
-// Callers should check Preset == PresetReady and use the dedicated
-// ready endpoint rather than this query string.
+// Two presets intentionally return "":
+//
+//   - PresetReady has blocker-aware semantics only `bd ready` can
+//     reproduce; a query approximation would silently drop the
+//     blocked-by-open-deps exclusion.
+//   - PresetAll wants closed issues included; `bd list --all` is the
+//     canonical source, and `status!=closed` would drop them.
+//
+// Sources are expected to special-case these two presets and call
+// the dedicated bd subcommands. Returning "" instead of a wrong-but-
+// plausible query means a Source that forgets the special case will
+// fail loudly (bd rejects an empty query) rather than quietly return
+// the wrong set.
 func Query(p Preset, me string) string {
 	switch p {
 	case PresetHuman:
@@ -57,10 +67,8 @@ func Query(p Preset, me string) string {
 			return `status!=closed`
 		}
 		return `assignee=` + me + ` AND status!=closed`
-	case PresetReady:
-		return `status=open` // fallback; prefer bd ready
-	case PresetAll:
-		fallthrough
+	case PresetReady, PresetAll:
+		return ""
 	default:
 		return `status!=closed`
 	}

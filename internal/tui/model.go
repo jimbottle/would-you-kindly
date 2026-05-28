@@ -87,12 +87,14 @@ func (m Model) Init() tea.Cmd {
 
 // fetchCmd asks the Source for issues matching the current preset.
 // It uses a fresh background context per call; the bd Client applies
-// its own per-call timeout.
+// its own per-call timeout. The originating preset is echoed back in
+// the result so stale fetches (a tick that arrived while the user was
+// switching presets) can be dropped instead of overwriting newer data.
 func (m Model) fetchCmd() tea.Cmd {
 	src, preset := m.src, m.preset
 	return func() tea.Msg {
 		issues, err := src.Fetch(context.Background(), preset)
-		return fetchedMsg{issues: issues, err: err}
+		return fetchedMsg{preset: preset, issues: issues, err: err}
 	}
 }
 
@@ -101,11 +103,19 @@ func tickCmd() tea.Cmd {
 }
 
 type fetchedMsg struct {
+	preset filter.Preset
 	issues []beads.Issue
 	err    error
 }
 
 type tickMsg struct{}
+
+// isTerminalErr reports whether an error is one the auto-refresh tick
+// should give up on. These don't self-heal mid-session; the user must
+// install bd or move into a workspace and hit `r` to recover.
+func isTerminalErr(err error) bool {
+	return errors.Is(err, beads.ErrBDNotFound) || errors.Is(err, beads.ErrNoWorkspace)
+}
 
 // Update is the main event router.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -115,6 +125,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case fetchedMsg:
+		// Drop results from a fetch dispatched for a preset we've
+		// since moved off of — otherwise an in-flight tick can clobber
+		// the user's newly-selected view.
+		if msg.preset != m.preset {
+			return m, nil
+		}
 		m.lastSync = time.Now()
 		m.lastErr = msg.err
 		if msg.err == nil {
@@ -124,6 +140,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		// Suspend the auto-refresh while we're in a terminal error
+		// state (no bd / no workspace). The user must press `r` to
+		// retry; on success the refresh loop restarts.
+		if isTerminalErr(m.lastErr) {
+			return m, nil
+		}
 		return m, tea.Batch(m.fetchCmd(), tickCmd())
 
 	case tea.KeyMsg:
@@ -135,6 +157,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m.updateList(msg)
 		}
+	}
+
+	// Forward any other message (e.g. textinput's cursor-blink ticks)
+	// to the focused textinput while the filter prompt is open. Without
+	// this the cursor stops blinking after the initial Blink command.
+	if m.mode == modeFilter {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -165,17 +196,31 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, textinput.Blink
 	case keyHit(msg, m.keys.Human):
-		m.preset = filter.PresetHuman
-		m.cursor = 0
-		return m, m.fetchCmd()
+		return m.switchPreset(filter.PresetHuman)
 	case keyHit(msg, m.keys.Cycle):
-		m.preset = filter.NextPreset(m.preset)
-		m.cursor = 0
-		return m, m.fetchCmd()
+		return m.switchPreset(filter.NextPreset(m.preset))
 	case keyHit(msg, m.keys.Refresh):
-		return m, m.fetchCmd()
+		// Manual refresh also restarts the auto-tick if it was
+		// suspended after a terminal error.
+		cmds := []tea.Cmd{m.fetchCmd()}
+		if isTerminalErr(m.lastErr) {
+			cmds = append(cmds, tickCmd())
+		}
+		return m, tea.Batch(cmds...)
 	}
 	return m, nil
+}
+
+// switchPreset clears the visible rows before dispatching the new
+// fetch so the UI doesn't flash the old preset's data under the new
+// header. The cursor is also reset, and any pending fuzzy filter
+// stays (it re-applies once the new data arrives).
+func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
+	m.preset = p
+	m.cursor = 0
+	m.all = nil
+	m.visible = nil
+	return m, m.fetchCmd()
 }
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -189,6 +234,11 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c quits unconditionally; the status bar advertises it and
+	// the textinput wouldn't otherwise intercept it.
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
 	switch msg.String() {
 	case "esc":
 		m.mode = modeList
@@ -368,13 +418,6 @@ func friendlyError(err error) string {
 	default:
 		return "error: " + err.Error()
 	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func trunc(s string, n int) string {

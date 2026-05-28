@@ -23,9 +23,16 @@ import (
 
 func main() {
 	dir := flag.String("C", "", "run as if bd had been started in this directory")
-	me := flag.String("me", defaultMe(), "current user, used by the 'mine' preset (default: git user.email or $USER)")
+	me := flag.String("me", "", "current user, used by the 'mine' preset (default: git user.email or $USER)")
 	probe := flag.Bool("probe", false, "non-TTY: print the human-flagged issues and exit (useful in scripts/CI)")
 	flag.Parse()
+
+	// Resolve --me lazily so a user supplying --me doesn't pay the cost
+	// of shelling out to git, and so startup doesn't depend on git being
+	// on PATH unless the default is actually needed.
+	if *me == "" {
+		*me = defaultMe()
+	}
 
 	client := beads.NewClient()
 	client.Dir = *dir
