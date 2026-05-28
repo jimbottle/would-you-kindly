@@ -50,6 +50,20 @@ var (
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244"))
 
+	// tableHeaderStyle renders the column-header row above the issue
+	// list — dim, underlined, no bold (the rows are the content; the
+	// header is scaffolding).
+	tableHeaderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244")).
+				Underline(true)
+
+	// typeStyle is muted so the type column doesn't compete with the
+	// title for the reader's attention.
+	typeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	// updatedStyle is similarly muted; recency is context, not headline.
+	updatedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
 	// confirmStyle renders the destructive-action confirmation prompt
 	// (e.g. "close wyk-42? [y/N]") with enough emphasis that the user
 	// notices it before pressing the next key.

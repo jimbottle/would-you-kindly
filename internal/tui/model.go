@@ -736,6 +736,8 @@ func (m Model) viewList() string {
 	case len(m.visible) == 0:
 		b.WriteString(emptyStyle.Render(fmt.Sprintf("no matches for %q", m.query)))
 	default:
+		b.WriteString(m.renderHeader())
+		b.WriteByte('\n')
 		for i, issue := range m.visible {
 			b.WriteString(m.renderRow(issue, i == m.cursor))
 			b.WriteByte('\n')
@@ -768,24 +770,92 @@ func (m Model) viewList() string {
 	return b.String()
 }
 
+// Column widths for the list view. Kept as constants so the header
+// row and the data rows stay aligned without duplicating numbers.
+const (
+	colID      = 22
+	colType    = 4
+	colStatus  = 8
+	colPrio    = 2
+	colUpdated = 7
+)
+
+// renderHeader prints the column-titles row above the issue list.
+// The leading two spaces line up with the cursor column on data rows
+// so the title and ID columns share a left edge.
+func (m Model) renderHeader() string {
+	const cursor = "  "
+	h := fmt.Sprintf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %s",
+		cursor,
+		colID, "ID",
+		colType, "T",
+		colStatus, "Status",
+		colPrio, "P",
+		colUpdated, "Updated",
+		"Title",
+	)
+	return tableHeaderStyle.Render(h)
+}
+
 func (m Model) renderRow(i beads.Issue, selected bool) string {
 	cursor := "  "
 	if selected {
 		cursor = cursorStyle.Render("▶ ")
 	}
 
-	st := statusStyleFor(i.Status)
-	icon := st.Render(statusIcon(i.Status))
-
-	id := idStyle.Render(fmt.Sprintf("%-22s", trunc(i.ID, 22)))
+	id := idStyle.Render(fmt.Sprintf("%-*s", colID, trunc(i.ID, colID)))
+	tp := typeStyle.Render(fmt.Sprintf("%-*s", colType, abbrevType(i.IssueType)))
+	st := statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status)))
 	pri := fmt.Sprintf("P%d", i.Priority)
+	upd := updatedStyle.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt)))
 
-	row := fmt.Sprintf("%s%s  %s  %s  %s", cursor, icon, id, pri, i.Title)
-
+	row := fmt.Sprintf("%s%s  %s  %s  %s  %s  %s", cursor, id, tp, st, pri, upd, i.Title)
 	if i.IsHuman() {
 		row += "  " + humanBadge.Render("HUMAN")
 	}
 	return row
+}
+
+// abbrevType returns a fixed-width type slug. Most bd types fit in
+// 4 chars natively (task, bug, epic); the longer ones are truncated
+// to the same width so column alignment holds.
+func abbrevType(t string) string {
+	if len(t) <= colType {
+		return t
+	}
+	return t[:colType]
+}
+
+// abbrevStatus normalises bd's status names for the table column.
+// "in_progress" gets the conventional "wip" because the full string
+// would dominate the row width and 'wip' is unambiguous in context.
+func abbrevStatus(s string) string {
+	if s == "in_progress" {
+		return "wip"
+	}
+	return s
+}
+
+// relTime renders a coarse "how long ago" stamp for the Updated
+// column. Bins (now / <1h / <1d / <30d / older) keep the column
+// narrow without losing the rough age signal a triage reader wants.
+func relTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return t.Format("Jan 2")
+	}
 }
 
 func (m Model) viewDetail() string {

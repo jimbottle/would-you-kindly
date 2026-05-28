@@ -79,8 +79,21 @@ func (c *Client) Ready(ctx context.Context) ([]Issue, error) {
 	return parseIssues(out)
 }
 
-// ListAll runs `bd list --all --json` for the "all" preset, which
-// must include closed and other states the default `list` omits.
+// List runs `bd list --json`, returning all non-closed issues. This
+// is what the "all" preset maps to — the TUI's default view should
+// be "everything you might still need to do", not "everything ever
+// filed". Use ListAll when closed issues must be included.
+func (c *Client) List(ctx context.Context) ([]Issue, error) {
+	out, err := c.run(ctx, nil, "list", "--json")
+	if err != nil {
+		return nil, err
+	}
+	return parseIssues(out)
+}
+
+// ListAll runs `bd list --all --json`, including closed issues.
+// Kept for future presets (e.g. an explicit "archived" view) or for
+// callers that need the unfiltered history.
 func (c *Client) ListAll(ctx context.Context) ([]Issue, error) {
 	out, err := c.run(ctx, nil, "list", "--all", "--json")
 	if err != nil {

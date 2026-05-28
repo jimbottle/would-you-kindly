@@ -32,7 +32,9 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 		// reproduce; defer to it.
 		return s.Client.Ready(ctx)
 	case filter.PresetAll:
-		return s.Client.ListAll(ctx)
+		// "all" in the TUI means "all non-closed" — opening wyk
+		// should show actionable work, not the full history.
+		return s.Client.List(ctx)
 	default:
 		return s.Client.Query(ctx, filter.Query(p, s.Me))
 	}

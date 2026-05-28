@@ -6,7 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(nothing yet — open Phase 4 work lives here once filed)
+### Changed
+
+- **TUI list now renders as a table** with a column header row and
+  fixed widths: `ID  T  Status  P  Updated  Title  [HUMAN]`. Type
+  and updated-relative-date (e.g. `5m ago`, `3d ago`, `Jan 2`) are
+  new columns; status is a colored text label instead of a one-char
+  icon. Matches the information density of the roborev TUI.
+- **`all` preset narrows to non-closed** — opening wyk used to show
+  the full repo history (including closed issues) because the
+  underlying call was `bd list --all`. The preset now maps to
+  `bd list` (no `--all`), so the first paint is "actionable work",
+  not "everything ever filed". `internal/beads.Client` keeps a
+  separate `ListAll` method for a future archive view.
 
 ## [0.1.0] — 2026-05-28
 
