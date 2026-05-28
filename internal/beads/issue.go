@@ -20,6 +20,7 @@ type Issue struct {
 	CreatedBy   string    `json:"created_by"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	ClosedAt    time.Time `json:"closed_at"`
+	Notes       string    `json:"notes"`
 	Labels      []string  `json:"labels"`
 
 	DependencyCount int `json:"dependency_count"`

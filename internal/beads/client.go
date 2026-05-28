@@ -102,6 +102,25 @@ func (c *Client) ListAll(ctx context.Context) ([]Issue, error) {
 	return parseIssues(out)
 }
 
+// Show runs `bd show <id> --json` and returns the single Issue,
+// which carries the full field set (description AND notes — the
+// list/query endpoints drop one or the other for efficiency).
+// Used by the TUI's detail view to enrich the row on enter.
+func (c *Client) Show(ctx context.Context, id string) (Issue, error) {
+	out, err := c.run(ctx, nil, "show", id, "--json")
+	if err != nil {
+		return Issue{}, err
+	}
+	issues, err := parseIssues(out)
+	if err != nil {
+		return Issue{}, err
+	}
+	if len(issues) == 0 {
+		return Issue{}, fmt.Errorf("bd show %s: no issue returned", id)
+	}
+	return issues[0], nil
+}
+
 // --- write methods -------------------------------------------------
 
 // Close closes the given issue. Every write passes --dolt-auto-commit=on;

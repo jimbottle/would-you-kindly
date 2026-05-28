@@ -232,9 +232,15 @@ to restore the original.
 | `c` | Close the cursor issue (asks `[y/N]` to confirm)            |
 | `H` | Toggle the `human` label on the cursor issue                |
 | `n` | Append a note to the cursor issue (opens a text prompt)     |
+| `N` | File a new issue in the cursor's repo (title-only prompt; labeled `src:human`) |
 
 After any write, the list refetches and a status banner appears
 above the help bar (e.g. `closed wyk-42`, or `close wyk-42 failed: …`).
+
+The detail view (`enter` on a row) shows the issue's full
+description and any accumulated notes (added via `n` or `bd note`).
+Notes lazy-load via a `bd show` call on entry, so the section
+appears a beat after the rest of the detail view.
 
 The list also refreshes itself every 10 seconds.
 

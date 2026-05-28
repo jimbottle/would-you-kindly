@@ -35,6 +35,7 @@ type stubMutator struct {
 	added   []labelOp
 	removed []labelOp
 	notes   []labelOp // reuse the {id,label} shape for {id, text}
+	created []labelOp // {repo, title} for quick-add
 }
 
 type labelOp struct{ id, label string }
@@ -54,6 +55,10 @@ func (s *stubMutator) RemoveLabel(_ context.Context, i beads.Issue, label string
 func (s *stubMutator) Note(_ context.Context, i beads.Issue, text string) error {
 	s.notes = append(s.notes, labelOp{i.ID, text})
 	return nil
+}
+func (s *stubMutator) Create(_ context.Context, repo, title string) (string, error) {
+	s.created = append(s.created, labelOp{repo, title})
+	return "new-id", nil
 }
 
 func sampleIssues() []beads.Issue {
@@ -685,6 +690,96 @@ func TestHelpOverlay_FromDetailReturnsToDetail(t *testing.T) {
 	m = model.(Model)
 	if m.mode != modeDetail {
 		t.Errorf("help opened from detail should restore to detail; got %v", m.mode)
+	}
+}
+
+func TestQuickAdd_DispatchesCreateWithCursorRepoAndTypedTitle(t *testing.T) {
+	// Pre-load the model with an issue carrying Repo="alpha" so the
+	// quick-add inherits the cursor's repo. Pressing N opens the
+	// prompt, the typed runes become the title, enter dispatches
+	// Mutator.Create.
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "alpha task", Repo: "alpha"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m = model.(Model)
+	if m.mode != modeQuickAdd {
+		t.Fatalf("N should enter modeQuickAdd; got %v", m.mode)
+	}
+	if m.pendingTarget.Repo != "alpha" {
+		t.Errorf("quick-add should snapshot cursor's repo; got %q", m.pendingTarget.Repo)
+	}
+
+	for _, r := range "Fix the thing" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("enter should return to modeList; got %v", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("enter with non-empty title should dispatch a Create")
+	}
+	wm := cmd().(writeMsg)
+	if wm.action != "create" || wm.id != "new-id" {
+		t.Errorf("writeMsg action=%q id=%q, want create/new-id", wm.action, wm.id)
+	}
+	if len(s.created) != 1 || s.created[0] != (labelOp{"alpha", "Fix the thing"}) {
+		t.Errorf("Mutator.Create not dispatched correctly; got %+v", s.created)
+	}
+}
+
+func TestDetailView_RendersNotesWhenPresent(t *testing.T) {
+	// viewDetail should show a "notes" section when Notes is set,
+	// hide it when Notes is empty. The detailIssue field (populated
+	// via the Detail dispatch) is the source of truth.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m.mode = modeDetail
+	m.detailIssue = beads.Issue{
+		ID:          "would-you-kindly-42",
+		Title:       "do the thing",
+		Description: "the description",
+		Status:      "open",
+		Notes:       "first note\nsecond note",
+	}
+	out := m.View()
+	if !strings.Contains(out, "notes") {
+		t.Errorf("detail view should render the 'notes' label when Notes is set; got:\n%s", out)
+	}
+	if !strings.Contains(out, "second note") {
+		t.Errorf("detail view should include the notes content; got:\n%s", out)
+	}
+
+	m.detailIssue.Notes = ""
+	out = m.View()
+	// Lowercase the haystack to avoid the "n note" key hint matching.
+	lower := strings.ToLower(out)
+	if strings.Contains(lower, "\nnotes\n") {
+		t.Errorf("detail view should NOT render notes section when Notes is empty; got:\n%s", out)
+	}
+}
+
+func TestQuickAdd_EmptyTitleCancels(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if cmd != nil {
+		t.Error("empty title should not dispatch a Create")
+	}
+	if len(s.created) != 0 {
+		t.Errorf("Create should not have been called; got %+v", s.created)
+	}
+	if !strings.Contains(m.status, "cancelled") {
+		t.Errorf("status should explain the cancellation; got %q", m.status)
 	}
 }
 

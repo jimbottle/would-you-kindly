@@ -32,10 +32,11 @@ type BDSource struct {
 	Name string
 }
 
-// Compile-time check that BDSource satisfies both interfaces.
+// Compile-time check that BDSource satisfies the three interfaces.
 var (
-	_ Source  = (*BDSource)(nil)
-	_ Mutator = (*BDSource)(nil)
+	_ Source   = (*BDSource)(nil)
+	_ Mutator  = (*BDSource)(nil)
+	_ Detailer = (*BDSource)(nil)
 )
 
 // Fetch dispatches to the right bd subcommand for the preset, then
@@ -98,14 +99,41 @@ func (s *BDSource) Note(ctx context.Context, i beads.Issue, text string) error {
 	return s.Client.Note(ctx, i.ID, text)
 }
 
+// Create runs `bd create` with the given title and the src:human
+// label (this user filed it for themselves). The repo arg is ignored
+// in single-repo mode — BDSource only has one client to write to.
+func (s *BDSource) Create(ctx context.Context, _ /* repo */, title string) (string, error) {
+	return s.Client.Create(ctx, beads.CreateOptions{
+		Title:     title,
+		Labels:    []string{"src:human"},
+		IssueType: "task",
+	})
+}
+
+// Detail runs `bd show <id>` and decorates the resulting issue with
+// Repo/Branch so callers can treat it like any other Source-derived
+// Issue.
+func (s *BDSource) Detail(ctx context.Context, i beads.Issue) (beads.Issue, error) {
+	full, err := s.Client.Show(ctx, i.ID)
+	if err != nil {
+		return beads.Issue{}, err
+	}
+	if s.Name != "" {
+		full.Repo = s.Name
+		full.Branch = gitBranch(ctx, s.Client.Dir)
+	}
+	return full, nil
+}
+
 // --- MultiBDSource: union of multiple bd workspaces -----------------
 
-// fullSource is anything that can both read and write a bd workspace.
-// Used by MultiBDSource so tests can inject a stub instead of going
-// through a real BDSource with a hidden runner.
+// fullSource is anything that can read, write, AND detail-fetch a bd
+// workspace. Used by MultiBDSource so tests can inject a stub
+// instead of going through a real BDSource with a hidden runner.
 type fullSource interface {
 	Source
 	Mutator
+	Detailer
 }
 
 // subRepo is one row in MultiBDSource's per-repo table. Held as an
@@ -132,8 +160,9 @@ type MultiBDSource struct {
 
 // Compile-time check.
 var (
-	_ Source  = (*MultiBDSource)(nil)
-	_ Mutator = (*MultiBDSource)(nil)
+	_ Source   = (*MultiBDSource)(nil)
+	_ Mutator  = (*MultiBDSource)(nil)
+	_ Detailer = (*MultiBDSource)(nil)
 )
 
 // NewMultiBDSource constructs a multi-repo source from a list of
@@ -260,6 +289,35 @@ func (m *MultiBDSource) Note(ctx context.Context, i beads.Issue, text string) er
 		return err
 	}
 	return sub.Note(ctx, i, text)
+}
+
+// Detail routes the show request to the issue's repo. Same routing
+// guarantees as the write methods — issue.Repo must be set.
+func (m *MultiBDSource) Detail(ctx context.Context, i beads.Issue) (beads.Issue, error) {
+	sub, err := m.repoForIssue(i)
+	if err != nil {
+		return beads.Issue{}, err
+	}
+	return sub.Detail(ctx, i)
+}
+
+// Create routes the new issue to a specific sub by name. If repo is
+// empty, falls back to the first sub — the registry's first repo.
+// Empty repo is the multi-repo equivalent of "I'm not on any row
+// right now, just file it somewhere".
+func (m *MultiBDSource) Create(ctx context.Context, repo, title string) (string, error) {
+	if repo == "" {
+		if len(m.subs) == 0 {
+			return "", fmt.Errorf("no registered workspaces to create in")
+		}
+		return m.subs[0].src.Create(ctx, "", title)
+	}
+	for _, sub := range m.subs {
+		if sub.name == repo {
+			return sub.src.Create(ctx, "", title)
+		}
+	}
+	return "", fmt.Errorf("repo %q not in subs", repo)
 }
 
 // gitBranch returns the current branch name of the repo at dir, or

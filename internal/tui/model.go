@@ -55,6 +55,7 @@ const (
 	modeConfirmClose             // y/n confirmation prompt for close
 	modeNote                     // text input for a new note
 	modeHelp                     // modal listing every keybinding
+	modeQuickAdd                 // text input for a new issue title
 )
 
 // Source abstracts where issues come from so a test can plug in
@@ -81,6 +82,21 @@ type Mutator interface {
 	AddLabel(ctx context.Context, issue beads.Issue, label string) error
 	RemoveLabel(ctx context.Context, issue beads.Issue, label string) error
 	Note(ctx context.Context, issue beads.Issue, text string) error
+	// Create files a new issue with the given title in the named
+	// workspace. The repo arg is the BDSource/sub name; single-repo
+	// implementations ignore it. The new issue is labeled src:human
+	// (the user filed it) by convention. Returns the new ID.
+	Create(ctx context.Context, repo, title string) (string, error)
+}
+
+// Detailer is the "fetch the full issue for the detail view"
+// interface. bd's list/query endpoints return slim Issues (bd list
+// drops Description, bd query drops Notes), so the detail view
+// needs a separate Show call to render the full record. Optional —
+// when the Source doesn't satisfy this, the detail view falls back
+// to whatever the original fetch returned.
+type Detailer interface {
+	Detail(ctx context.Context, issue beads.Issue) (beads.Issue, error)
 }
 
 // Model is the Bubble Tea model.
@@ -124,6 +140,12 @@ type Model struct {
 	// the ? overlay. ? can be opened from modeList or modeDetail; we
 	// drop the user back into whichever they came from.
 	helpReturnMode mode
+
+	// detailIssue is the enriched (full-field, includes notes) issue
+	// shown in the detail view. Populated by a Detail Cmd dispatched
+	// on enter; before the result arrives the view falls back to the
+	// slim Issue from m.visible.
+	detailIssue beads.Issue
 
 	// tickGen identifies the currently-live tick chain. Each suspend
 	// or restart bumps it; stale ticks (e.g. one scheduled before a
@@ -204,6 +226,13 @@ type fetchedMsg struct {
 
 type tickMsg struct{ gen int }
 
+// detailMsg carries the enriched Issue back from a Detail dispatch.
+// See Update's modeDetail entry branch.
+type detailMsg struct {
+	issue beads.Issue
+	err   error
+}
+
 // isTerminalErr reports whether an error is one the auto-refresh tick
 // should give up on. These don't self-heal mid-session; the user must
 // install bd or move into a workspace and hit `r` to recover.
@@ -266,6 +295,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case writeMsg:
 		return m.handleWriteResult(msg)
 
+	case detailMsg:
+		// Late-arriving Detail result. Only adopt it if the user
+		// is still looking at the same issue — otherwise the
+		// notes would attach to the wrong row.
+		if m.mode == modeDetail && msg.err == nil && msg.issue.ID == m.detailIssue.ID {
+			m.detailIssue = msg.issue
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		// Any keystroke processed in modeList — including the ones
 		// that open the filter or note prompts — clears the previous
@@ -286,6 +324,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNote(msg)
 		case modeHelp:
 			return m.updateHelp(msg)
+		case modeQuickAdd:
+			return m.updateQuickAdd(msg)
 		default:
 			m.status = ""
 			return m.updateList(msg)
@@ -322,6 +362,17 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyHit(msg, m.keys.Open):
 		if len(m.visible) > 0 {
 			m.mode = modeDetail
+			// Stage the slim row immediately so the view renders
+			// with title/description from the list, then dispatch
+			// a Detail call to enrich with notes asynchronously.
+			m.detailIssue = m.visible[m.cursor]
+			if d, ok := m.src.(Detailer); ok {
+				target := m.detailIssue
+				return m, func() tea.Msg {
+					full, err := d.Detail(context.Background(), target)
+					return detailMsg{issue: full, err: err}
+				}
+			}
 		}
 	case keyHit(msg, m.keys.Filter):
 		m.mode = modeFilter
@@ -351,6 +402,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleHuman()
 	case keyHit(msg, m.keys.AddNote):
 		return m.beginNote()
+	case keyHit(msg, m.keys.QuickAdd):
+		return m.beginQuickAdd()
 	case keyHit(msg, m.keys.JumpNextHuman):
 		return m.jumpToHuman(+1)
 	case keyHit(msg, m.keys.JumpPrevHuman):
@@ -481,6 +534,71 @@ func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 	})
 }
 
+// beginQuickAdd opens a title prompt and on enter files a new issue
+// in the repo of the cursor's current row (or the first registered
+// workspace if no row is selected). The issue is labeled src:human.
+func (m Model) beginQuickAdd() (tea.Model, tea.Cmd) {
+	if m.mutator() == nil {
+		m.status = "read-only mode (no Mutator wired up)"
+		return m, nil
+	}
+	m.mode = modeQuickAdd
+	// Capture the cursor's repo so the new issue lands in the same
+	// workspace the user is currently looking at. Empty means
+	// "first registered repo" in multi-repo mode, or "the one and
+	// only client" in single-repo.
+	if len(m.visible) > 0 && m.cursor < len(m.visible) {
+		m.pendingTarget = beads.Issue{Repo: m.visible[m.cursor].Repo}
+	}
+	m.input.SetValue("")
+	m.input.Prompt = "new ▸ "
+	m.input.Placeholder = "title for the new issue"
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+func (m Model) updateQuickAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	switch msg.String() {
+	case "esc":
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		m.pendingTarget = beads.Issue{}
+		return m, nil
+	case "enter":
+		title := strings.TrimSpace(m.input.Value())
+		repo := m.pendingTarget.Repo
+		m.pendingTarget = beads.Issue{}
+		mu := m.mutator()
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		if title == "" {
+			m.status = "quick-add cancelled (empty title)"
+			return m, nil
+		}
+		return m, runQuickAdd(repo, title, func(ctx context.Context) (string, error) {
+			return mu.Create(ctx, repo, title)
+		})
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// runQuickAdd wraps Mutator.Create in a tea.Cmd that emits a writeMsg
+// with the new ID populated as id. handleWriteResult then displays
+// the "created <id>" banner and refetches.
+func runQuickAdd(repo, title string, fn func(ctx context.Context) (string, error)) tea.Cmd {
+	return func() tea.Msg {
+		id, err := fn(context.Background())
+		return writeMsg{action: "create", id: id, err: err}
+	}
+}
+
 // beginNote opens the textinput prompt for a new note. The full
 // target issue is captured here for the same reasons as beginClose —
 // see Model.pendingTarget.
@@ -571,6 +689,8 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 		m.status = "unflagged " + msg.id
 	case "note":
 		m.status = "noted " + msg.id
+	case "create":
+		m.status = "created " + msg.id
 	default:
 		m.status = msg.action + " " + msg.id
 	}
@@ -730,7 +850,7 @@ func (m Model) viewHelp() string {
 			m.keys.JumpPrevHuman, m.keys.JumpNextHuman,
 		}},
 		{"Filters", []key.Binding{m.keys.Filter, m.keys.Human, m.keys.Cycle}},
-		{"Writes", []key.Binding{m.keys.Close, m.keys.ToggleHuman, m.keys.AddNote}},
+		{"Writes", []key.Binding{m.keys.Close, m.keys.ToggleHuman, m.keys.AddNote, m.keys.QuickAdd}},
 		{"Meta", []key.Binding{m.keys.Refresh, m.keys.Help, m.keys.Quit}},
 	}
 	for _, g := range groups {
@@ -803,7 +923,7 @@ func (m Model) viewList() string {
 
 	// modal prompts live just above the status bar
 	switch m.mode {
-	case modeFilter, modeNote:
+	case modeFilter, modeNote, modeQuickAdd:
 		b.WriteString("\n")
 		b.WriteString(m.input.View())
 	case modeConfirmClose:
@@ -1028,10 +1148,17 @@ func relTime(t time.Time) string {
 }
 
 func (m Model) viewDetail() string {
-	if len(m.visible) == 0 {
-		return ""
+	// Prefer the enriched (Detail-fetched) issue if available;
+	// otherwise fall back to the slim row from the list. m.detailIssue
+	// is set on entry to modeDetail; the Detail Cmd updates it
+	// asynchronously with the full record (including notes).
+	i := m.detailIssue
+	if i.ID == "" {
+		if len(m.visible) == 0 {
+			return ""
+		}
+		i = m.visible[m.cursor]
 	}
-	i := m.visible[m.cursor]
 
 	var b strings.Builder
 	b.WriteString(detailHeaderStyle.Render(i.Title))
@@ -1061,6 +1188,15 @@ func (m Model) viewDetail() string {
 		b.WriteString(emptyStyle.Render("(no description)"))
 	} else {
 		b.WriteString(i.Description)
+	}
+
+	// Notes — bd accumulates ad-hoc context here via `bd note` (or
+	// the n key). Only shown when present; absent for fresh issues.
+	if strings.TrimSpace(i.Notes) != "" {
+		b.WriteString("\n\n")
+		b.WriteString(detailLabelStyle.Render("notes"))
+		b.WriteString("\n")
+		b.WriteString(i.Notes)
 	}
 
 	b.WriteString("\n\n")

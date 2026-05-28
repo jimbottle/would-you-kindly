@@ -45,6 +45,17 @@ func (f *fakeRepoSource) Note(_ context.Context, i beads.Issue, text string) err
 	f.notes = append(f.notes, labelOp{i.ID, text})
 	return nil
 }
+func (f *fakeRepoSource) Create(_ context.Context, _, title string) (string, error) {
+	// Stub returns a fake ID derived from the title so tests can
+	// assert which sub got routed to without wiring a real bd.
+	return "new-" + title, nil
+}
+func (f *fakeRepoSource) Detail(_ context.Context, i beads.Issue) (beads.Issue, error) {
+	// Stub echoes the input back with a fixed Notes field so tests
+	// can verify the Detail call reached the right sub.
+	i.Notes = "stub notes from " + i.Repo
+	return i, nil
+}
 
 // newMultiForTest builds a MultiBDSource directly from fake subs so
 // tests don't have to wire up real bd.Clients. The branchFn is a

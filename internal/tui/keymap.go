@@ -22,6 +22,7 @@ type keyMap struct {
 	Close       key.Binding // c — close the cursor issue (with confirmation)
 	ToggleHuman key.Binding // H — add/remove the 'human' label on the cursor issue
 	AddNote     key.Binding // n — append a note to the cursor issue
+	QuickAdd    key.Binding // N — file a new issue inline (title-only prompt)
 
 	// Navigation jumps (Phase 3.B.2): bracket through the human-flagged
 	// subset of the current view without leaving the active preset.
@@ -49,6 +50,7 @@ func defaultKeyMap() keyMap {
 		Close:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "close")),
 		ToggleHuman: key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "±human")),
 		AddNote:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "note")),
+		QuickAdd:    key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "new issue")),
 
 		JumpNextHuman: key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next human")),
 		JumpPrevHuman: key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev human")),
