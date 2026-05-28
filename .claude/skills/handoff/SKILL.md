@@ -302,6 +302,25 @@ finish a chunk and need another round; close when fully done.
 This closes the round-trip with `wyk handoff`: handoff sends work
 to the human, inbox picks up what they sent back.
 
+### Act on inbox items; do not just notice them
+
+If `wyk inbox` returns any items, your default move is to **work
+them now**, not to acknowledge them and continue with whatever
+else is happening. The inbox by construction holds tasks the human
+is no longer blocking on — the artifact you needed has arrived,
+the decision is made, the credential is in place. Treating them as
+"things to handle later" defeats the round-trip.
+
+Exceptions: the user is mid-conversation about something explicitly
+urgent (a production fire, a release window closing), or the inbox
+item's "What unblocks me when this returns" artifact is actually
+missing (the human bounced it back without finishing — re-flag
+`human` and explain in a note, don't just sit on it).
+
+If you're between explicit user requests and the inbox has items,
+pick the highest-priority one and resume — that's the loop the
+convention is designed to enable.
+
 ## Discovering existing handoffs
 
 To see what's currently flagged for a human:

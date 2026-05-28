@@ -48,6 +48,30 @@ func TestConventions_StructuredHasFixedSchema(t *testing.T) {
 	}
 }
 
+func TestConventions_InboxRulePinned(t *testing.T) {
+	// The "work inbox items now" imperative must be present in
+	// both the structured form (agents may key on it) and the
+	// prose body (readers learn the convention from the body
+	// alone).
+	c := conventionsStructured()
+	if c.InboxRule == "" {
+		t.Error("conventionsStructured.InboxRule must be non-empty")
+	}
+	for _, want := range []string{"wyk inbox", "work", "no longer blocking"} {
+		if !strings.Contains(c.InboxRule, want) {
+			t.Errorf("InboxRule missing %q; got %q", want, c.InboxRule)
+		}
+	}
+	if !strings.Contains(conventionsBody, "Acting on the inbox") {
+		t.Errorf("conventionsBody missing 'Acting on the inbox' heading")
+	}
+	// Case-insensitive on the imperative — the body shouts "WORK
+	// them now" intentionally; future copy edits may lowercase.
+	if !strings.Contains(strings.ToLower(conventionsBody), "work them now") {
+		t.Errorf("conventionsBody missing the 'work them now' imperative")
+	}
+}
+
 func TestConventions_StatusGuidancePinned(t *testing.T) {
 	// Lifecycle order matters — agents may key on the index.
 	// Pin both the status names and that deferred carries the

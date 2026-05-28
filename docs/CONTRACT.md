@@ -118,6 +118,22 @@ orphan, and a recoverable orphan can be retried. The CLI prints an
 explicit WARNING with the orphan ID and cleanup commands; agents
 consuming the CLI's exit codes should check stderr too.
 
+## Acting on the inbox
+
+The inbox query (`label=src:agent AND NOT label=human AND
+status!=closed`) returns issues an agent filed that the human is no
+longer blocking. The convention is to **work them**, not just note
+them. If `wyk inbox` returns items, the agent's default next move
+is to pick up the highest-priority one and resume — that's the loop
+the round-trip is designed to enable. Letting inbox items
+accumulate without action defeats the contract.
+
+Exceptions are narrow: the user is mid-conversation about something
+explicitly urgent (production fire, release window), or the
+"What unblocks me when this returns" artifact is genuinely missing
+(in which case re-flag `human` with a note explaining what's still
+needed — don't sit silently with a half-resolved issue).
+
 ## Status lifecycle
 
 bd's five statuses, with the convention for picking each:

@@ -148,3 +148,12 @@ the `human` label + handoff when a human is genuinely required.
 Holding-open a task that depends on an unstable subsystem clutters
 the ready view and creates false signals about what someone could
 start now.
+
+**Act on the agent inbox.** If `wyk inbox` returns items at any
+point in a session, the default move is to WORK them — they're
+tasks the human has bounced back, meaning whatever unblocker the
+agent specified has arrived. Treating inbox items as "things to
+handle later" defeats the round-trip. Exception: the user is
+mid-conversation about something explicitly urgent, or the
+expected unblocker artifact is actually missing (re-flag `human`
+with a note explaining what's still needed; don't sit silently).

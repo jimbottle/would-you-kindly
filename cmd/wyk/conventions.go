@@ -42,6 +42,21 @@ right labels AND lets you attach a runbook from stdin in one shot.
 'wyk handoff -create "<title>"' files a new bd issue and hands it off
 atomically (with src:agent on creation), the recommended one-step path.
 
+Acting on the inbox (not just noticing it)
+------------------------------------------
+
+If 'wyk inbox' returns items at any point in a session, the
+default move is to WORK them now, not to acknowledge them and
+continue elsewhere. The inbox by construction holds tasks where
+the human is no longer blocking the agent — the artifact has
+arrived, the decision is made. Treating them as 'things to handle
+later' defeats the round-trip.
+
+Exceptions: the user is mid-conversation about something explicitly
+urgent, or the 'What unblocks me when this returns' artifact is
+actually missing (in which case re-flag 'human' with a note and
+move on; don't sit silently).
+
 Status lifecycle (pick the right one when filing or updating)
 -------------------------------------------------------------
 
@@ -130,6 +145,7 @@ type conventionsJSON struct {
 		AgentInbox string `json:"agent_inbox"`
 	} `json:"queries"`
 	Statuses         []statusGuidance `json:"statuses"`
+	InboxRule        string           `json:"inbox_rule"`
 	PreferredCommand string           `json:"preferred_command"`
 	BdCreateExample  string           `json:"bd_create_example"`
 	RunbookSections  []runbookSection `json:"runbook_sections"`
@@ -160,6 +176,7 @@ func conventionsStructured() conventionsJSON {
 	c.Labels.SrcHuman = "filed by a human (provenance); applied by the TUI's N quick-add and wyk handoff -create when stdin is absent"
 	c.Queries.HumanTasks = humanTasksQuery
 	c.Queries.AgentInbox = agentInboxQuery
+	c.InboxRule = "If `wyk inbox` returns items, work them now rather than acknowledging and moving on. The inbox holds tasks where the human is no longer blocking; treating them as 'handle later' defeats the round-trip. Exception: the user is mid-conversation about something explicitly urgent, or the expected unblocker artifact is missing (re-flag `human` and note, don't sit)."
 	c.Statuses = []statusGuidance{
 		{Status: "open", When: "actionable now; default for newly-filed issues"},
 		{Status: "in_progress", When: "someone has claimed it; set via `bd update --claim` which also assigns"},
