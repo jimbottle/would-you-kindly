@@ -80,14 +80,17 @@ func Load(path string) (*Registry, error) {
 }
 
 // Save writes the registry to path, creating the parent directory if
-// necessary. The output is pretty-printed JSON so humans editing it
-// by hand don't have to reflow.
+// necessary. The write is atomic: marshalled bytes go to a temp file
+// in the same directory, then `os.Rename` swaps it into place. A
+// crash, signal, or concurrent second writer leaves either the old
+// file or a complete new one — never a truncated half-write.
 func (r *Registry) Save(path string) error {
 	if r.Version == 0 {
 		r.Version = CurrentVersion
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
@@ -95,8 +98,35 @@ func (r *Registry) Save(path string) error {
 	}
 	// trailing newline so the file plays nicely with text editors.
 	b = append(b, '\n')
-	if err := os.WriteFile(path, b, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+
+	tmp, err := os.CreateTemp(dir, ".repos.*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp in %s: %w", dir, err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("write temp %s: %w", tmpPath, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("sync temp %s: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("close temp %s: %w", tmpPath, err)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		cleanup()
+		return fmt.Errorf("chmod temp %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		cleanup()
+		return fmt.Errorf("rename %s → %s: %w", tmpPath, path, err)
 	}
 	return nil
 }

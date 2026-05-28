@@ -66,12 +66,7 @@ func runInit(args []string) int {
 		return 64
 	}
 
-	gitDir, err := findGitDir()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wyk init:", err)
-		return 2
-	}
-	repoRoot, err := findRepoRoot()
+	gitDir, repoRoot, err := findGitPaths()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk init:", err)
 		return 2
@@ -100,30 +95,34 @@ func runInit(args []string) int {
 
 	hookPath := filepath.Join(gitDir, "hooks", "post-commit")
 
+	// Step 2: install the post-commit hook. Each branch sets
+	// `skipWrite` rather than returning early so step 3 (registry)
+	// still runs — that's what makes init idempotent on repos where
+	// the hook is already in place but the registry write previously
+	// failed.
+	skipWrite := false
 	switch existing, err := os.ReadFile(hookPath); {
 	case err == nil:
 		if bytes.Contains(existing, []byte(hookMarker)) {
 			if *dryRun {
 				fmt.Printf("wyk init: would reinstall %s (existing hook is from a previous `wyk init`)\n", hookPath)
-				return 0
-			}
-			if !*force {
+				skipWrite = true
+			} else if !*force {
 				fmt.Println("wyk init: post-commit hook already installed (use -force to reinstall)")
-				return 0
+				skipWrite = true
 			}
 		} else {
 			// Foreign hook. Dry-run is observation-only and must not
 			// return the usage exit code — describe what the real run
-			// would do (refuse, or overwrite with -force) and exit 0.
+			// would do and continue.
 			if *dryRun {
 				if *force {
 					fmt.Printf("wyk init: would overwrite foreign hook at %s (-force)\n", hookPath)
 				} else {
 					fmt.Printf("wyk init: would refuse to overwrite foreign hook at %s (re-run with -force to replace)\n", hookPath)
 				}
-				return 0
-			}
-			if !*force {
+				skipWrite = true
+			} else if !*force {
 				fmt.Fprintf(os.Stderr,
 					"wyk init: refusing to overwrite existing %s\n  (use -force to replace it)\n",
 					hookPath)
@@ -135,26 +134,31 @@ func runInit(args []string) int {
 		return 1
 	}
 
-	if *dryRun {
-		fmt.Printf("wyk init: would install %s\n", hookPath)
-		return 0
+	if !skipWrite {
+		if *dryRun {
+			fmt.Printf("wyk init: would install %s\n", hookPath)
+		} else {
+			if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+				fmt.Fprintln(os.Stderr, "wyk init: mkdir hooks dir:", err)
+				return 1
+			}
+			if err := os.WriteFile(hookPath, []byte(postCommitHook), 0o755); err != nil {
+				fmt.Fprintln(os.Stderr, "wyk init: write hook:", err)
+				return 1
+			}
+			fmt.Printf("wyk init: installed post-commit hook at %s\n", hookPath)
+			fmt.Println("  Commits whose message includes `Closes: <id>`, `Fixes: <id>`, or")
+			fmt.Println("  `Resolves: <id>` will now auto-close the referenced bd issue.")
+		}
 	}
-
-	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "wyk init: mkdir hooks dir:", err)
-		return 1
-	}
-	if err := os.WriteFile(hookPath, []byte(postCommitHook), 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "wyk init: write hook:", err)
-		return 1
-	}
-	fmt.Printf("wyk init: installed post-commit hook at %s\n", hookPath)
-	fmt.Println("  Commits whose message includes `Closes: <id>`, `Fixes: <id>`, or")
-	fmt.Println("  `Resolves: <id>` will now auto-close the referenced bd issue.")
 
 	// Step 3: register the repo so wyk's multi-repo TUI finds it.
+	// Runs on EVERY init, including when the hook step was skipped —
+	// that's the idempotency guarantee the doc promises.
 	if !*skipRegister {
-		if code := registerRepo(repoRoot); code != 0 {
+		if *dryRun {
+			fmt.Printf("wyk init: would register %s in the wyk registry\n", repoRoot)
+		} else if code := registerRepo(repoRoot); code != 0 {
 			return code
 		}
 	}
@@ -211,55 +215,39 @@ func registerRepo(repoRoot string) int {
 	return 0
 }
 
-// findRepoRoot returns the absolute path to the working tree's root
-// (the directory containing .git/), distinct from findGitDir which
-// returns the .git directory itself.
-func findRepoRoot() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		errOut := strings.TrimSpace(stderr.String())
-		if errOut == "" {
-			errOut = err.Error()
-		}
-		return "", fmt.Errorf("not a git repository (%s)", errOut)
-	}
-	root := strings.TrimSpace(stdout.String())
-	if root == "" {
-		return "", errors.New("git rev-parse returned empty toplevel")
-	}
-	return root, nil
-}
 
-// findGitDir returns the absolute path to the current repo's .git
-// directory (or the worktree's gitdir file's target). Uses git
-// rev-parse so worktrees and detached gitdirs work without bespoke
-// path-walking.
-func findGitDir() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
+// findGitPaths returns (gitDir, repoRoot) in a single `git rev-parse`
+// invocation. Both paths are absolute. Returns an error if cwd is
+// not inside a git repository.
+func findGitPaths() (gitDir, repoRoot string, err error) {
+	cmd := exec.Command("git", "rev-parse", "--git-dir", "--show-toplevel")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	if rerr := cmd.Run(); rerr != nil {
 		errOut := strings.TrimSpace(stderr.String())
 		if errOut == "" {
-			errOut = err.Error()
+			errOut = rerr.Error()
 		}
-		return "", fmt.Errorf("not a git repository (%s)", errOut)
+		return "", "", fmt.Errorf("not a git repository (%s)", errOut)
 	}
-	dir := strings.TrimSpace(stdout.String())
-	if dir == "" {
-		return "", errors.New("git rev-parse returned empty git-dir")
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) < 2 {
+		return "", "", fmt.Errorf("git rev-parse returned unexpected output: %q", stdout.String())
 	}
-	// git rev-parse may emit a relative path; resolve against cwd.
-	if !filepath.IsAbs(dir) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", fmt.Errorf("getwd: %w", err)
+	gitDir = strings.TrimSpace(lines[0])
+	repoRoot = strings.TrimSpace(lines[1])
+	if !filepath.IsAbs(gitDir) {
+		// `git rev-parse --git-dir` may emit a relative path when run
+		// from inside the working tree; resolve against cwd.
+		cwd, werr := os.Getwd()
+		if werr != nil {
+			return "", "", fmt.Errorf("getwd: %w", werr)
 		}
-		dir = filepath.Join(cwd, dir)
+		gitDir = filepath.Join(cwd, gitDir)
 	}
-	return dir, nil
+	if gitDir == "" || repoRoot == "" {
+		return "", "", errors.New("git rev-parse returned empty paths")
+	}
+	return gitDir, repoRoot, nil
 }

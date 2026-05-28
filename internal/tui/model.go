@@ -69,11 +69,18 @@ type Source interface {
 // runtime whether its Source also implements Mutator; if so the
 // c / H / n keystrokes dispatch through it. A read-only Source
 // remains valid — the write keys show a "read-only" hint instead.
+//
+// The methods take a full beads.Issue rather than a bare ID so a
+// multi-repo Mutator can route on issue.Repo. With bare IDs, two
+// workspaces that happen to use the same ID (or any non-prefixed
+// scheme) would silently mis-route — see the regression test
+// TestMultiBDSource_WriteRoutesByRepoNotID for the case that drove
+// this interface shape.
 type Mutator interface {
-	Close(ctx context.Context, id string) error
-	AddLabel(ctx context.Context, id, label string) error
-	RemoveLabel(ctx context.Context, id, label string) error
-	Note(ctx context.Context, id, text string) error
+	Close(ctx context.Context, issue beads.Issue) error
+	AddLabel(ctx context.Context, issue beads.Issue, label string) error
+	RemoveLabel(ctx context.Context, issue beads.Issue, label string) error
+	Note(ctx context.Context, issue beads.Issue, text string) error
 }
 
 // Model is the Bubble Tea model.
@@ -99,15 +106,15 @@ type Model struct {
 	// needing a timer.
 	status string
 
-	// pendingTargetID is the issue ID captured at the moment the user
+	// pendingTarget is the full Issue captured at the moment the user
 	// entered modeConfirmClose or modeNote. The cursor's position is
 	// NOT a safe source of truth at confirm/enter time — an in-flight
-	// fetch (auto-tick or recovery) can re-order or remove issues
-	// between the prompt opening and the user's confirmation. Acting
-	// on the captured ID, with a re-presence check against m.all,
-	// prevents close/note from targeting the wrong issue or panicking
-	// when the list empties under the prompt.
-	pendingTargetID string
+	// fetch can re-order or remove issues between the prompt opening
+	// and the user's confirmation. We capture the whole Issue (not
+	// just the ID) so the Mutator can route on Repo even if the
+	// fetched list has moved on. issueExists checks pendingTarget.ID
+	// against m.all to detect refetch-removal.
+	pendingTarget beads.Issue
 
 	// helpReturnMode is the mode to restore when the user dismisses
 	// the ? overlay. ? can be opened from modeList or modeDetail; we
@@ -374,9 +381,11 @@ func (m Model) mutator() Mutator {
 
 // beginClose enters the confirm-close mode so a stray `c` doesn't
 // destroy work. Confirmation is just the next keystroke: y proceeds,
-// anything else cancels. The target ID is captured here so a
-// concurrent refetch can't shift the cursor onto a different issue
-// between the prompt opening and the user's confirmation.
+// anything else cancels. The full issue (not just its ID) is captured
+// so a concurrent refetch can't shift the cursor onto a different
+// issue between the prompt opening and the user's confirmation, AND
+// so a multi-repo Mutator can route on Repo even if the fetched list
+// has moved on.
 func (m Model) beginClose() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
 		m.status = "read-only mode (no Mutator wired up)"
@@ -386,7 +395,7 @@ func (m Model) beginClose() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode = modeConfirmClose
-	m.pendingTargetID = m.visible[m.cursor].ID
+	m.pendingTarget = m.visible[m.cursor]
 	return m, nil
 }
 
@@ -394,17 +403,17 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
-	target := m.pendingTargetID
-	m.pendingTargetID = ""
+	target := m.pendingTarget
+	m.pendingTarget = beads.Issue{}
 	if msg.String() == "y" || msg.String() == "Y" {
-		if !m.issueExists(target) {
+		if !m.issueExists(target.ID) {
 			m.mode = modeList
-			m.status = "close cancelled: " + target + " was removed from the workspace by a refresh"
+			m.status = "close cancelled: " + target.ID + " was removed from the workspace by a refresh"
 			return m, nil
 		}
 		mu := m.mutator()
 		m.mode = modeList
-		return m, runWrite("close", target, func(ctx context.Context) error {
+		return m, runWrite("close", target.ID, func(ctx context.Context) error {
 			return mu.Close(ctx, target)
 		})
 	}
@@ -443,17 +452,17 @@ func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 	mu := m.mutator()
 	if i.IsHuman() {
 		return m, runWrite("unflag", i.ID, func(ctx context.Context) error {
-			return mu.RemoveLabel(ctx, i.ID, "human")
+			return mu.RemoveLabel(ctx, i, "human")
 		})
 	}
 	return m, runWrite("flag", i.ID, func(ctx context.Context) error {
-		return mu.AddLabel(ctx, i.ID, "human")
+		return mu.AddLabel(ctx, i, "human")
 	})
 }
 
-// beginNote opens the textinput prompt for a new note. The target ID
-// is captured here for the same reason as beginClose — see comment
-// on Model.pendingTargetID.
+// beginNote opens the textinput prompt for a new note. The full
+// target issue is captured here for the same reasons as beginClose —
+// see Model.pendingTarget.
 func (m Model) beginNote() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
 		m.status = "read-only mode (no Mutator wired up)"
@@ -463,7 +472,7 @@ func (m Model) beginNote() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode = modeNote
-	m.pendingTargetID = m.visible[m.cursor].ID
+	m.pendingTarget = m.visible[m.cursor]
 	m.input.SetValue("")
 	m.input.Prompt = "note ▸ "
 	m.input.Placeholder = "append a note to this issue"
@@ -480,12 +489,12 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		m.input.Blur()
 		m.restoreFilterPrompt()
-		m.pendingTargetID = ""
+		m.pendingTarget = beads.Issue{}
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
-		target := m.pendingTargetID
-		m.pendingTargetID = ""
+		target := m.pendingTarget
+		m.pendingTarget = beads.Issue{}
 		mu := m.mutator()
 		m.mode = modeList
 		m.input.Blur()
@@ -494,11 +503,11 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "note cancelled (empty)"
 			return m, nil
 		}
-		if !m.issueExists(target) {
-			m.status = "note cancelled: " + target + " was removed from the workspace by a refresh"
+		if !m.issueExists(target.ID) {
+			m.status = "note cancelled: " + target.ID + " was removed from the workspace by a refresh"
 			return m, nil
 		}
-		return m, runWrite("note", target, func(ctx context.Context) error {
+		return m, runWrite("note", target.ID, func(ctx context.Context) error {
 			return mu.Note(ctx, target, text)
 		})
 	}
@@ -752,10 +761,10 @@ func (m Model) viewList() string {
 	case modeConfirmClose:
 		// Render the captured ID, not the cursor's current target —
 		// a refetch may have shifted things since the prompt opened.
-		if m.pendingTargetID != "" {
+		if m.pendingTarget.ID != "" {
 			b.WriteString("\n")
 			b.WriteString(confirmStyle.Render(
-				fmt.Sprintf("close %s? [y/N]", m.pendingTargetID)))
+				fmt.Sprintf("close %s? [y/N]", m.pendingTarget.ID)))
 		}
 	}
 

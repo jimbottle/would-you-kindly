@@ -77,10 +77,14 @@ func main() {
 // flags and the registry state:
 //
 //   - -C <dir>: explicit single-repo, scoped to that workspace.
-//   - empty -C and registry has 2+ repos: multi-repo source.
-//   - empty -C and registry has 0 or 1 repo: single-repo against cwd
-//     (the v0.1.0 behavior, kept as the no-config fallback so users
-//     who haven't run `wyk init` anywhere still get a working TUI).
+//   - registry has 2+ repos: multi-repo source.
+//   - registry has 1 repo: single-repo source against that repo
+//     (NOT cwd) — a user who registered one project then runs `wyk`
+//     from anywhere should land in that project, not get an opaque
+//     "no workspace here" failure.
+//   - registry is empty: single-repo against cwd, the v0.1.0
+//     fallback so a user who hasn't run `wyk init` anywhere still
+//     gets a working TUI from inside a bd repo.
 func buildSource(dir, me string) (tui.Source, error) {
 	if dir != "" {
 		c := beads.NewClient()
@@ -96,7 +100,17 @@ func buildSource(dir, me string) (tui.Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(reg.Repos) >= 2 {
+	switch len(reg.Repos) {
+	case 0:
+		// Empty registry: behave like v0.1.0 with the cwd.
+		c := beads.NewClient()
+		return &tui.BDSource{Client: c, Me: me}, nil
+	case 1:
+		// Single registered repo: use it (not cwd).
+		c := beads.NewClient()
+		c.Dir = reg.Repos[0].Path
+		return &tui.BDSource{Client: c, Me: me}, nil
+	default:
 		clients := make([]*beads.Client, len(reg.Repos))
 		names := make([]string, len(reg.Repos))
 		for i, r := range reg.Repos {
@@ -105,12 +119,8 @@ func buildSource(dir, me string) (tui.Source, error) {
 			clients[i] = c
 			names[i] = r.Name
 		}
-		return tui.NewMultiBDSource(clients, names, me), nil
+		return tui.NewMultiBDSource(clients, names, me)
 	}
-
-	// Zero or one registered repo: behave like v0.1.0 with the cwd.
-	c := beads.NewClient()
-	return &tui.BDSource{Client: c, Me: me}, nil
 }
 
 // runHandoff implements `wyk handoff <id>`: read a runbook from stdin

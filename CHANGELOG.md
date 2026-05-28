@@ -31,6 +31,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (e.g. moved/deleted on disk) does not poison the whole view; only
   if every sub fails does the user see an error.
 
+### Fixed (Phase 4.B review pass)
+
+- **`wyk init` idempotency**: the "hook already installed" branch
+  used to `return 0` before running the registry step. A previous
+  init that failed to register (transient `~/.config` permission
+  error) would never get a chance to retry. The control flow now
+  flows through to the registry step on every run.
+- **`registry.Save` atomicity**: writes go to a temp file in the
+  same directory and `os.Rename` into place, so a crash, signal,
+  or a concurrent second `wyk init` leaves either the old file or
+  a complete new one — never a truncated half-write.
+- **Multi-repo write routing**: the `Mutator` interface now takes
+  the full `beads.Issue` (with `Repo` populated) instead of a bare
+  ID. Two workspaces that happen to use the same ID can no longer
+  cross-route writes. Locked in by
+  `TestMultiBDSource_WriteRoutesByRepoNotID`.
+- **Single-registered-repo case**: `wyk` (no args) with one entry
+  in the registry now uses that entry rather than falling back to
+  cwd. Previously, running `wyk` from outside a registered repo's
+  directory would surface an opaque "no workspace" error instead
+  of just opening the one repo the user had registered.
+- **Parallel multi-repo fetches**: sub fetches now run concurrently
+  (via `sync.WaitGroup`), turning N × bd-startup latency into
+  roughly one bd-startup latency on every refresh.
+- **`gitBranch` honors context**: uses `exec.CommandContext`, so a
+  canceled fetch no longer leaves a stranded git subprocess.
+- **`NewMultiBDSource` length check**: returns an error rather than
+  panicking when clients and names slices disagree.
+- **`findGitDir` + `findRepoRoot` merged**: one `git rev-parse
+  --git-dir --show-toplevel` call instead of two forks per init.
+- **Documented registry version-less load**: tests now pin the
+  behavior — a JSON object without a `version` field is treated as
+  v1 (older formats are tolerated, not silently corrupted).
+
 ### Changed
 
 - **TUI list now renders as a table** with a column header row and

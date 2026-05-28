@@ -126,6 +126,27 @@ func TestLoad_RejectsUnknownVersion(t *testing.T) {
 	}
 }
 
+func TestLoad_AcceptsMissingVersionAsV1(t *testing.T) {
+	// Documented behaviour: a JSON object with no version field is
+	// treated as v1 (older builds may have written that shape). The
+	// load succeeds and the next Save normalises to CurrentVersion.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repos.json")
+	if err := os.WriteFile(path, []byte(`{"repos":[{"name":"x","path":"/tmp/x"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load of version-less file should succeed; got %v", err)
+	}
+	if r.Version != CurrentVersion {
+		t.Errorf("expected normalised version %d; got %d", CurrentVersion, r.Version)
+	}
+	if len(r.Repos) != 1 || r.Repos[0].Name != "x" {
+		t.Errorf("repos not preserved across version-less load; got %+v", r.Repos)
+	}
+}
+
 func TestDefaultPath_RespectsXDG(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/custom/xdg")
 	got, err := DefaultPath()

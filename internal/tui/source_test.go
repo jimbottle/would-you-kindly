@@ -28,20 +28,20 @@ func (f *fakeRepoSource) Fetch(_ context.Context, _ filter.Preset) ([]beads.Issu
 	}
 	return f.issues, nil
 }
-func (f *fakeRepoSource) Close(_ context.Context, id string) error {
-	f.closed = append(f.closed, id)
+func (f *fakeRepoSource) Close(_ context.Context, i beads.Issue) error {
+	f.closed = append(f.closed, i.ID)
 	return nil
 }
-func (f *fakeRepoSource) AddLabel(_ context.Context, id, label string) error {
-	f.added = append(f.added, labelOp{id, label})
+func (f *fakeRepoSource) AddLabel(_ context.Context, i beads.Issue, label string) error {
+	f.added = append(f.added, labelOp{i.ID, label})
 	return nil
 }
-func (f *fakeRepoSource) RemoveLabel(_ context.Context, id, label string) error {
-	f.removed = append(f.removed, labelOp{id, label})
+func (f *fakeRepoSource) RemoveLabel(_ context.Context, i beads.Issue, label string) error {
+	f.removed = append(f.removed, labelOp{i.ID, label})
 	return nil
 }
-func (f *fakeRepoSource) Note(_ context.Context, id, text string) error {
-	f.notes = append(f.notes, labelOp{id, text})
+func (f *fakeRepoSource) Note(_ context.Context, i beads.Issue, text string) error {
+	f.notes = append(f.notes, labelOp{i.ID, text})
 	return nil
 }
 
@@ -177,7 +177,7 @@ func TestMultiBDSource_WriteRoutesToCorrectRepo(t *testing.T) {
 	}
 
 	// Close on b-9 must route to b, NOT a.
-	if err := m.Close(context.Background(), "b-9"); err != nil {
+	if err := m.Close(context.Background(), beads.Issue{ID: "b-9", Repo: "beta"}); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	if len(a.closed) != 0 {
@@ -188,7 +188,7 @@ func TestMultiBDSource_WriteRoutesToCorrectRepo(t *testing.T) {
 	}
 
 	// Same for AddLabel against a-1.
-	if err := m.AddLabel(context.Background(), "a-1", "human"); err != nil {
+	if err := m.AddLabel(context.Background(), beads.Issue{ID: "a-1", Repo: "alpha"}, "human"); err != nil {
 		t.Fatalf("AddLabel: %v", err)
 	}
 	if len(a.added) != 1 || a.added[0] != (labelOp{"a-1", "human"}) {
@@ -209,8 +209,54 @@ func TestMultiBDSource_WriteToUnknownIDErrors(t *testing.T) {
 		}{"alpha", "main", a},
 	)
 	_, _ = m.Fetch(context.Background(), filter.PresetAll)
-	err := m.Close(context.Background(), "z-99")
+	// An issue carrying a Repo that doesn't match any registered sub
+	// must error rather than silently routing somewhere.
+	err := m.Close(context.Background(), beads.Issue{ID: "z-99", Repo: "ghost"})
 	if err == nil {
-		t.Error("Close on unknown ID should error so the TUI can surface 'try refreshing'")
+		t.Error("Close on unknown Repo should error so the TUI can surface 'not in registry'")
+	}
+}
+
+func TestMultiBDSource_WriteRoutesByRepoNotID(t *testing.T) {
+	// Regression for job 1165's MED finding: two workspaces that
+	// happen to use the same ID must NOT cross-route. Writes follow
+	// Issue.Repo, not a bare ID lookup that the last fetch happened
+	// to populate.
+	a := &fakeRepoSource{issues: []beads.Issue{{ID: "shared-1", Title: "alpha's"}}}
+	b := &fakeRepoSource{issues: []beads.Issue{{ID: "shared-1", Title: "beta's"}}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"alpha", "main", a},
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"beta", "main", b},
+	)
+	if _, err := m.Fetch(context.Background(), filter.PresetAll); err != nil {
+		t.Fatal(err)
+	}
+
+	// Close on shared-1 with Repo=alpha must hit alpha, not whichever
+	// the Fetch loop visited last.
+	if err := m.Close(context.Background(), beads.Issue{ID: "shared-1", Repo: "alpha"}); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if len(a.closed) != 1 || a.closed[0] != "shared-1" {
+		t.Errorf("alpha should have received Close(shared-1); got %+v", a.closed)
+	}
+	if len(b.closed) != 0 {
+		t.Errorf("beta should NOT have received the close; got %+v", b.closed)
+	}
+
+	// And the inverse direction:
+	if err := m.Close(context.Background(), beads.Issue{ID: "shared-1", Repo: "beta"}); err != nil {
+		t.Fatalf("Close (beta): %v", err)
+	}
+	if len(b.closed) != 1 || b.closed[0] != "shared-1" {
+		t.Errorf("beta should have received Close(shared-1); got %+v", b.closed)
 	}
 }

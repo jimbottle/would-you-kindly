@@ -47,22 +47,22 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 
 // --- Mutator implementation (single-repo) ---
 // BDSource ignores Repo on the issue — it has only one workspace
-// to write to.
+// to write to. The Issue.ID field is the only thing that reaches bd.
 
-func (s *BDSource) Close(ctx context.Context, id string) error {
-	return s.Client.Close(ctx, id)
+func (s *BDSource) Close(ctx context.Context, i beads.Issue) error {
+	return s.Client.Close(ctx, i.ID)
 }
 
-func (s *BDSource) AddLabel(ctx context.Context, id, label string) error {
-	return s.Client.AddLabel(ctx, id, label)
+func (s *BDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {
+	return s.Client.AddLabel(ctx, i.ID, label)
 }
 
-func (s *BDSource) RemoveLabel(ctx context.Context, id, label string) error {
-	return s.Client.RemoveLabel(ctx, id, label)
+func (s *BDSource) RemoveLabel(ctx context.Context, i beads.Issue, label string) error {
+	return s.Client.RemoveLabel(ctx, i.ID, label)
 }
 
-func (s *BDSource) Note(ctx context.Context, id, text string) error {
-	return s.Client.Note(ctx, id, text)
+func (s *BDSource) Note(ctx context.Context, i beads.Issue, text string) error {
+	return s.Client.Note(ctx, i.ID, text)
 }
 
 // --- MultiBDSource: union of multiple bd workspaces -----------------
@@ -108,53 +108,83 @@ var (
 )
 
 // NewMultiBDSource constructs a multi-repo source from a list of
-// (client, displayName) pairs. The names are typically taken from
-// the registry's Repo.Name field.
-func NewMultiBDSource(clients []*beads.Client, names []string, me string) *MultiBDSource {
+// (client, displayName) pairs. The two slices are positionally
+// coupled, so an explicit length check up front turns a programmer
+// error into a real error instead of an `index out of range` panic
+// at the first Fetch.
+func NewMultiBDSource(clients []*beads.Client, names []string, me string) (*MultiBDSource, error) {
+	if len(clients) != len(names) {
+		return nil, fmt.Errorf("clients/names length mismatch: %d clients, %d names",
+			len(clients), len(names))
+	}
 	subs := make([]subRepo, len(clients))
 	for i, c := range clients {
 		dir := c.Dir
 		subs[i] = subRepo{
 			name:     names[i],
 			src:      &BDSource{Client: c, Me: me},
-			branchFn: func() string { return gitBranch(dir) },
+			branchFn: func() string { return gitBranch(context.Background(), dir) },
 		}
 	}
 	return &MultiBDSource{
 		subs:     subs,
 		idToRepo: make(map[string]string),
-	}
+	}, nil
 }
 
-// Fetch queries every sub-source and concatenates their results,
-// decorating each issue with its repo name and the repo's current
-// git branch. Per-repo errors are tolerated as long as at least one
-// repo returned data; if every repo errored, the first error is
-// surfaced so the user sees something actionable.
+// Fetch queries every sub-source concurrently and concatenates their
+// results in stable registry order. Each row is decorated with its
+// repo name and the repo's current git branch. Per-repo errors are
+// tolerated as long as at least one repo returned data; if every
+// repo errored, the first error (in registry order) is surfaced.
+//
+// Parallelism matters because each sub.Fetch shells out to `bd`,
+// and with 4–5 registered workspaces the sequential cost was
+// user-perceptible on every refresh.
 func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, error) {
+	type result struct {
+		issues []beads.Issue
+		err    error
+	}
+	results := make([]result, len(m.subs))
+	branches := make([]string, len(m.subs))
+
+	var wg sync.WaitGroup
+	for i, sub := range m.subs {
+		wg.Add(1)
+		go func(i int, sub subRepo) {
+			defer wg.Done()
+			issues, err := sub.src.Fetch(ctx, p)
+			results[i] = result{issues: issues, err: err}
+			if err == nil {
+				branches[i] = sub.branchFn()
+			}
+		}(i, sub)
+	}
+	wg.Wait()
+
 	var all []beads.Issue
 	var firstErr error
 	idMap := make(map[string]string)
-
-	for _, sub := range m.subs {
-		issues, err := sub.src.Fetch(ctx, p)
-		if err != nil {
+	for i, sub := range m.subs {
+		r := results[i]
+		if r.err != nil {
 			if firstErr == nil {
-				firstErr = fmt.Errorf("%s: %w", sub.name, err)
+				firstErr = fmt.Errorf("%s: %w", sub.name, r.err)
 			}
 			continue
 		}
-		branch := sub.branchFn()
-		for j := range issues {
-			issues[j].Repo = sub.name
-			issues[j].Branch = branch
-			idMap[issues[j].ID] = sub.name
+		for j := range r.issues {
+			r.issues[j].Repo = sub.name
+			r.issues[j].Branch = branches[i]
+			idMap[r.issues[j].ID] = sub.name
 		}
-		all = append(all, issues...)
+		all = append(all, r.issues...)
 	}
 
-	// Atomically replace the id→repo map so a subsequent write
-	// routes against THIS fetch's view of the world, not a stale one.
+	// Atomically replace the id→repo map so a subsequent write's
+	// legacy-fallback path (used when Issue.Repo is empty) routes
+	// against THIS fetch's view of the world.
 	m.mu.Lock()
 	m.idToRepo = idMap
 	m.mu.Unlock()
@@ -165,13 +195,30 @@ func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Iss
 	return all, nil
 }
 
-// repoFor looks up which sub-source owns the given issue ID.
-func (m *MultiBDSource) repoFor(id string) (fullSource, error) {
+// repoForIssue returns the sub whose name matches issue.Repo.
+// Routing on the issue's Repo field (set at Fetch time) rather than
+// a bare ID guarantees writes can't mis-route on ID collisions
+// across workspaces. Falls back to the idToRepo map only when the
+// issue lacks a Repo (e.g. a stale call site that hadn't been
+// updated yet) — the map can return wrong-repo results on
+// collisions, so a missing Repo logs visibly via the error string.
+func (m *MultiBDSource) repoForIssue(i beads.Issue) (fullSource, error) {
+	if i.Repo != "" {
+		for _, sub := range m.subs {
+			if sub.name == i.Repo {
+				return sub.src, nil
+			}
+		}
+		return nil, fmt.Errorf("issue %q claims repo %q which is not in the registry", i.ID, i.Repo)
+	}
+	// Legacy path: bare ID lookup. Kept so callers that obtain an
+	// Issue from a non-multi source still work; multi-source Fetch
+	// always populates Repo so this branch isn't reached for them.
 	m.mu.RLock()
-	name, ok := m.idToRepo[id]
+	name, ok := m.idToRepo[i.ID]
 	m.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("no repo known for issue %q (try refreshing)", id)
+		return nil, fmt.Errorf("no repo known for issue %q (try refreshing)", i.ID)
 	}
 	for _, sub := range m.subs {
 		if sub.name == name {
@@ -181,48 +228,49 @@ func (m *MultiBDSource) repoFor(id string) (fullSource, error) {
 	return nil, fmt.Errorf("internal: repo %q not in subs", name)
 }
 
-func (m *MultiBDSource) Close(ctx context.Context, id string) error {
-	sub, err := m.repoFor(id)
+func (m *MultiBDSource) Close(ctx context.Context, i beads.Issue) error {
+	sub, err := m.repoForIssue(i)
 	if err != nil {
 		return err
 	}
-	return sub.Close(ctx, id)
+	return sub.Close(ctx, i)
 }
 
-func (m *MultiBDSource) AddLabel(ctx context.Context, id, label string) error {
-	sub, err := m.repoFor(id)
+func (m *MultiBDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {
+	sub, err := m.repoForIssue(i)
 	if err != nil {
 		return err
 	}
-	return sub.AddLabel(ctx, id, label)
+	return sub.AddLabel(ctx, i, label)
 }
 
-func (m *MultiBDSource) RemoveLabel(ctx context.Context, id, label string) error {
-	sub, err := m.repoFor(id)
+func (m *MultiBDSource) RemoveLabel(ctx context.Context, i beads.Issue, label string) error {
+	sub, err := m.repoForIssue(i)
 	if err != nil {
 		return err
 	}
-	return sub.RemoveLabel(ctx, id, label)
+	return sub.RemoveLabel(ctx, i, label)
 }
 
-func (m *MultiBDSource) Note(ctx context.Context, id, text string) error {
-	sub, err := m.repoFor(id)
+func (m *MultiBDSource) Note(ctx context.Context, i beads.Issue, text string) error {
+	sub, err := m.repoForIssue(i)
 	if err != nil {
 		return err
 	}
-	return sub.Note(ctx, id, text)
+	return sub.Note(ctx, i, text)
 }
 
 // gitBranch returns the current branch name of the repo at dir, or
 // the empty string if the lookup fails. A detached HEAD comes back
 // as "HEAD"; we leave that as-is so the TUI shows the truth rather
-// than masking the state.
-func gitBranch(dir string) string {
+// than masking the state. exec.CommandContext respects ctx, so a
+// canceled fetch (TUI quit) doesn't leave a stranded git process.
+func gitBranch(ctx context.Context, dir string) string {
 	args := []string{"rev-parse", "--abbrev-ref", "HEAD"}
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
 	}
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {

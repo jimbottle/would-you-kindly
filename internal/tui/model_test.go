@@ -39,20 +39,20 @@ type stubMutator struct {
 
 type labelOp struct{ id, label string }
 
-func (s *stubMutator) Close(_ context.Context, id string) error {
-	s.closed = append(s.closed, id)
+func (s *stubMutator) Close(_ context.Context, i beads.Issue) error {
+	s.closed = append(s.closed, i.ID)
 	return nil
 }
-func (s *stubMutator) AddLabel(_ context.Context, id, label string) error {
-	s.added = append(s.added, labelOp{id, label})
+func (s *stubMutator) AddLabel(_ context.Context, i beads.Issue, label string) error {
+	s.added = append(s.added, labelOp{i.ID, label})
 	return nil
 }
-func (s *stubMutator) RemoveLabel(_ context.Context, id, label string) error {
-	s.removed = append(s.removed, labelOp{id, label})
+func (s *stubMutator) RemoveLabel(_ context.Context, i beads.Issue, label string) error {
+	s.removed = append(s.removed, labelOp{i.ID, label})
 	return nil
 }
-func (s *stubMutator) Note(_ context.Context, id, text string) error {
-	s.notes = append(s.notes, labelOp{id, text})
+func (s *stubMutator) Note(_ context.Context, i beads.Issue, text string) error {
+	s.notes = append(s.notes, labelOp{i.ID, text})
 	return nil
 }
 
@@ -496,8 +496,8 @@ func TestConfirmCloseTargetsCapturedIDNotCursor(t *testing.T) {
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = model.(Model)
-	if m.pendingTargetID != originalFirstID {
-		t.Fatalf("setup: expected pendingTargetID=%q, got %q", originalFirstID, m.pendingTargetID)
+	if m.pendingTarget.ID != originalFirstID {
+		t.Fatalf("setup: expected pendingTarget.ID=%q, got %q", originalFirstID, m.pendingTarget.ID)
 	}
 
 	// Simulate a refetch that reorders: original first issue now at index 1.
