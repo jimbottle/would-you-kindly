@@ -1111,7 +1111,7 @@ func (m Model) viewList() string {
 // remaining suffix is usually ≤ 8 chars (e.g. `ma5.2.1`), so the
 // extra width was just whitespace in every row.
 const (
-	colW       = 1 // wyk-hook indicator: ✓ if installed, blank if not
+	colWyk     = 3 // wyk-hook indicator: ✓ if installed, blank if not. Header reads "wyk" so the column is self-explanatory.
 	colRepo    = 18
 	colBranch  = 10
 	colID      = 12
@@ -1205,7 +1205,7 @@ func (m Model) renderHeader() string {
 	var prefix string
 	if m.isMultiRepo() {
 		prefix = fmt.Sprintf("%-*s  %-*s  %-*s  ",
-			colW, "W",
+			colWyk, "wyk",
 			colRepo, "Repo",
 			colBranch, "Branch",
 		)
@@ -1230,9 +1230,12 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 
 	var prefix string
 	if m.isMultiRepo() {
-		w := " "
+		// Center the ✓ under the "wyk" header (3 chars wide).
+		// blank for not-hooked stays the same width so the next
+		// column aligns regardless of state.
+		w := strings.Repeat(" ", colWyk)
 		if i.WykHooked {
-			w = wykIndicatorStyle.Render("✓")
+			w = " " + wykIndicatorStyle.Render("✓") + " "
 		}
 		repo := typeStyle.Render(fmt.Sprintf("%-*s", colRepo, trunc(i.Repo, colRepo)))
 		br := typeStyle.Render(fmt.Sprintf("%-*s", colBranch, trunc(i.Branch, colBranch)))
