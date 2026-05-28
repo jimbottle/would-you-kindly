@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1021,5 +1022,148 @@ func TestTrunc_RuneAware(t *testing.T) {
 				t.Errorf("trunc(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
 			}
 		})
+	}
+}
+
+// manyIssues builds n stub issues with IDs that satisfy the
+// cross-workspace leak guard (prefix `a-`) so tests around viewport
+// scrolling don't need to wrestle with foreign-prefix drops.
+func manyIssues(n int) []beads.Issue {
+	out := make([]beads.Issue, n)
+	for i := 0; i < n; i++ {
+		out[i] = beads.Issue{
+			ID:     fmt.Sprintf("a-%d", i+1),
+			Title:  fmt.Sprintf("row %d", i+1),
+			Status: "open",
+			Labels: []string{},
+		}
+	}
+	return out
+}
+
+func TestStickyHeader_HeaderAndAllRowsFitWithoutScroll(t *testing.T) {
+	// 5 rows + terminal large enough to show everything → no
+	// "↑/↓ more" hints, scroll stays at 0.
+	src := &stubSource{issues: manyIssues(5)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	if m.scroll != 0 {
+		t.Errorf("scroll should be 0 when everything fits; got %d", m.scroll)
+	}
+	out := m.View()
+	for _, want := range []string{"row 1", "row 5", "ID", "Status"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in view; got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "more above") || strings.Contains(out, "more below") {
+		t.Errorf("no scroll-hint expected when everything fits; got:\n%s", out)
+	}
+}
+
+func TestStickyHeader_BodyCappedToTerminalHeight(t *testing.T) {
+	// 30 rows + cramped terminal → viewport shows a small window;
+	// the column header MUST still appear in the rendered output.
+	// This is the core fix: pre-72y the terminal scrolled the
+	// header off the top.
+	src := &stubSource{issues: manyIssues(30)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 14})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	out := m.View()
+	if !strings.Contains(out, "Status") {
+		t.Errorf("header row should remain visible at the top of every paint; got:\n%s", out)
+	}
+	if !strings.Contains(out, "row 1") {
+		t.Errorf("cursor row should be visible (cursor=0, row 1); got:\n%s", out)
+	}
+	// Some row beyond what fits in the body should NOT be in the
+	// rendered output — proving the body is capped, not dumped.
+	if strings.Contains(out, "row 30") {
+		t.Errorf("row 30 should be off-screen in a cramped terminal; got:\n%s", out)
+	}
+	if !strings.Contains(out, "more below") {
+		t.Errorf("expected '↓ N more below' hint when rows are clipped; got:\n%s", out)
+	}
+}
+
+func TestStickyHeader_CursorScrollFollowsDown(t *testing.T) {
+	// Press j past the bottom of the viewport — scroll must
+	// advance so the cursor row stays visible, and the "↑ more
+	// above" hint must appear.
+	src := &stubSource{issues: manyIssues(20)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 12})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	for i := 0; i < 15; i++ {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		m = model.(Model)
+	}
+	if m.cursor != 15 {
+		t.Fatalf("cursor expected at 15 after 15 j's; got %d", m.cursor)
+	}
+	if m.scroll == 0 {
+		t.Errorf("scroll should have advanced past 0; got %d", m.scroll)
+	}
+	if m.cursor < m.scroll || m.cursor >= m.scroll+m.bodyHeight() {
+		t.Errorf("cursor (%d) escaped the rendered window [%d, %d)", m.cursor, m.scroll, m.scroll+m.bodyHeight())
+	}
+	out := m.View()
+	if !strings.Contains(out, "more above") {
+		t.Errorf("expected '↑ N more above' hint after scrolling down; got:\n%s", out)
+	}
+}
+
+func TestStickyHeader_TopAndBottomKeysAdjustScroll(t *testing.T) {
+	// G jumps to the last row → scroll lands so the last row is
+	// visible. g jumps back to the top → scroll = 0.
+	src := &stubSource{issues: manyIssues(25)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 12})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	m = model.(Model)
+	if m.cursor != 24 {
+		t.Errorf("G expected to land on the last row (24); got %d", m.cursor)
+	}
+	if m.cursor < m.scroll {
+		t.Errorf("G left the cursor above the scroll window: cursor=%d scroll=%d", m.cursor, m.scroll)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m = model.(Model)
+	if m.cursor != 0 {
+		t.Errorf("g expected to land on row 0; got %d", m.cursor)
+	}
+	if m.scroll != 0 {
+		t.Errorf("g should pull scroll to 0; got %d", m.scroll)
+	}
+}
+
+func TestStickyHeader_WindowResizeClampsScroll(t *testing.T) {
+	// User scrolls down, then resizes the terminal taller. The
+	// scroll offset should re-clamp so we don't leave blank rows
+	// past the end of the data.
+	src := &stubSource{issues: manyIssues(20)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 10})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	for i := 0; i < 18; i++ {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		m = model.(Model)
+	}
+	beforeScroll := m.scroll
+	if beforeScroll == 0 {
+		t.Fatal("setup: scroll should be > 0 after pressing j 18 times")
+	}
+	model, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+	m = model.(Model)
+	if m.scroll != 0 {
+		t.Errorf("after resizing tall enough to show everything, scroll should clamp to 0; got %d (cursor=%d)", m.scroll, m.cursor)
 	}
 }

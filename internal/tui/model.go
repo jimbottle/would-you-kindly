@@ -173,6 +173,14 @@ type Model struct {
 	// round-trip. Cleared on fetchedMsg arrival.
 	refreshing bool
 
+	// scroll is the row index at the top of the rendered window —
+	// used to keep the column header visible when m.visible has
+	// more rows than the terminal can fit. Without it, the terminal
+	// scrolls overflow off the top and the header disappears.
+	// Maintained by ensureCursorVisible whenever the cursor moves
+	// or the data set changes shape.
+	scroll int
+
 	// input is the textinput shared by modeFilter and modeNote. The
 	// modes are mutually exclusive — only one prompt is on screen at
 	// a time — so a single field is enough; Prompt/Placeholder are
@@ -270,6 +278,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// Resize can shrink the body below the cursor — re-clamp
+		// the scroll so the cursor stays in the viewport.
+		m.ensureCursorVisible()
 		return m, nil
 
 	case fetchedMsg:
@@ -295,6 +306,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.all = msg.issues
 			m.commonPrefix = commonIDPrefix(m.all)
 			m.recomputeVisible()
+			// New row count → cursor may now sit outside the
+			// viewport, or m.scroll may exceed maxScroll.
+			m.ensureCursorVisible()
 		}
 		// Per-sub fetch errors travel on the msg itself so they
 		// always reflect THIS fetch — not a concurrent one that
@@ -383,14 +397,18 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.visible)-1 {
 			m.cursor++
 		}
+		m.ensureCursorVisible()
 	case keyHit(msg, m.keys.Up):
 		if m.cursor > 0 {
 			m.cursor--
 		}
+		m.ensureCursorVisible()
 	case keyHit(msg, m.keys.Top):
 		m.cursor = 0
+		m.ensureCursorVisible()
 	case keyHit(msg, m.keys.Bottom):
 		m.cursor = max(0, len(m.visible)-1)
+		m.ensureCursorVisible()
 	case keyHit(msg, m.keys.Open):
 		if len(m.visible) > 0 {
 			m.mode = modeDetail
@@ -465,6 +483,7 @@ func (m Model) jumpToHuman(dir int) (tea.Model, tea.Cmd) {
 		idx := ((m.cursor + dir*offset) % n + n) % n
 		if m.visible[idx].IsHuman() {
 			m.cursor = idx
+			m.ensureCursorVisible()
 			return m, nil
 		}
 	}
@@ -756,6 +775,7 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
 	m.preset = p
 	m.cursor = 0
+	m.scroll = 0
 	m.refreshing = true
 	return m, m.fetchCmd()
 }
@@ -807,12 +827,14 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		m.input.Blur()
 		m.recomputeVisible()
+		m.ensureCursorVisible()
 		return m, nil
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.query = m.input.Value()
 	m.recomputeVisible()
+	m.ensureCursorVisible()
 	return m, cmd
 }
 
@@ -960,8 +982,35 @@ func (m Model) viewList() string {
 		if len(m.visible) == 0 {
 			b.WriteString(emptyStyle.Render(fmt.Sprintf("no matches for %q", m.query)))
 		} else {
-			for i, issue := range m.visible {
-				b.WriteString(m.renderRow(issue, i == m.cursor))
+			// Sticky-header viewport: pick a window around the
+			// cursor instead of dumping every row and letting the
+			// terminal scroll the header off the top. bodyHeight
+			// for rendering uses the same computation as
+			// ensureCursorVisible — when they agree, the cursor
+			// can never be outside the rendered window.
+			h := m.bodyHeight()
+			start := m.scroll
+			end := start + h
+			if end > len(m.visible) {
+				end = len(m.visible)
+			}
+			if start > end {
+				start = end
+			}
+			for i := start; i < end; i++ {
+				b.WriteString(m.renderRow(m.visible[i], i == m.cursor))
+				b.WriteByte('\n')
+			}
+			// "+N more above/below" hints when the window doesn't
+			// show everything. Subtle, single line each; only the
+			// non-zero side renders so a fully-visible list stays
+			// chrome-free.
+			if start > 0 {
+				b.WriteString(emptyStyle.Render(fmt.Sprintf("  ↑ %d more above", start)))
+				b.WriteByte('\n')
+			}
+			if end < len(m.visible) {
+				b.WriteString(emptyStyle.Render(fmt.Sprintf("  ↓ %d more below", len(m.visible)-end)))
 				b.WriteByte('\n')
 			}
 		}
@@ -1363,6 +1412,91 @@ func renderFetchErrorBanner(errs []FetchError, width int) string {
 		s = trunc(s, width)
 	}
 	return s
+}
+
+// chromeMinOverhead is the number of non-row lines viewList always
+// emits when the table is shown: title, blank, header, blank, status
+// bar, plus a one-line breathing-room buffer so the bottom row never
+// kisses the status bar. Banners (setupHint, fetch error, status,
+// modal prompts) are NOT in this base because they're conditional;
+// bodyHeight subtracts them via the m.chromeExtra() count below.
+const chromeMinOverhead = 5
+
+// chromeExtra counts the conditional chrome lines that compete with
+// rows for vertical real estate. Each banner is one line; modal
+// prompts vary. Kept close to viewList so the budget arithmetic
+// matches what's actually rendered.
+func (m Model) chromeExtra() int {
+	n := 0
+	if m.setupHint != "" {
+		// setupHint can wrap; count newlines + 1.
+		n += 1 + strings.Count(m.setupHint, "\n")
+	}
+	if m.lastErr != nil && len(m.all) > 0 {
+		n++ // refresh-failed banner
+	}
+	if len(m.fetchErrors) > 0 {
+		n++ // per-sub fetch-error banner
+	}
+	if m.status != "" {
+		n++ // transient write-feedback banner
+	}
+	switch m.mode {
+	case modeFilter, modeNote, modeQuickAdd:
+		n += 2 // blank + textinput
+	case modeConfirmClose:
+		if m.pendingTarget.ID != "" {
+			n += 2 // blank + confirm prompt
+		}
+	}
+	return n
+}
+
+// bodyHeight is the number of issue rows the viewport will render
+// given the current terminal height and chrome state. Floors at 1
+// so we always show at least one row (and at least one ↑/↓ hint)
+// regardless of how cramped the terminal is. If m.height is zero
+// (before the first WindowSizeMsg arrives), fall back to a generous
+// default so the initial paint isn't a one-line stub.
+func (m Model) bodyHeight() int {
+	if m.height <= 0 {
+		return 20
+	}
+	h := m.height - chromeMinOverhead - m.chromeExtra()
+	// Reserve a line for each "+N more" hint that may render.
+	// Always subtract one — we'd rather under-fill by a row than
+	// over-fill and clip the cursor row off the bottom.
+	h -= 2
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// ensureCursorVisible adjusts m.scroll so m.cursor falls inside the
+// rendered window. Called after every cursor mutation (j, k, g, G,
+// jump-to-human) and whenever m.visible shrinks or grows. The same
+// math runs at render time via bodyHeight, so the two agree.
+func (m *Model) ensureCursorVisible() {
+	h := m.bodyHeight()
+	if h < 1 {
+		h = 1
+	}
+	maxScroll := len(m.visible) - h
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.cursor < m.scroll {
+		m.scroll = m.cursor
+	} else if m.cursor >= m.scroll+h {
+		m.scroll = m.cursor - h + 1
+	}
+	if m.scroll > maxScroll {
+		m.scroll = maxScroll
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
 }
 
 func friendlyError(err error) string {
