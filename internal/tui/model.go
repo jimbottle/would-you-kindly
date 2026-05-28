@@ -159,6 +159,12 @@ type Model struct {
 	// isn't invisible.
 	setupHint string
 
+	// fetchErrors holds the per-sub failures from the most recent
+	// MultiBDSource.Fetch — populated only when src satisfies
+	// MultiSource (multi-repo). Rendered as a banner above the help
+	// bar so a sub that errors out doesn't disappear silently.
+	fetchErrors []FetchError
+
 	// input is the textinput shared by modeFilter and modeNote. The
 	// modes are mutually exclusive — only one prompt is on screen at
 	// a time — so a single field is enough; Prompt/Placeholder are
@@ -269,6 +275,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.all = msg.issues
 			m.commonPrefix = commonIDPrefix(m.all)
 			m.recomputeVisible()
+		}
+		// Pull per-sub fetch errors if the source tracks them
+		// (multi-repo). Always read — even on whole-fetch error —
+		// so a partial-failure → total-failure transition clears
+		// the per-sub banner cleanly.
+		if ms, ok := m.src.(MultiSource); ok {
+			m.fetchErrors = ms.LastFetchErrors()
 		}
 		if recovered {
 			m.tickGen++
@@ -942,6 +955,15 @@ func (m Model) viewList() string {
 		}
 	}
 
+	// fetch-error banner: per-sub Fetch failures from a multi-repo
+	// source. Surfaces above the transient status banner so it isn't
+	// overwritten by write feedback. Re-rendered every paint from
+	// m.fetchErrors so it tracks the latest fetch.
+	if len(m.fetchErrors) > 0 {
+		b.WriteString("\n")
+		b.WriteString(fetchErrorStyle.Render(renderFetchErrorBanner(m.fetchErrors)))
+	}
+
 	// status banner (transient write feedback) above the status bar
 	if m.status != "" {
 		b.WriteString("\n")
@@ -1243,6 +1265,27 @@ func (m Model) statusBar() string {
 
 func keyHit(msg tea.KeyMsg, b key.Binding) bool {
 	return key.Matches(msg, b)
+}
+
+// renderFetchErrorBanner formats the per-sub Fetch failures into a
+// single line. Names are joined with commas; a long list collapses
+// to "N repos failed: a, b, c, +M more" to keep the banner from
+// wrapping. Caller decides styling.
+func renderFetchErrorBanner(errs []FetchError) string {
+	const showFirst = 3
+	n := len(errs)
+	names := make([]string, 0, n)
+	for _, e := range errs {
+		names = append(names, e.Repo)
+	}
+	if n <= showFirst {
+		if n == 1 {
+			return fmt.Sprintf("1 repo failed to load: %s (press r to retry; wyk doctor for details)", names[0])
+		}
+		return fmt.Sprintf("%d repos failed to load: %s (press r to retry; wyk doctor for details)", n, strings.Join(names, ", "))
+	}
+	return fmt.Sprintf("%d repos failed to load: %s, +%d more (wyk doctor for details)",
+		n, strings.Join(names[:showFirst], ", "), n-showFirst)
 }
 
 func friendlyError(err error) string {

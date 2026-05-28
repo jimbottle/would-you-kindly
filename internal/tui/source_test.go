@@ -267,6 +267,86 @@ func TestMultiBDSource_PartialFailureKeepsGood(t *testing.T) {
 	if len(got) != 1 || got[0].ID != "ok-1" {
 		t.Errorf("expected just the good repo's issue; got %+v", got)
 	}
+	// LastFetchErrors must surface the silent sub failure — the TUI
+	// uses it to render the per-sub banner. Pre-m99 these errors
+	// were dropped on the floor.
+	errs := m.LastFetchErrors()
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 fetch error tracked; got %d (%+v)", len(errs), errs)
+	}
+	if errs[0].Repo != "bad" {
+		t.Errorf("fetch error repo = %q, want %q", errs[0].Repo, "bad")
+	}
+	if errs[0].Err == nil || errs[0].Err.Error() != "bd: workspace gone" {
+		t.Errorf("fetch error Err = %v, want \"bd: workspace gone\"", errs[0].Err)
+	}
+}
+
+func TestMultiBDSource_LastFetchErrors_ClearsOnSuccess(t *testing.T) {
+	// First Fetch errors on one sub; second Fetch (after the sub
+	// "recovers") should return zero errors. The model assumes
+	// stashed errors are a snapshot of the *last* fetch, not a
+	// cumulative log.
+	sub := &fakeRepoSource{fetchErr: errors.New("transient")}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"flaky", "main", sub},
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"ok", "main", &fakeRepoSource{issues: []beads.Issue{{ID: "ok-1"}}}},
+	)
+	if _, err := m.Fetch(context.Background(), filter.PresetAll); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(m.LastFetchErrors()); got != 1 {
+		t.Fatalf("first fetch should have 1 err; got %d", got)
+	}
+	sub.fetchErr = nil
+	sub.issues = []beads.Issue{{ID: "flaky-1"}}
+	if _, err := m.Fetch(context.Background(), filter.PresetAll); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(m.LastFetchErrors()); got != 0 {
+		t.Errorf("second fetch should clear errs; got %d (%+v)", got, m.LastFetchErrors())
+	}
+}
+
+func TestRenderFetchErrorBanner(t *testing.T) {
+	// Banner format pins three regimes: single, few-enough-to-list,
+	// truncated. Phrasing matters because the user reads this and
+	// the next action they take depends on it (press r vs. wyk
+	// doctor).
+	mk := func(names ...string) []FetchError {
+		out := make([]FetchError, len(names))
+		for i, n := range names {
+			out[i] = FetchError{Repo: n, Err: errors.New("x")}
+		}
+		return out
+	}
+	cases := []struct {
+		name     string
+		errs     []FetchError
+		contains []string
+	}{
+		{"single", mk("a"), []string{"1 repo failed", "a", "press r"}},
+		{"few", mk("a", "b", "c"), []string{"3 repos failed", "a, b, c", "press r"}},
+		{"many", mk("a", "b", "c", "d", "e"), []string{"5 repos failed", "a, b, c", "+2 more", "wyk doctor"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderFetchErrorBanner(tc.errs)
+			for _, want := range tc.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("banner missing %q in %q", want, got)
+				}
+			}
+		})
+	}
 }
 
 func TestMultiBDSource_AllFailReturnsFirstError(t *testing.T) {

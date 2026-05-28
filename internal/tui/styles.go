@@ -111,6 +111,14 @@ var (
 	// have wyk's post-commit hook installed. Green so it reads as
 	// "this is configured correctly" at a glance.
 	wykIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84"))
+
+	// fetchErrorStyle renders the multi-repo per-sub failure banner.
+	// Amber (not red) so an erroring sub reads as "needs attention"
+	// without screaming over the rest of the table — distinct from
+	// the bright red errorStyle used for whole-fetch fatal errors.
+	fetchErrorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Italic(true)
 )
 
 func statusStyleFor(status string) lipgloss.Style {
