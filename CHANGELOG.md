@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`internal/registry`** — JSON-backed registry of bd workspaces at
+  `~/.config/wyk/repos.json` (XDG-aware). Load, Save, Add, Remove,
+  Has. Idempotent add; symlink-resolving path normalisation so the
+  same repo via two paths counts as one entry.
+- **`wyk init` now bootstraps the whole layer**: runs `bd init` if
+  `.beads` is missing, installs the post-commit auto-close hook
+  (existing behavior), and registers the repo in repos.json. Each
+  step is independently idempotent. New flags `-skip-bd-init` and
+  `-skip-register` let you opt out of either.
+
 ### Changed
 
 - **TUI list now renders as a table** with a column header row and

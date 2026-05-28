@@ -37,7 +37,7 @@ func runInitIn(t *testing.T, dir string, args ...string) int {
 
 func TestInit_InstallsExecutableHook(t *testing.T) {
 	dir := gitInit(t)
-	if code := runInitIn(t, dir); code != 0 {
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 0 {
 		t.Fatalf("runInit exit %d, want 0", code)
 	}
 
@@ -63,12 +63,12 @@ func TestInit_InstallsExecutableHook(t *testing.T) {
 
 func TestInit_IdempotentReinstallNoForce(t *testing.T) {
 	dir := gitInit(t)
-	if code := runInitIn(t, dir); code != 0 {
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 0 {
 		t.Fatalf("first install exit %d", code)
 	}
 	// Second run without -force should succeed (idempotent) since
 	// the existing hook carries our marker.
-	if code := runInitIn(t, dir); code != 0 {
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 0 {
 		t.Errorf("idempotent reinstall exit %d, want 0", code)
 	}
 }
@@ -84,12 +84,12 @@ func TestInit_RefusesToOverwriteForeignHook(t *testing.T) {
 	}
 
 	// Without -force: refuse with usage exit code 64.
-	if code := runInitIn(t, dir); code != 64 {
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 64 {
 		t.Errorf("expected 64 when overwriting foreign hook without -force; got %d", code)
 	}
 
 	// With -force: replace.
-	if code := runInitIn(t, dir, "-force"); code != 0 {
+	if code := runInitIn(t, dir, "-force", "-skip-bd-init", "-skip-register"); code != 0 {
 		t.Errorf("expected 0 with -force; got %d", code)
 	}
 	body, _ := os.ReadFile(hookPath)
@@ -100,7 +100,7 @@ func TestInit_RefusesToOverwriteForeignHook(t *testing.T) {
 
 func TestInit_DryRunDoesNotWrite(t *testing.T) {
 	dir := gitInit(t)
-	if code := runInitIn(t, dir, "-dry-run"); code != 0 {
+	if code := runInitIn(t, dir, "-dry-run", "-skip-bd-init", "-skip-register"); code != 0 {
 		t.Errorf("dry-run exit %d, want 0", code)
 	}
 	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
@@ -124,7 +124,7 @@ func TestInit_DryRunAgainstForeignHookReturnsZero(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code := runInitIn(t, dir, "-dry-run"); code != 0 {
+	if code := runInitIn(t, dir, "-dry-run", "-skip-bd-init", "-skip-register"); code != 0 {
 		t.Errorf("-dry-run against foreign hook should exit 0; got %d", code)
 	}
 	// And: it must not have written.
@@ -136,7 +136,7 @@ func TestInit_DryRunAgainstForeignHookReturnsZero(t *testing.T) {
 
 func TestInit_OutsideRepoFailsCleanly(t *testing.T) {
 	dir := t.TempDir() // not a git repo
-	if code := runInitIn(t, dir); code != 2 {
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 2 {
 		t.Errorf("expected exit 2 outside a repo; got %d", code)
 	}
 }

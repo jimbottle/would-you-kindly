@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
 // postCommitHook is the shell script `wyk init` installs at
@@ -33,20 +35,25 @@ exec wyk hook post-commit
 // some other source.
 const hookMarker = "Installed by `wyk init`"
 
-// runInit implements `wyk init`: installs a post-commit hook into
-// the current git repository so commits like "Closes: bd-42" auto-
-// close the referenced beads issue.
+// runInit implements `wyk init`: a one-stop bootstrap for using wyk
+// in a repo. It (1) initialises a bd workspace if none exists,
+// (2) installs the post-commit auto-close hook, and (3) registers
+// the repo in ~/.config/wyk/repos.json so the multi-repo TUI sees
+// it. Each step is independently idempotent — re-running on a
+// fully-set-up repo is a no-op with status messages.
 //
 // Exit codes:
 //
-//	0   installed (or, with -dry-run, would have installed)
-//	1   filesystem or git error
+//	0   installed / already installed (or, with -dry-run, would have)
+//	1   filesystem, git, or bd error
 //	2   .git directory missing — not a git repo
 //	64  usage error or refusal to overwrite a foreign hook without -force
 func runInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	force := fs.Bool("force", false, "overwrite an existing post-commit hook")
 	dryRun := fs.Bool("dry-run", false, "print what would happen without writing the hook")
+	skipBD := fs.Bool("skip-bd-init", false, "do not run `bd init` even if .beads is missing")
+	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -55,7 +62,7 @@ func runInit(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk init [-force] [-dry-run]")
+		fmt.Fprintln(os.Stderr, "usage: wyk init [-force] [-dry-run] [-skip-bd-init] [-skip-register]")
 		return 64
 	}
 
@@ -64,6 +71,33 @@ func runInit(args []string) int {
 		fmt.Fprintln(os.Stderr, "wyk init:", err)
 		return 2
 	}
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init:", err)
+		return 2
+	}
+
+	// Step 1: bootstrap a bd workspace if there isn't one.
+	if !*skipBD {
+		beadsDir := filepath.Join(repoRoot, ".beads")
+		if _, err := os.Stat(beadsDir); errors.Is(err, os.ErrNotExist) {
+			if *dryRun {
+				fmt.Println("wyk init: would run `bd init` (no .beads directory present)")
+			} else {
+				if code := runBDInit(repoRoot); code != 0 {
+					return code
+				}
+			}
+		} else if err == nil {
+			if *dryRun {
+				fmt.Println("wyk init: bd workspace already present, skipping bd init")
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "wyk init: stat .beads:", err)
+			return 1
+		}
+	}
+
 	hookPath := filepath.Join(gitDir, "hooks", "post-commit")
 
 	switch existing, err := os.ReadFile(hookPath); {
@@ -117,7 +151,86 @@ func runInit(args []string) int {
 	fmt.Printf("wyk init: installed post-commit hook at %s\n", hookPath)
 	fmt.Println("  Commits whose message includes `Closes: <id>`, `Fixes: <id>`, or")
 	fmt.Println("  `Resolves: <id>` will now auto-close the referenced bd issue.")
+
+	// Step 3: register the repo so wyk's multi-repo TUI finds it.
+	if !*skipRegister {
+		if code := registerRepo(repoRoot); code != 0 {
+			return code
+		}
+	}
 	return 0
+}
+
+// runBDInit invokes `bd init` in the given repo root and returns an
+// exit code for runInit. bd's own stdout/stderr passes through so the
+// user sees what bd did.
+func runBDInit(repoRoot string) int {
+	fmt.Printf("wyk init: running `bd init` in %s\n", repoRoot)
+	cmd := exec.Command("bd", "init")
+	cmd.Dir = repoRoot
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			fmt.Fprintln(os.Stderr, "wyk init: bd is not installed (or not on PATH)")
+			return 1
+		}
+		fmt.Fprintln(os.Stderr, "wyk init: bd init failed:", err)
+		return 1
+	}
+	return 0
+}
+
+// registerRepo adds the repo root to ~/.config/wyk/repos.json. The
+// add is idempotent — repeat invocations don't duplicate entries.
+func registerRepo(repoRoot string) int {
+	path, err := registry.DefaultPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: resolve registry path:", err)
+		return 1
+	}
+	reg, err := registry.Load(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: load registry:", err)
+		return 1
+	}
+	already := reg.Has(repoRoot)
+	if err := reg.Add(repoRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: add to registry:", err)
+		return 1
+	}
+	if err := reg.Save(path); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: save registry:", err)
+		return 1
+	}
+	if already {
+		fmt.Printf("wyk init: already registered in %s\n", path)
+	} else {
+		fmt.Printf("wyk init: registered %s in %s\n", repoRoot, path)
+	}
+	return 0
+}
+
+// findRepoRoot returns the absolute path to the working tree's root
+// (the directory containing .git/), distinct from findGitDir which
+// returns the .git directory itself.
+func findRepoRoot() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		errOut := strings.TrimSpace(stderr.String())
+		if errOut == "" {
+			errOut = err.Error()
+		}
+		return "", fmt.Errorf("not a git repository (%s)", errOut)
+	}
+	root := strings.TrimSpace(stdout.String())
+	if root == "" {
+		return "", errors.New("git rev-parse returned empty toplevel")
+	}
+	return root, nil
 }
 
 // findGitDir returns the absolute path to the current repo's .git
