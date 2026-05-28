@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,12 +85,55 @@ func TestDecorateIssues_StampsRepoAndBranchWhenNameSet(t *testing.T) {
 		{ID: "a-1", Title: "one"},
 		{ID: "a-2", Title: "two"},
 	}
-	decorateIssues(issues, "alpha", func() string { return "main" })
+	decorateIssues(issues, "alpha", func() string { return "main" }, true)
 	for _, i := range issues {
 		if i.Repo != "alpha" || i.Branch != "main" {
 			t.Errorf("issue %s: Repo=%q Branch=%q, want alpha/main", i.ID, i.Repo, i.Branch)
 		}
+		if !i.WykHooked {
+			t.Errorf("issue %s: WykHooked=false, want true", i.ID)
+		}
 	}
+}
+
+func TestWykHookInstalled(t *testing.T) {
+	// Three cases, one tempdir per: matching hook → true; foreign
+	// hook → false; missing hook file → false. Pins the substring
+	// the TUI greps for ("wyk hook post-commit") so a rename of
+	// wyk's hook payload surfaces here too.
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"plain-wyk", "#!/bin/sh\nexec wyk hook post-commit\n", true},
+		{"chained-wyk", "#!/bin/sh\n./.git/hooks/post-commit.pre-wyk\nexec wyk hook post-commit\n", true},
+		{"foreign", "#!/bin/sh\nexec roborev hook post-commit\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".git", "hooks", "post-commit"), []byte(tc.body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if got := wykHookInstalled(dir); got != tc.want {
+				t.Errorf("wykHookInstalled(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+	t.Run("missing-file", func(t *testing.T) {
+		dir := t.TempDir()
+		if got := wykHookInstalled(dir); got {
+			t.Errorf("wykHookInstalled with no hook file = true, want false")
+		}
+	})
+	t.Run("empty-dir", func(t *testing.T) {
+		if got := wykHookInstalled(""); got {
+			t.Errorf("wykHookInstalled(\"\") = true, want false")
+		}
+	})
 }
 
 func TestDecorateIssues_LeavesUntouchedWhenNameEmpty(t *testing.T) {
@@ -101,7 +146,7 @@ func TestDecorateIssues_LeavesUntouchedWhenNameEmpty(t *testing.T) {
 		return "main"
 	}
 	issues := []beads.Issue{{ID: "a-1", Title: "one", Repo: "preset", Branch: "preset-branch"}}
-	decorateIssues(issues, "", branchFn)
+	decorateIssues(issues, "", branchFn, false)
 	if calls != 0 {
 		t.Errorf("branchFn should not be called when name is empty; got %d calls", calls)
 	}

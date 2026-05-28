@@ -106,6 +106,11 @@ var (
 	setupHintStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("214")).
 				Italic(true)
+
+	// wykIndicatorStyle renders the ✓ in the W column for repos that
+	// have wyk's post-commit hook installed. Green so it reads as
+	// "this is configured correctly" at a glance.
+	wykIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84"))
 )
 
 func statusStyleFor(status string) lipgloss.Style {

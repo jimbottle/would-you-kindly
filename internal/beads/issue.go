@@ -34,6 +34,13 @@ type Issue struct {
 	// in single-repo mode.
 	Repo   string `json:"-"`
 	Branch string `json:"-"`
+
+	// WykHooked is true when the issue's repo has wyk's post-commit
+	// hook installed (plain or chained). Surfaces in the TUI as a
+	// per-row indicator so the user can tell which registered repos
+	// have the auto-close machinery active vs. which are just being
+	// tracked.
+	WykHooked bool `json:"-"`
 }
 
 // HasLabel reports whether the issue carries the given label.

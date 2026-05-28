@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -59,16 +61,17 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 	if err != nil {
 		return nil, err
 	}
-	decorateIssues(issues, s.Name, func() string { return gitBranch(ctx, s.Client.Dir) })
+	hooked := wykHookInstalled(s.Client.Dir)
+	decorateIssues(issues, s.Name, func() string { return gitBranch(ctx, s.Client.Dir) }, hooked)
 	return issues, nil
 }
 
-// decorateIssues stamps every issue with Repo=name and a lazily-
-// resolved Branch — but only when name is non-empty. The branch
-// lookup is deferred via a closure so callers don't pay the
-// git-shell-out cost when name is empty (the legacy single-repo
+// decorateIssues stamps every issue with Repo=name, a lazily-
+// resolved Branch, and wykHooked — but only when name is non-empty.
+// The branch lookup is deferred via a closure so callers don't pay
+// the git-shell-out cost when name is empty (the legacy single-repo
 // layout). Package-private; the seam exists for tests.
-func decorateIssues(issues []beads.Issue, name string, branchFn func() string) {
+func decorateIssues(issues []beads.Issue, name string, branchFn func() string, wykHooked bool) {
 	if name == "" {
 		return
 	}
@@ -76,7 +79,24 @@ func decorateIssues(issues []beads.Issue, name string, branchFn func() string) {
 	for i := range issues {
 		issues[i].Repo = name
 		issues[i].Branch = branch
+		issues[i].WykHooked = wykHooked
 	}
+}
+
+// wykHookInstalled reports whether dir's post-commit hook is wyk's
+// (plain or chained). Matches on the unique "wyk hook post-commit"
+// invocation present in both variants and absent from foreign hooks.
+// Returns false on any I/O error — a missing or unreadable hook is
+// effectively "not installed" from the user's perspective.
+func wykHookInstalled(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	body, err := os.ReadFile(filepath.Join(dir, ".git", "hooks", "post-commit"))
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(body, []byte("wyk hook post-commit"))
 }
 
 // --- Mutator implementation (single-repo) ---
