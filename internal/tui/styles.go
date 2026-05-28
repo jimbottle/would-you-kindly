@@ -49,6 +49,19 @@ var (
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244"))
+
+	// confirmStyle renders the destructive-action confirmation prompt
+	// (e.g. "close wyk-42? [y/N]") with enough emphasis that the user
+	// notices it before pressing the next key.
+	confirmStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Bold(true)
+
+	// statusBannerStyle renders transient write feedback ("closed wyk-42",
+	// "note failed: …") above the status bar. Subtle but visible.
+	statusBannerStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("84")).
+				Italic(true)
 )
 
 func statusStyleFor(status string) lipgloss.Style {

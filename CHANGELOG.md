@@ -71,12 +71,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closing a rare interleaving where a slow recovery could leave
   auto-refresh permanently dormant.
 
-### Out of scope (deferred to Phase 2+)
+### Phase 2.A — bd Client write methods
 
-- Write actions in the TUI (create, close, update, label, comment).
-- A `wyk init` command to bind the tool to a repo.
-- Post-commit hooks.
-- The agent-side skill that sets the `human` label on handoff.
+- `internal/beads.Client` gains `Close`, `AddLabel`, `RemoveLabel`,
+  `Note`, and `UpdateDescription`. Every write passes
+  `--dolt-auto-commit=on` so it persists past the dolt working set.
+- The inner exec call is now a swappable `runner` field so tests can
+  verify argv (and stdin, for `UpdateDescription`) without spawning
+  the real bd binary.
+
+### Phase 2.B — TUI write actions
+
+- New `Mutator` interface alongside the existing `Source`; the TUI
+  checks at runtime whether its backend implements it, falling back
+  to a read-only hint if not.
+- New keystrokes: `c` (close, with `[y/N]` confirmation), `H` (toggle
+  `human` label), `n` (append a note via a text prompt).
+- Writes show a transient status banner above the help bar and
+  trigger a refetch on success; failures surface the bd error message
+  in the same banner without losing the current list.
+
+### Out of scope (still deferred)
+
+- The agent-side `pkg/handoff` skill (Phase 2.C — next).
+- A `wyk init` command and post-commit hook (Phase 2.D — deferred).
 - Any background daemon.
 
 [Unreleased]: https://github.com/jimbottle/would-you-kindly/commits/main

@@ -70,6 +70,8 @@ other errors.
 
 ## Keys
 
+### Reading
+
 | Key       | Action                                            |
 | --------- | ------------------------------------------------- |
 | `j` / `k` | Move down / up                                    |
@@ -81,6 +83,17 @@ other errors.
 | `tab`     | Cycle preset filters (all → ready → human → mine → blocked) |
 | `r`       | Refresh from bd now                               |
 | `q`       | Quit                                              |
+
+### Writing
+
+| Key | Action                                                      |
+| --- | ----------------------------------------------------------- |
+| `c` | Close the cursor issue (asks `[y/N]` to confirm)            |
+| `H` | Toggle the `human` label on the cursor issue                |
+| `n` | Append a note to the cursor issue (opens a text prompt)     |
+
+After any write, the list refetches and a status banner appears
+above the help bar (e.g. `closed wyk-42`, or `close wyk-42 failed: …`).
 
 The list also refreshes itself every 10 seconds.
 

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -23,6 +24,49 @@ func (s *stubSource) Fetch(_ context.Context, p filter.Preset) ([]beads.Issue, e
 	s.calls++
 	s.last = p
 	return s.issues, s.err
+}
+
+// stubMutator records every write the TUI dispatches. Used by the
+// write-action tests to assert the correct issue and operation made
+// it through.
+type stubMutator struct {
+	stubSource
+	closed     []string
+	added      []labelOp
+	removed    []labelOp
+	notes      []labelOp // reuse the {id,label} shape for {id, text}
+	writeErr   error
+}
+
+type labelOp struct{ id, label string }
+
+func (s *stubMutator) Close(_ context.Context, id string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.closed = append(s.closed, id)
+	return nil
+}
+func (s *stubMutator) AddLabel(_ context.Context, id, label string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.added = append(s.added, labelOp{id, label})
+	return nil
+}
+func (s *stubMutator) RemoveLabel(_ context.Context, id, label string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.removed = append(s.removed, labelOp{id, label})
+	return nil
+}
+func (s *stubMutator) Note(_ context.Context, id, text string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.notes = append(s.notes, labelOp{id, text})
+	return nil
 }
 
 func sampleIssues() []beads.Issue {
@@ -198,6 +242,211 @@ func TestInitialPaintShowsLoading(t *testing.T) {
 	}
 	if strings.Contains(out, "no issues") {
 		t.Error("initial paint should NOT render the empty-list state before the first fetch")
+	}
+}
+
+// --- Phase 2.B: write-action tests ---------------------------------
+
+// applyMutatorFetched is the stubMutator equivalent of applyFetched.
+func applyMutatorFetched(m Model, s *stubMutator) Model {
+	model, _ := m.Update(fetchedMsg{preset: m.preset, issues: s.issues})
+	return model.(Model)
+}
+
+func TestClose_RequiresConfirmationAndDispatches(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	// `c` enters confirm mode but does NOT dispatch yet
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = model.(Model)
+	if m.mode != modeConfirmClose {
+		t.Fatalf("`c` should enter modeConfirmClose, got %v", m.mode)
+	}
+	if cmd != nil {
+		t.Error("`c` alone must not dispatch a Close — only after confirmation")
+	}
+	if len(s.closed) != 0 {
+		t.Fatalf("Close called before confirmation: %+v", s.closed)
+	}
+
+	// pressing anything other than y cancels
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("cancel should return to list mode, got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "cancelled") {
+		t.Errorf("cancel should set a status banner; got %q", m.status)
+	}
+	if len(s.closed) != 0 {
+		t.Errorf("Close should not have been called on cancel; got %+v", s.closed)
+	}
+
+	// re-enter confirm, then y this time
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = model.(Model)
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("confirmed close must return a write command")
+	}
+	// run the command to actually invoke the mutator
+	gotMsg := cmd()
+	wm, ok := gotMsg.(writeMsg)
+	if !ok {
+		t.Fatalf("write command should produce writeMsg, got %T", gotMsg)
+	}
+	if wm.action != "close" || wm.id != s.issues[0].ID || wm.err != nil {
+		t.Errorf("writeMsg: action=%q id=%q err=%v", wm.action, wm.id, wm.err)
+	}
+	if len(s.closed) != 1 || s.closed[0] != s.issues[0].ID {
+		t.Errorf("expected Close(%q); got %+v", s.issues[0].ID, s.closed)
+	}
+}
+
+func TestToggleHuman_AddsThenRemovesLabel(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	// cursor starts on issue 0 ("rotate password") which already carries `human`.
+	// pressing H should call RemoveLabel.
+	if !s.issues[0].IsHuman() {
+		t.Fatal("setup: first sample issue should have human label")
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("H should dispatch a write")
+	}
+	if msg := cmd(); msg.(writeMsg).action != "unflag" {
+		t.Errorf("expected unflag action; got %+v", msg)
+	}
+	if len(s.removed) != 1 || s.removed[0] != (labelOp{s.issues[0].ID, "human"}) {
+		t.Errorf("RemoveLabel(%q, human) not dispatched; got %+v", s.issues[0].ID, s.removed)
+	}
+
+	// move cursor to issue 1 which doesn't have `human`; H should AddLabel.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = model.(Model)
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	_ = model
+	if cmd == nil {
+		t.Fatal("H on non-human issue should dispatch a write")
+	}
+	if msg := cmd(); msg.(writeMsg).action != "flag" {
+		t.Errorf("expected flag action; got %+v", msg)
+	}
+	if len(s.added) != 1 || s.added[0] != (labelOp{s.issues[1].ID, "human"}) {
+		t.Errorf("AddLabel(%q, human) not dispatched; got %+v", s.issues[1].ID, s.added)
+	}
+}
+
+func TestNote_PromptsAndDispatchesOnEnter(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = model.(Model)
+	if m.mode != modeNote {
+		t.Fatalf("`n` should enter modeNote; got %v", m.mode)
+	}
+
+	// type a note
+	for _, r := range "rotated 2026-05-28" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+
+	// enter dispatches the write and exits modeNote
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("enter should return to list mode; got %v", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("enter with non-empty note should dispatch a write")
+	}
+	wm := cmd().(writeMsg)
+	if wm.action != "note" || wm.id != s.issues[0].ID {
+		t.Errorf("writeMsg: action=%q id=%q", wm.action, wm.id)
+	}
+	if len(s.notes) != 1 || s.notes[0] != (labelOp{s.issues[0].ID, "rotated 2026-05-28"}) {
+		t.Errorf("Note not dispatched correctly; got %+v", s.notes)
+	}
+}
+
+func TestNote_EmptyInputCancels(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if cmd != nil {
+		t.Error("empty note should not dispatch a write")
+	}
+	if len(s.notes) != 0 {
+		t.Errorf("Note should not have been called; got %+v", s.notes)
+	}
+	if !strings.Contains(m.status, "cancelled") {
+		t.Errorf("empty note should set a status banner; got %q", m.status)
+	}
+}
+
+func TestWriteResult_SuccessTriggersRefetchAndSetsBanner(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	pre := s.calls
+
+	model, cmd := m.Update(writeMsg{action: "close", id: "wyk-42"})
+	m = model.(Model)
+	if !strings.Contains(m.status, "closed wyk-42") {
+		t.Errorf("status banner missing; got %q", m.status)
+	}
+	if cmd == nil {
+		t.Fatal("successful write should refetch")
+	}
+	_ = cmd() // exercise the fetch
+	if s.calls <= pre {
+		t.Errorf("expected Source.Fetch to be called; calls before=%d after=%d", pre, s.calls)
+	}
+}
+
+func TestWriteResult_FailureSurfacesInBanner(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, cmd := m.Update(writeMsg{
+		action: "close", id: "wyk-42",
+		err: errors.New("bd: issue is pinned"),
+	})
+	m = model.(Model)
+	if cmd != nil {
+		t.Error("failed write should NOT refetch")
+	}
+	if !strings.Contains(m.status, "close wyk-42 failed") {
+		t.Errorf("status should describe the failure; got %q", m.status)
+	}
+	if !strings.Contains(m.status, "pinned") {
+		t.Errorf("status should include the underlying error; got %q", m.status)
+	}
+}
+
+func TestReadOnlySourceShowsHintInsteadOfWriting(t *testing.T) {
+	// The plain stubSource does NOT implement Mutator; pressing write
+	// keys should produce a "read-only" banner instead of crashing.
+	s := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(s), s)
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = model.(Model)
+	if cmd != nil {
+		t.Error("read-only `c` must not dispatch a command")
+	}
+	if !strings.Contains(m.status, "read-only") {
+		t.Errorf("read-only hint missing; got %q", m.status)
 	}
 }
 
