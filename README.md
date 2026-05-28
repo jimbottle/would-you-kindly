@@ -108,6 +108,29 @@ contract as the TUI's `H` key — see
 [`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
 [`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.
 
+### Diagnosing setup issues (`wyk doctor`)
+
+```bash
+wyk doctor
+#   [PASS] bd binary on PATH
+#          /Users/you/.local/bin/bd — bd version 1.0.4
+#   [PASS] wyk binary on PATH
+#          /Users/you/.local/bin/wyk
+#   [PASS] wyk registry
+#          ~/.config/wyk/repos.json — 2 repo(s) registered
+#   [PASS] repo would-you-kindly: .beads/ present
+#   [PASS] repo would-you-kindly: post-commit hook (chained)
+#   ...
+#   doctor: OK
+```
+
+Checks the common friction points: bd and wyk on `PATH`, registry
+parseable, each registered repo has `.beads/` and `.git/`, post-
+commit hook is either wyk's (plain or chained) or flagged as foreign,
+chained hook's `.pre-wyk` preservation file is intact.
+
+Exit 0 on PASS or WARN-only, exit 1 if any FAIL.
+
 ### Stats
 
 ```bash

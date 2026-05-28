@@ -45,6 +45,8 @@ func main() {
 			os.Exit(runInbox(os.Args[2:]))
 		case "stats":
 			os.Exit(runStats(os.Args[2:]))
+		case "doctor":
+			os.Exit(runDoctor(os.Args[2:]))
 		}
 	}
 
