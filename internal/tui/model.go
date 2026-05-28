@@ -428,6 +428,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeFilter
 		m.input.SetValue(m.query)
 		m.input.Focus()
+		m.ensureCursorVisible()
 		return m, textinput.Blink
 	case keyHit(msg, m.keys.Human):
 		return m.switchPreset(filter.PresetHuman)
@@ -520,6 +521,7 @@ func (m Model) mutator() Mutator {
 func (m Model) beginClose() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
 		m.status = "read-only mode (no Mutator wired up)"
+		m.ensureCursorVisible()
 		return m, nil
 	}
 	if len(m.visible) == 0 {
@@ -527,6 +529,9 @@ func (m Model) beginClose() (tea.Model, tea.Cmd) {
 	}
 	m.mode = modeConfirmClose
 	m.pendingTarget = m.visible[m.cursor]
+	// Modal entry adds 2 lines of chrome — re-clamp scroll so the
+	// cursor stays in the now-smaller viewport.
+	m.ensureCursorVisible()
 	return m, nil
 }
 
@@ -597,6 +602,7 @@ func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 func (m Model) beginQuickAdd() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
 		m.status = "read-only mode (no Mutator wired up)"
+		m.ensureCursorVisible()
 		return m, nil
 	}
 	m.mode = modeQuickAdd
@@ -611,6 +617,7 @@ func (m Model) beginQuickAdd() (tea.Model, tea.Cmd) {
 	m.input.Prompt = "new ▸ "
 	m.input.Placeholder = "title for the new issue"
 	m.input.Focus()
+	m.ensureCursorVisible()
 	return m, textinput.Blink
 }
 
@@ -662,6 +669,7 @@ func runQuickAdd(fn func(ctx context.Context) (string, error)) tea.Cmd {
 func (m Model) beginNote() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
 		m.status = "read-only mode (no Mutator wired up)"
+		m.ensureCursorVisible()
 		return m, nil
 	}
 	if len(m.visible) == 0 {
@@ -673,6 +681,7 @@ func (m Model) beginNote() (tea.Model, tea.Cmd) {
 	m.input.Prompt = "note ▸ "
 	m.input.Placeholder = "append a note to this issue"
 	m.input.Focus()
+	m.ensureCursorVisible()
 	return m, textinput.Blink
 }
 
@@ -741,6 +750,13 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = fmt.Sprintf("%s %s failed: %s", msg.action, msg.id, msg.err.Error())
 		}
+		// Setting m.status grows chromeExtra() by one, shrinking
+		// bodyHeight by one. Re-clamp scroll so a cursor at the
+		// bottom of a long list doesn't fall just outside the now-
+		// smaller viewport — without this, the failure path (no
+		// refetch) wouldn't self-correct until the next cursor
+		// move or auto-refresh tick.
+		m.ensureCursorVisible()
 		return m, nil
 	}
 	switch msg.action {
@@ -757,6 +773,10 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 	default:
 		m.status = msg.action + " " + msg.id
 	}
+	// Same re-clamp as the error path: the status banner just
+	// appeared and bubbletea will repaint with the new chrome
+	// before the fetchCmd dispatched below resolves.
+	m.ensureCursorVisible()
 	// Refetch so the list reflects the write. Loading flag isn't set
 	// here because the existing data is still valid until the new
 	// fetch arrives — flashing "loading…" would just be noise.

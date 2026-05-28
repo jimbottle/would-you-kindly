@@ -1167,3 +1167,78 @@ func TestStickyHeader_WindowResizeClampsScroll(t *testing.T) {
 		t.Errorf("after resizing tall enough to show everything, scroll should clamp to 0; got %d (cursor=%d)", m.scroll, m.cursor)
 	}
 }
+
+func TestStickyHeader_CursorStaysInViewWhenStatusBannerAppears(t *testing.T) {
+	// Regression for the chrome-shrink-mid-update case: a write
+	// failure sets m.status (no refetch), which grows chromeExtra()
+	// by 1 and shrinks bodyHeight() by 1. If scroll isn't
+	// re-clamped at that point, a cursor sitting at the bottom of
+	// a long, scrolled list falls just outside the now-smaller
+	// rendered window — the highlighted row briefly disappears.
+	src := &stubSource{issues: manyIssues(40)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 14})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	// Drive the cursor down so it sits at the bottom of the
+	// rendered window.
+	for i := 0; i < 25; i++ {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		m = model.(Model)
+	}
+	bodyBefore := m.bodyHeight()
+	// Simulate a write failure: writeMsg with err non-nil → handleWriteResult
+	// sets m.status and returns without a refetch.
+	model, _ = m.Update(writeMsg{action: "close", id: m.visible[m.cursor].ID, err: errors.New("bd: simulated")})
+	m = model.(Model)
+
+	if m.status == "" {
+		t.Fatal("setup: expected m.status to be set by the failure")
+	}
+	bodyAfter := m.bodyHeight()
+	if bodyAfter >= bodyBefore {
+		t.Fatalf("setup: expected bodyHeight to shrink with the new banner (was %d, now %d)", bodyBefore, bodyAfter)
+	}
+	// The actual invariant: cursor must still be inside the
+	// rendered window after the chrome grew.
+	if m.cursor < m.scroll || m.cursor >= m.scroll+m.bodyHeight() {
+		t.Errorf("cursor (%d) escaped the rendered window [%d, %d) after status banner appeared",
+			m.cursor, m.scroll, m.scroll+m.bodyHeight())
+	}
+	// And the view must actually contain the cursor row.
+	out := m.View()
+	cursorRow := fmt.Sprintf("row %d", m.cursor+1)
+	if !strings.Contains(out, cursorRow) {
+		t.Errorf("cursor row %q missing from view (transient clip):\n%s", cursorRow, out)
+	}
+}
+
+func TestStickyHeader_CursorStaysInViewWhenModalOpens(t *testing.T) {
+	// Same invariant for the modal-entry path: opening modeFilter
+	// (or any modal) adds 2 lines of chrome. The re-clamp call in
+	// the entry handler must keep the cursor on-screen.
+	src := &stubSource{issues: manyIssues(40)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 14})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	for i := 0; i < 25; i++ {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		m = model.(Model)
+	}
+	bodyBefore := m.bodyHeight()
+	// Press '/' to open the fuzzy-filter prompt (modeFilter → +2 chrome).
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	if m.mode != modeFilter {
+		t.Fatalf("setup: expected modeFilter, got %v", m.mode)
+	}
+	bodyAfter := m.bodyHeight()
+	if bodyAfter >= bodyBefore {
+		t.Fatalf("setup: expected bodyHeight to shrink when modal opens (was %d, now %d)", bodyBefore, bodyAfter)
+	}
+	if m.cursor < m.scroll || m.cursor >= m.scroll+m.bodyHeight() {
+		t.Errorf("cursor (%d) escaped the viewport [%d, %d) when modal opened",
+			m.cursor, m.scroll, m.scroll+m.bodyHeight())
+	}
+}
