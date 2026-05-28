@@ -128,6 +128,54 @@ func TestRunScanAndRegister_NonExistentRootExits2(t *testing.T) {
 	}
 }
 
+func TestInit_ScanRejectsIncompatibleFlags(t *testing.T) {
+	// -scan only registers — combining it with per-repo flags is a
+	// usage error, not silent. Each per-repo flag should be flagged
+	// individually so the user sees what's wrong.
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	scanRoot := t.TempDir()
+	_ = mkBeads(t, scanRoot, "one")
+
+	cases := [][]string{
+		{"-scan", scanRoot, "-force"},
+		{"-scan", scanRoot, "-chain"},
+		{"-scan", scanRoot, "-skip-bd-init"},
+		{"-scan", scanRoot, "-skip-register"},
+	}
+	for _, args := range cases {
+		if code := runInit(args); code != 64 {
+			t.Errorf("runInit(%v) = %d, want 64 (incompatible flags)", args, code)
+		}
+	}
+}
+
+func TestScanForBeadsRepos_NestedRepoIsAlsoRecorded(t *testing.T) {
+	// Documented behaviour: if a project contains a nested .beads
+	// (test fixture, sample workspace, embedded example), the scan
+	// records the nested path AS WELL AS the outer one. This is the
+	// current behaviour, intentional today. The test exists so a
+	// future change to prune-on-match doesn't silently regress.
+	root := t.TempDir()
+	outer := mkBeads(t, root, "outer")
+	inner := mkBeads(t, root, "outer/fixtures/inner")
+
+	got, err := scanForBeadsRepos(root)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	have := map[string]bool{}
+	for _, p := range got {
+		have[p] = true
+	}
+	if !have[outer] {
+		t.Errorf("scan missed outer repo: %s; got %v", outer, got)
+	}
+	if !have[inner] {
+		t.Errorf("scan missed nested inner repo: %s — current behaviour records both; got %v", inner, got)
+	}
+}
+
 func equal(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

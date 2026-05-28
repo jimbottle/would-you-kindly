@@ -54,6 +54,13 @@ exec wyk hook post-commit
 // re-run detection works for both.
 const hookMarker = "Installed by `wyk init"
 
+// chainedHookMarker identifies the chained variant specifically —
+// the wrapper that runs a preserved foreign hook (post-commit.pre-wyk)
+// before exec'ing `wyk hook post-commit`. Used by `wyk doctor` to
+// tell plain vs chained installs apart without ad-hoc substring
+// matching that could false-PASS on foreign hooks mentioning "wyk".
+const chainedHookMarker = "Installed by `wyk init -chain`"
+
 // runInit implements `wyk init`: a one-stop bootstrap for using wyk
 // in a repo. It (1) initialises a bd workspace if none exists,
 // (2) installs the post-commit auto-close hook, and (3) registers
@@ -93,7 +100,22 @@ func runInit(args []string) int {
 	}
 
 	// -scan short-circuits the per-repo init path; it only registers.
+	// Reject flag combinations that don't make sense with -scan so
+	// the user gets a clear error instead of silently-ignored options.
 	if *scanRoot != "" {
+		var bad []string
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "force", "chain", "skip-bd-init", "skip-register":
+				bad = append(bad, "-"+f.Name)
+			}
+		})
+		if len(bad) > 0 {
+			fmt.Fprintf(os.Stderr,
+				"wyk init: -scan is incompatible with %s (the scan path only registers; per-repo flags apply to per-repo init)\n",
+				strings.Join(bad, ", "))
+			return 64
+		}
 		return runScanAndRegister(*scanRoot, *dryRun)
 	}
 
@@ -369,18 +391,25 @@ func findGitPaths() (gitDir, repoRoot string, err error) {
 // Exit codes:
 //
 //	0  one or more new repos registered (or, with -dry-run, would be)
-//	1  filesystem / registry error
-//	2  root does not exist
+//	1  filesystem / registry error (e.g. unreadable root, permission denied)
+//	2  root does not exist or isn't a directory
 func runScanAndRegister(root string, dryRun bool) int {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk init -scan:", err)
 		return 1
 	}
-	if st, err := os.Stat(abs); err != nil {
+	st, err := os.Stat(abs)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		fmt.Fprintln(os.Stderr, "wyk init -scan:", err)
 		return 2
-	} else if !st.IsDir() {
+	case err != nil:
+		// Other stat failures (permission denied, etc.) are
+		// "filesystem error" per the exit-code contract.
+		fmt.Fprintln(os.Stderr, "wyk init -scan:", err)
+		return 1
+	case !st.IsDir():
 		fmt.Fprintln(os.Stderr, "wyk init -scan: not a directory:", abs)
 		return 2
 	}

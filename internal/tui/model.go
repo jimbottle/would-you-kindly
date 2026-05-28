@@ -846,10 +846,14 @@ const (
 	colUpdated = 7
 )
 
-// isMultiRepo reports whether the current list contains issues from
-// more than one bd workspace. The Repo/Branch columns are rendered
-// only when this is true so single-repo users don't pay column space
-// for fields that would just be empty.
+// isMultiRepo reports whether the current list has any issue with
+// a populated Repo field. The Repo/Branch columns are gated on this
+// — they render whenever the source decorates issues. In practice
+// every BDSource path now sets a Name (which Fetch uses to populate
+// Repo), so this is effectively always true and the columns are
+// always on. The gate stays as a safety net: a Source that
+// intentionally returns undecorated issues (a stub in tests, or a
+// future read-only adapter) still gets the compact layout.
 func (m Model) isMultiRepo() bool {
 	for _, i := range m.all {
 		if i.Repo != "" {

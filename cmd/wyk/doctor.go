@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
@@ -178,7 +179,10 @@ func checkRepo(r registry.Repo) []check {
 		return out
 	}
 
-	// .beads directory present?
+	// .beads directory present? Emitted independently of the bd
+	// query check below so the per-repo row inventory is stable —
+	// users always see SOMETHING about .beads, even if bd itself
+	// is broken / missing / slow.
 	beadsDir := filepath.Join(r.Path, ".beads")
 	if _, err := os.Stat(beadsDir); err != nil {
 		out = append(out, check{
@@ -187,21 +191,33 @@ func checkRepo(r registry.Repo) []check {
 			detail: "no bd workspace; run `bd init` in " + r.Path,
 		})
 	} else {
-		// Quick sanity ping of bd against this workspace.
+		out = append(out, check{name: prefix + ": .beads/ present", status: statusPass})
+
+		// Separate check: does bd actually respond? Bounded by a
+		// timeout so a broken/locked workspace doesn't hang the whole
+		// doctor run.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		c := beads.NewClient()
 		c.Dir = r.Path
-		if _, err := c.Query(context.Background(), `status!=closed`); err != nil {
-			if errors.Is(err, beads.ErrBDNotFound) {
-				// already caught by checkBDOnPath; don't double-up
-			} else {
-				out = append(out, check{
-					name:   prefix + ": bd query responds",
-					status: statusWarn,
-					detail: err.Error(),
-				})
-			}
-		} else {
-			out = append(out, check{name: prefix + ": .beads/ present", status: statusPass})
+		_, qerr := c.Query(ctx, `status!=closed`)
+		cancel()
+		switch {
+		case qerr == nil:
+			out = append(out, check{name: prefix + ": bd query responds", status: statusPass})
+		case errors.Is(qerr, context.DeadlineExceeded):
+			out = append(out, check{
+				name:   prefix + ": bd query responds",
+				status: statusWarn,
+				detail: "bd didn't respond within 5s — workspace may be locked, syncing, or on a slow filesystem",
+			})
+		case errors.Is(qerr, beads.ErrBDNotFound):
+			// already caught by checkBDOnPath; don't double-up
+		default:
+			out = append(out, check{
+				name:   prefix + ": bd query responds",
+				status: statusWarn,
+				detail: qerr.Error(),
+			})
 		}
 	}
 
@@ -222,8 +238,10 @@ func checkRepo(r registry.Repo) []check {
 			detail: err.Error(),
 		})
 	default:
+		// Reuse the same hookMarker / chainedHookMarker constants the
+		// install path uses, so doctor and install can't drift.
 		switch {
-		case bytes.Contains(body, []byte("wyk init -chain")):
+		case bytes.Contains(body, []byte(chainedHookMarker)):
 			// Chained variant — verify the .pre-wyk file is still around.
 			preWyk := hookPath + ".pre-wyk"
 			if _, perr := os.Stat(preWyk); perr != nil {
@@ -239,7 +257,7 @@ func checkRepo(r registry.Repo) []check {
 					detail: "wyk's wrapper + preserved " + preWyk,
 				})
 			}
-		case bytes.Contains(body, []byte("wyk init")):
+		case bytes.Contains(body, []byte(hookMarker)):
 			out = append(out, check{name: prefix + ": post-commit hook (wyk)", status: statusPass})
 		default:
 			out = append(out, check{

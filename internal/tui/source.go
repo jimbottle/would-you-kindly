@@ -58,14 +58,24 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 	if err != nil {
 		return nil, err
 	}
-	if s.Name != "" {
-		branch := gitBranch(ctx, s.Client.Dir)
-		for i := range issues {
-			issues[i].Repo = s.Name
-			issues[i].Branch = branch
-		}
-	}
+	decorateIssues(issues, s.Name, func() string { return gitBranch(ctx, s.Client.Dir) })
 	return issues, nil
+}
+
+// decorateIssues stamps every issue with Repo=name and a lazily-
+// resolved Branch — but only when name is non-empty. The branch
+// lookup is deferred via a closure so callers don't pay the
+// git-shell-out cost when name is empty (the legacy single-repo
+// layout). Package-private; the seam exists for tests.
+func decorateIssues(issues []beads.Issue, name string, branchFn func() string) {
+	if name == "" {
+		return
+	}
+	branch := branchFn()
+	for i := range issues {
+		issues[i].Repo = name
+		issues[i].Branch = branch
+	}
 }
 
 // --- Mutator implementation (single-repo) ---

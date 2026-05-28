@@ -117,7 +117,11 @@ func buildSource(dir, me string) (tui.Source, string, error) {
 		c := beads.NewClient()
 		hint := "No repos registered yet — running against cwd only.\n" +
 			"  Run `wyk init` here, or `wyk init -scan ~/Projects` to discover every bd workspace under that tree."
-		var name string
+		// Fall back to a sentinel if cwd is unreadable so the
+		// Repo column doesn't silently disappear — keeping the
+		// layout consistent matters more than a perfect name in
+		// the rare-failure case.
+		name := "(cwd)"
 		if cwd, err := os.Getwd(); err == nil {
 			name = filepath.Base(cwd)
 		}

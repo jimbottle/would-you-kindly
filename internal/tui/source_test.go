@@ -67,6 +67,38 @@ func newMultiForTest(t *testing.T, subs ...struct {
 	return m
 }
 
+func TestDecorateIssues_StampsRepoAndBranchWhenNameSet(t *testing.T) {
+	issues := []beads.Issue{
+		{ID: "a-1", Title: "one"},
+		{ID: "a-2", Title: "two"},
+	}
+	decorateIssues(issues, "alpha", func() string { return "main" })
+	for _, i := range issues {
+		if i.Repo != "alpha" || i.Branch != "main" {
+			t.Errorf("issue %s: Repo=%q Branch=%q, want alpha/main", i.ID, i.Repo, i.Branch)
+		}
+	}
+}
+
+func TestDecorateIssues_LeavesUntouchedWhenNameEmpty(t *testing.T) {
+	// Empty name = legacy path; the branchFn must not even be
+	// called (no git shell-out for callers that opt out of
+	// decoration). Side-effect on a counter proves the short-circuit.
+	calls := 0
+	branchFn := func() string {
+		calls++
+		return "main"
+	}
+	issues := []beads.Issue{{ID: "a-1", Title: "one", Repo: "preset", Branch: "preset-branch"}}
+	decorateIssues(issues, "", branchFn)
+	if calls != 0 {
+		t.Errorf("branchFn should not be called when name is empty; got %d calls", calls)
+	}
+	if issues[0].Repo != "preset" || issues[0].Branch != "preset-branch" {
+		t.Errorf("decorateIssues with empty name overwrote existing fields: %+v", issues[0])
+	}
+}
+
 func TestMultiBDSource_FetchUnionsAndDecorates(t *testing.T) {
 	a := &fakeRepoSource{issues: []beads.Issue{
 		{ID: "a-1", Title: "in alpha"},
