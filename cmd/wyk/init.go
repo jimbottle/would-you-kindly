@@ -420,7 +420,9 @@ func resolveGitHookPath(repoDir, hook string) (string, error) {
 // enough that a registry with N dud workspaces doesn't multiply
 // total scan time by N*5s, loose enough that a real workspace on a
 // slow filesystem (NFS, Time Machine snapshot) gets a fair shot.
-const scanProbeTimeout = 2 * time.Second
+// Declared as `var` (not const) so tests can swap in a tighter
+// value via scanProbeTimeoutForTest.
+var scanProbeTimeout = 2 * time.Second
 
 // probeBDFunc is the seam the scan path uses to ask "can bd actually
 // read this workspace?". The default implementation shells out to
@@ -516,6 +518,15 @@ func runScanAndRegisterWithProbe(root string, dryRun bool, probe probeBDFunc) in
 		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()
 		if perr != nil {
+			// bd missing from PATH would otherwise turn every
+			// candidate into a skip-with-identical-reason and
+			// exit 0 — a silent no-op for an environmental
+			// problem, not a "no usable workspaces" result.
+			// Bail once with exit 1 instead.
+			if errors.Is(perr, beads.ErrBDNotFound) {
+				fmt.Fprintln(os.Stderr, "wyk init -scan: bd is not installed (or not on PATH); cannot probe candidates. Install from https://github.com/gastownhall/beads and retry.")
+				return 1
+			}
 			reason := perr.Error()
 			if timedOut {
 				reason = fmt.Sprintf("bd query timed out after %s", scanProbeTimeout)

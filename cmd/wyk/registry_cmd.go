@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
@@ -89,10 +90,15 @@ func runRegistryList(args []string) int {
 		return 0
 	}
 	// Column-aligned: longest Name sets the gutter so paths align.
+	// Width is the rune count, not byte length — a name with
+	// multi-byte runes would otherwise over-pad and misalign the
+	// path column. (%-*s still pads on bytes, so the alignment is
+	// only approximate for truly wide content, but rune-counting
+	// at least removes the gross over-pad.)
 	width := 0
 	for _, r := range reg.Repos {
-		if len(r.Name) > width {
-			width = len(r.Name)
+		if w := utf8.RuneCountInString(r.Name); w > width {
+			width = w
 		}
 	}
 	for _, r := range reg.Repos {
@@ -156,8 +162,17 @@ func runRegistryPrune(args []string, stdin io.Reader) int {
 			return 0
 		}
 	}
+	// Remove by Path, not Name: Registry.Add derives Name from
+	// filepath.Base and dedupes only on Path, so two repos at
+	// different paths can share a Name (the nested `android` /
+	// parent-`ebay-watchlist-watch` case from the v0.2.3 audit).
+	// Removing by name would silently drop the wrong entry when an
+	// alive and a dead repo share one.
 	for _, d := range dead {
-		reg.RemoveByName(d.Name)
+		if _, err := reg.Remove(d.Path); err != nil {
+			fmt.Fprintln(os.Stderr, "wyk registry prune: remove:", err)
+			return 1
+		}
 	}
 	if err := reg.Save(regPath); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk registry prune:", err)
@@ -176,12 +191,18 @@ type deadEntry struct {
 }
 
 // findDeadEntries returns every registry entry whose on-disk state
-// can no longer support bd. Two failure modes covered:
+// can no longer support bd. Two classes of failure covered:
 //
-//   - path missing entirely (repo was deleted or moved without a
-//     re-`wyk init` from the new location)
+//   - path is unreachable (missing, permission denied, dangling
+//     symlink) — wyk can't read the workspace at all
 //   - path exists but has no `.git` (someone removed git history;
 //     wyk wouldn't be able to install or run its hook)
+//
+// We treat ANY non-nil Stat error on the path as "unreachable"
+// rather than only os.IsNotExist — a dangling symlink, EACCES, or
+// I/O error is just as fatal for prune's purposes, and the
+// alternative (treating them as alive and falling through to the
+// .git check) would crash on a path that couldn't even be stat'd.
 //
 // We don't probe bd here — `wyk init -scan` already gates on bd,
 // and an entry that can't even reach `.git` is unambiguously dead.
@@ -190,12 +211,20 @@ type deadEntry struct {
 func findDeadEntries(reg *registry.Registry) []deadEntry {
 	var dead []deadEntry
 	for _, r := range reg.Repos {
-		if _, err := os.Stat(r.Path); os.IsNotExist(err) {
-			dead = append(dead, deadEntry{Repo: r, reason: "path missing"})
+		if _, err := os.Stat(r.Path); err != nil {
+			reason := "path missing"
+			if !os.IsNotExist(err) {
+				reason = "path unreachable: " + err.Error()
+			}
+			dead = append(dead, deadEntry{Repo: r, reason: reason})
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(r.Path, ".git")); os.IsNotExist(err) {
-			dead = append(dead, deadEntry{Repo: r, reason: ".git missing"})
+		if _, err := os.Stat(filepath.Join(r.Path, ".git")); err != nil {
+			reason := ".git missing"
+			if !os.IsNotExist(err) {
+				reason = ".git unreachable: " + err.Error()
+			}
+			dead = append(dead, deadEntry{Repo: r, reason: reason})
 		}
 	}
 	return dead

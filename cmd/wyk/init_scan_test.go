@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mkBeads creates dir/<sub>/.beads under root, the same on-disk
@@ -223,6 +225,52 @@ func TestRunScanAndRegister_SkipsProbeFailures(t *testing.T) {
 		t.Errorf("expected exactly 1 entry (good only); got:\n%s", body)
 	}
 }
+
+func TestRunScanAndRegister_ProbeTimeoutMessage(t *testing.T) {
+	// A probe that blocks until ctx is done trips the timeout
+	// branch. Pin the wording ("bd query timed out") and capture
+	// stderr to confirm the skip line uses the timeout-specific
+	// reason rather than the generic ctx.DeadlineExceeded error.
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	root := t.TempDir()
+	_ = mkBeads(t, root, "slow")
+
+	// Redirect stderr to a pipe so we can grep for the message.
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	probe := func(ctx context.Context, dir string) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	// Shorten the timeout so the test doesn't sit for 2s.
+	prev := scanProbeTimeoutForTest(50 * 1000 * 1000) // 50ms in ns; tiny helper below.
+	defer scanProbeTimeoutForTest(prev)
+	code := runScanAndRegisterWithProbe(root, false, probe)
+	w.Close()
+	out, _ := io.ReadAll(r)
+	if code != 0 {
+		t.Errorf("all-timeouts scan should exit 0; got %d", code)
+	}
+	if !strings.Contains(string(out), "bd query timed out") {
+		t.Errorf("expected timeout-specific reason in stderr; got:\n%s", out)
+	}
+}
+
+// scanProbeTimeoutForTest swaps scanProbeTimeout for a tighter test
+// value and returns the previous value so the caller can restore it
+// in a defer. Lives next to the test so production code stays free
+// of "if testing" branches.
+func scanProbeTimeoutForTest(newNanos int64) int64 {
+	old := int64(scanProbeTimeout)
+	scanProbeTimeout = timeFromNanos(newNanos)
+	return old
+}
+
+func timeFromNanos(n int64) time.Duration { return time.Duration(n) }
 
 func TestRunScanAndRegister_AllProbeFailuresExitsZero(t *testing.T) {
 	// Every candidate failing the probe is not an error — the user

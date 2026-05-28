@@ -149,6 +149,43 @@ func TestReadYesNo(t *testing.T) {
 	}
 }
 
+func TestRegistry_Prune_DupNameKeepsAliveDropsDead(t *testing.T) {
+	// Registry.Add derives Name from filepath.Base, so two repos
+	// with the same basename at different paths share a Name. A
+	// prune that removed by name would drop whichever entry came
+	// first (probably the alive one). Pre-fix this was the
+	// behaviour — exactly the inverse of what the user wants.
+	// Regression: assert the *alive* entry survives, the *dead*
+	// one is gone, and the path-based identity is what determined
+	// which is which.
+	alive := t.TempDir()
+	if err := os.Mkdir(filepath.Join(alive, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// alive's Name will be filepath.Base(alive); reuse it for the dead entry too.
+	sharedName := filepath.Base(alive)
+	regPath := withTempRegistry(t, []registry.Repo{
+		{Name: sharedName, Path: alive},
+		{Name: sharedName, Path: "/nope/" + sharedName},
+	})
+	if code := runRegistryPrune([]string{"-y"}, strings.NewReader("")); code != 0 {
+		t.Fatalf("prune -y should exit 0; got %d", code)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reg.Repos) != 1 {
+		t.Fatalf("expected 1 entry after prune; got %d (%+v)", len(reg.Repos), reg.Repos)
+	}
+	// The survivor must be the alive one (real path), not whichever
+	// shared the name first.
+	resolvedAlive, _ := filepath.EvalSymlinks(alive)
+	if reg.Repos[0].Path != resolvedAlive && reg.Repos[0].Path != alive {
+		t.Errorf("prune removed the alive entry; survivor path=%q want %q", reg.Repos[0].Path, alive)
+	}
+}
+
 func TestFindDeadEntries(t *testing.T) {
 	alive := t.TempDir()
 	if err := os.Mkdir(filepath.Join(alive, ".git"), 0o755); err != nil {

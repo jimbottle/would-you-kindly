@@ -49,8 +49,14 @@ Check what version you're running:
 
 ```bash
 wyk --version
-# wyk v0.2.3 (commit 92ea3db)
+# Tagged install (go install ...@vX.Y.Z): wyk v0.2.3
+# Pseudoversion (go install ...@latest):  wyk v0.2.4-0.YYYYMMDD-<sha>
+# From-checkout build (go build):         wyk (devel) (commit <sha>)
 ```
+
+The `(commit …)` suffix and `-dirty` marker only appear for builds
+produced inside this repo's working tree — Go's module-proxy builds
+don't carry VCS stamps.
 
 ## Run
 
