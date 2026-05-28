@@ -1,5 +1,7 @@
 # would-you-kindly
 
+[![test](https://github.com/jimbottle/would-you-kindly/actions/workflows/test.yml/badge.svg)](https://github.com/jimbottle/would-you-kindly/actions/workflows/test.yml)
+
 A terminal UI over the [beads](https://github.com/gastownhall/beads) issue
 tracker, built for one specific moment: when an agent finishes the
 mechanical part of a task and needs a human to do the part it cannot.

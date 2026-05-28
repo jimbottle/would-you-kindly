@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Pin to go.mod so this CI always uses the project's declared
+          # toolchain instead of drifting to whatever setup-go defaults to.
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Module download
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test (with race detector)
+        # -race catches concurrency bugs the unit tests would otherwise
+        # silently leak past — load-bearing for MultiBDSource's
+        # parallel-fetch path.
+        run: go test -race -timeout 5m ./...
