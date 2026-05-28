@@ -6,7 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(nothing yet — open Phase 8+ work lives here once filed)
+(nothing yet)
+
+## [0.2.1] — 2026-05-28
+
+Onboarding fixes after the first v0.2.0 user hit the registry-empty
+cliff. All three changes target "I installed wyk, why does it only
+show this one project?".
+
+### Added
+
+- **`wyk init -scan <root>`** — bulk-discover bd workspaces under a
+  directory tree and register every one found. Skips hidden dirs,
+  `node_modules`, `vendor`. Idempotent (already-registered paths
+  are silently skipped). The fastest path from "fresh install" to
+  "multi-repo view across every project I have."
+- **Empty-registry banner in the TUI**: when no repos are
+  registered, wyk surfaces a warm-orange italic hint above the
+  table telling the user how to set up — `wyk init` here or
+  `wyk init -scan ~/Projects` to bulk-register. No more silent
+  cwd-only fallback.
+
+### Changed
+
+- **`BDSource` always decorates issues with `Repo`/`Branch`** when
+  given a `Name`. `buildSource` populates Name on every path
+  (-C / single registered / empty-registry cwd-fallback), so the
+  TUI's Repo and Branch columns are visible even in single-repo
+  mode. Matches the always-on density the v0.2.0 user asked for.
 
 ## [0.2.0] — 2026-05-28
 
@@ -321,6 +348,7 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.1
 [0.2.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.0
 [0.1.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.1.0
