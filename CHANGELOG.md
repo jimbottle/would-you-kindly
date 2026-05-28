@@ -63,6 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TUI loading state**: `switchPreset` and manual refresh now set a
   `loading` flag the view renders as `loading…`, distinguishing an
   in-flight fetch from a genuinely empty result.
+- **TUI initial paint**: `New(...)` starts in the `loading` state, so
+  the first paint before `Init`'s fetch returns no longer renders
+  "no issues — bd returned an empty list" for a slow startup.
+- **TUI tick liveness on recovery**: `fetchedMsg` re-arms the tick
+  chain when it observes a terminal-error → success transition,
+  closing a rare interleaving where a slow recovery could leave
+  auto-refresh permanently dormant.
 
 ### Out of scope (deferred to Phase 2+)
 

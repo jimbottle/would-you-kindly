@@ -79,11 +79,12 @@ func New(src Source) Model {
 	ti.CharLimit = 200
 
 	return Model{
-		src:    src,
-		keys:   defaultKeyMap(),
-		mode:   modeList,
-		preset: filter.PresetAll,
-		input:  ti,
+		src:     src,
+		keys:    defaultKeyMap(),
+		mode:    modeList,
+		preset:  filter.PresetAll,
+		input:   ti,
+		loading: true, // first paint shows "loading…" until Init's fetch returns
 	}
 }
 
@@ -140,12 +141,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.preset != m.preset {
 			return m, nil
 		}
+		// If we're recovering from a terminal-error state (no bd / no
+		// workspace) into a successful fetch, the tick chain may have
+		// self-suspended in the meantime — there's an interleaving
+		// where a tick fires after refresh-restart but before the
+		// fetch returns, sees the still-terminal m.lastErr, and
+		// retires the chain. Re-arm here so auto-refresh is guaranteed
+		// alive whenever we leave the error state.
+		recovered := isTerminalErr(m.lastErr) && !isTerminalErr(msg.err)
 		m.loading = false
 		m.lastSync = time.Now()
 		m.lastErr = msg.err
 		if msg.err == nil {
 			m.all = msg.issues
 			m.recomputeVisible()
+		}
+		if recovered {
+			m.tickGen++
+			return m, tickCmd(m.tickGen)
 		}
 		return m, nil
 

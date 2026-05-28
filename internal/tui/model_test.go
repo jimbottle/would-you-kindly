@@ -183,6 +183,60 @@ func TestSwitchPresetClearsRowsAndShowsLoading(t *testing.T) {
 	}
 }
 
+func TestInitialPaintShowsLoading(t *testing.T) {
+	// Before the first fetchedMsg arrives, the view must say "loading…"
+	// rather than render the "no issues — bd returned an empty list"
+	// empty state, which is indistinguishable from a slow first fetch.
+	src := &stubSource{issues: sampleIssues()}
+	m := New(src)
+	if !m.loading {
+		t.Fatal("New(...) should construct a Model in loading state")
+	}
+	out := m.View()
+	if !strings.Contains(out, "loading…") {
+		t.Errorf("initial paint should render loading indicator; got:\n%s", out)
+	}
+	if strings.Contains(out, "no issues") {
+		t.Error("initial paint should NOT render the empty-list state before the first fetch")
+	}
+}
+
+func TestRecoveryFromTerminalErrorReArmsTickChain(t *testing.T) {
+	// Rare interleaving: tick fires after a refresh-restart but before
+	// the fetch returns. The tick sees the still-terminal error and
+	// retires the chain. When the fetch eventually returns success,
+	// nothing is alive to drive auto-refresh — unless fetchedMsg
+	// detects the recovery and re-arms.
+	src := &stubSource{err: beads.ErrBDNotFound}
+	m := New(src)
+	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
+	m = model.(Model)
+	// initial tick self-suspends
+	model, _ = m.Update(tickMsg{gen: m.tickGen})
+	m = model.(Model)
+	// user hits r → new chain at higher gen
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = model.(Model)
+	// tick(refresh) fires before fetch returns and self-suspends again
+	model, _ = m.Update(tickMsg{gen: m.tickGen})
+	m = model.(Model)
+	preGen := m.tickGen
+
+	// fetch eventually succeeds: recovery must re-arm a tick chain
+	model, cmd := m.Update(fetchedMsg{preset: m.preset, issues: sampleIssues()})
+	m = model.(Model)
+	if m.tickGen <= preGen {
+		t.Errorf("recovery should bump tickGen (was %d, now %d)", preGen, m.tickGen)
+	}
+	if cmd == nil {
+		t.Fatal("recovery from terminal error should produce a tickCmd")
+	}
+	// Don't invoke cmd() — it's a tea.Tick that would block for the
+	// full refresh interval. The bumped tickGen and non-nil cmd are
+	// sufficient evidence; tickCmd's own behavior is exercised
+	// elsewhere.
+}
+
 func TestRefreshAfterTerminalErrorRestartsTickAndRetiresOldChain(t *testing.T) {
 	src := &stubSource{err: beads.ErrBDNotFound}
 	m := New(src)
