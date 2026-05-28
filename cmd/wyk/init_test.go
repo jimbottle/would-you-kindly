@@ -153,6 +153,22 @@ func TestInit_ChainRefusesWhenPreWykAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestHookScripts_BothContainMarker(t *testing.T) {
+	// Re-install detection looks for hookMarker in the existing
+	// hook's body to decide "this is a wyk hook, skip" vs "this is
+	// foreign, refuse/-chain/-force". If a future hook variant
+	// (e.g. one that adds a pre-commit dimension) forgets the
+	// marker, detection silently breaks — a foreign-hook refusal
+	// could fire against wyk's own previously-installed hook. Lock
+	// the invariant.
+	if !strings.Contains(postCommitHook, hookMarker) {
+		t.Errorf("postCommitHook is missing %q — re-install detection will break for this variant", hookMarker)
+	}
+	if !strings.Contains(chainedPostCommitHook, hookMarker) {
+		t.Errorf("chainedPostCommitHook is missing %q — re-install detection will break for this variant", hookMarker)
+	}
+}
+
 func TestInit_ChainAndForceMutuallyExclusive(t *testing.T) {
 	dir := gitInit(t)
 	if code := runInitIn(t, dir, "-chain", "-force", "-skip-bd-init", "-skip-register"); code != 64 {
