@@ -305,11 +305,38 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 			}
 			continue
 		}
+		// Cross-workspace leak guard. Drop any issue whose ID
+		// prefix doesn't match the registered Name — bd has been
+		// observed serving foreign workspace data when a sub's
+		// `.beads/` is broken (e.g. a dead jsonl-only export
+		// alongside other healthy workspaces, bd's daemon then
+		// returns whichever workspace is currently warm). Without
+		// this guard, those foreign rows render attributed to the
+		// wrong repo, hiding a P0 bug as a duplicate-looking row.
+		//
+		// False positive: a workspace where the user manually set
+		// Name (in repos.json) to something other than the bd
+		// `issue-prefix`. Surfaced as a fetch error pointing them
+		// at the registry; they fix by editing the entry.
+		expect := sub.name + "-"
+		var clean []beads.Issue
+		var foreign int
 		for j := range r.issues {
+			if !strings.HasPrefix(r.issues[j].ID, expect) {
+				foreign++
+				continue
+			}
 			r.issues[j].Repo = sub.name
 			r.issues[j].Branch = branches[i]
+			clean = append(clean, r.issues[j])
 		}
-		all = append(all, r.issues...)
+		if foreign > 0 {
+			fetchErrs = append(fetchErrs, FetchError{
+				Repo: sub.name,
+				Err:  fmt.Errorf("%d issue(s) had foreign ID prefix (expected %q*) — bd may be serving the wrong workspace; check `wyk doctor` and ~/.config/wyk/repos.json", foreign, expect),
+			})
+		}
+		all = append(all, clean...)
 	}
 
 	if len(all) == 0 && firstErr != nil {

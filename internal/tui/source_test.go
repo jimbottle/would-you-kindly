@@ -202,11 +202,11 @@ func TestDecorateIssues_LeavesUntouchedWhenNameEmpty(t *testing.T) {
 
 func TestMultiBDSource_FetchUnionsAndDecorates(t *testing.T) {
 	a := &fakeRepoSource{issues: []beads.Issue{
-		{ID: "a-1", Title: "in alpha"},
-		{ID: "a-2", Title: "also alpha"},
+		{ID: "alpha-1", Title: "in alpha"},
+		{ID: "alpha-2", Title: "also alpha"},
 	}}
 	b := &fakeRepoSource{issues: []beads.Issue{
-		{ID: "b-9", Title: "in beta"},
+		{ID: "beta-9", Title: "in beta"},
 	}}
 	m := newMultiForTest(t,
 		struct {
@@ -231,12 +231,12 @@ func TestMultiBDSource_FetchUnionsAndDecorates(t *testing.T) {
 	// Each issue should carry its repo and branch.
 	for _, i := range got {
 		switch i.ID {
-		case "a-1", "a-2":
+		case "alpha-1", "alpha-2":
 			if i.Repo != "alpha" || i.Branch != "main" {
 				t.Errorf("%s decorated as repo=%q branch=%q, want alpha/main",
 					i.ID, i.Repo, i.Branch)
 			}
-		case "b-9":
+		case "beta-9":
 			if i.Repo != "beta" || i.Branch != "feat/x" {
 				t.Errorf("%s decorated as repo=%q branch=%q, want beta/feat/x",
 					i.ID, i.Repo, i.Branch)
@@ -246,7 +246,7 @@ func TestMultiBDSource_FetchUnionsAndDecorates(t *testing.T) {
 }
 
 func TestMultiBDSource_PartialFailureKeepsGood(t *testing.T) {
-	good := &fakeRepoSource{issues: []beads.Issue{{ID: "ok-1", Title: "ok"}}}
+	good := &fakeRepoSource{issues: []beads.Issue{{ID: "good-1", Title: "ok"}}}
 	bad := &fakeRepoSource{fetchErr: errors.New("bd: workspace gone")}
 	m := newMultiForTest(t,
 		struct {
@@ -265,7 +265,7 @@ func TestMultiBDSource_PartialFailureKeepsGood(t *testing.T) {
 	if err != nil {
 		t.Errorf("partial failure should NOT surface as an error when some repos returned data; got %v", err)
 	}
-	if len(got) != 1 || got[0].ID != "ok-1" {
+	if len(got) != 1 || got[0].ID != "good-1" {
 		t.Errorf("expected just the good repo's issue; got %+v", got)
 	}
 	// FetchWithSubErrors must surface the silent sub failure —
@@ -320,6 +320,74 @@ func TestMultiBDSource_FetchWithSubErrors_ClearsOnSuccess(t *testing.T) {
 	if len(errs2) != 0 {
 		t.Errorf("second fetch should clear errs; got %d (%+v)", len(errs2), errs2)
 	}
+}
+
+func TestMultiBDSource_DropsForeignIssueIDs(t *testing.T) {
+	// A sub that returns issues with the wrong prefix (the
+	// cross-workspace leak symptom — bd serving another
+	// workspace's data when this one's .beads is broken). The
+	// matching rows survive and get decorated; foreign rows are
+	// dropped and surface as a FetchError so the user sees the
+	// mis-attribution rather than silently consuming bad data.
+	clean := &fakeRepoSource{issues: []beads.Issue{
+		{ID: "good-1", Title: "ok-1"},
+		{ID: "good-2", Title: "ok-2"},
+	}}
+	leaky := &fakeRepoSource{issues: []beads.Issue{
+		{ID: "elsewhere-x", Title: "leaked from another workspace"},
+		{ID: "elsewhere-y", Title: "also leaked"},
+		{ID: "leaky-1", Title: "legit row from this workspace"},
+	}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"good", "main", clean},
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"leaky", "main", leaky},
+	)
+	issues, errs, err := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err != nil {
+		t.Fatalf("FetchWithSubErrors: %v", err)
+	}
+	// 2 from clean + 1 legit from leaky = 3 total. 2 foreign rows dropped.
+	if len(issues) != 3 {
+		t.Errorf("expected 3 surviving issues; got %d (%+v)", len(issues), idsOf(issues))
+	}
+	for _, i := range issues {
+		if i.Repo == "" {
+			t.Errorf("issue %s left undecorated (Repo empty)", i.ID)
+		}
+		// No surviving issue should still have a foreign prefix.
+		if i.Repo == "leaky" && !strings.HasPrefix(i.ID, "leaky-") {
+			t.Errorf("foreign issue leaked through: %s under repo %q", i.ID, i.Repo)
+		}
+	}
+	// FetchError for the leaky sub: mentions the foreign count and the expected prefix.
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 fetch error; got %d (%+v)", len(errs), errs)
+	}
+	if errs[0].Repo != "leaky" {
+		t.Errorf("fetch error repo = %q, want %q", errs[0].Repo, "leaky")
+	}
+	if !strings.Contains(errs[0].Err.Error(), "foreign ID prefix") {
+		t.Errorf("fetch error message = %q, want it to mention 'foreign ID prefix'", errs[0].Err.Error())
+	}
+	if !strings.Contains(errs[0].Err.Error(), "\"leaky-\"") {
+		t.Errorf("fetch error message should name the expected prefix %q; got %q", "leaky-", errs[0].Err.Error())
+	}
+}
+
+func idsOf(issues []beads.Issue) []string {
+	out := make([]string, len(issues))
+	for i, x := range issues {
+		out[i] = x.ID
+	}
+	return out
 }
 
 func TestMultiBDSource_SatisfiesMultiSource(t *testing.T) {
