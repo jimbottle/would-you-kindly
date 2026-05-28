@@ -31,7 +31,7 @@ You'll need Go 1.26+ (matching `go.mod`) and
 
 ```bash
 # Latest tagged release:
-go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.2.2
+go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.2.3
 
 # Or tip of main:
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest
@@ -316,10 +316,11 @@ Drop screenshots of the TUI here. Good captures:
 
 ## Status
 
-**v0.2.1 shipped** — v0.2.0's multi-repo features plus the
-onboarding fixes (`wyk init -scan`, empty-registry hint, always-on
-Repo/Branch columns) so the first run after install is the
-intended multi-repo view.
+**v0.2.3 shipped** — Phase 10 TUI completeness round 2: a `W` column
+showing per-repo wyk-hook install state (with gitlink-safe
+detection), a per-sub Fetch error banner so a workspace that breaks
+no longer disappears silently, and the matching `wyk doctor` gitlink
+fix.
 
 ## License
 

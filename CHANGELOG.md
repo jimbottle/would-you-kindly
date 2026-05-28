@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (nothing yet)
 
+## [0.2.3] — 2026-05-28
+
+Phase 10 (TUI completeness, round 2). Two visibility bugs surfaced
+during a registry audit: a wyk-installed indicator that read silent
+on gitlink subdirs, and per-sub Fetch failures that disappeared into
+the void. Plus a sibling fix in `wyk doctor` for the same gitlink
+case.
+
+### Added
+
+- **W column** in the multi-repo TUI table. A green `✓` next to repos
+  with wyk's post-commit hook installed (plain or chained); blank for
+  repos that are bd-only. Tells you at a glance which rows will
+  auto-close from `Closes:` trailers and which won't. Detection
+  routes through `git rev-parse --git-path hooks/post-commit` so
+  worktrees, submodules, and any layout where `.git` is a file
+  resolve to the same hook the installer wrote.
+- **Per-sub Fetch error banner** above the help bar in multi-repo
+  mode: "1 repo failed to load: domo-mcp (press r to retry; wyk
+  doctor for details)". `MultiBDSource` was previously dropping
+  errored subs on the floor as long as one repo returned data —
+  invisible failures. A new `MultiSource` interface exposes the
+  per-sub error snapshot to the model.
+
+### Fixed
+
+- **`wyk doctor` falsely FAILed on gitlink registrations**. Reading
+  `<r.Path>/.git/hooks/post-commit` directly errored with "not a
+  directory" when `.git` was a *file* pointing into a parent repo's
+  git dir — the layout `git worktree add` and submodules produce.
+  Doctor now resolves via `git rev-parse --git-path`, same as the
+  installer.
+  Closes: would-you-kindly-2m9.
+- **TUI per-sub failures are no longer silent**. The bug that hid
+  `domo-mcp`'s broken `.beads/` state from the user — now reads as
+  an amber banner pointing at `wyk doctor` for the details.
+  Closes: would-you-kindly-m99.
+
 ## [0.2.2] — 2026-05-28
 
 Phase 9 (TUI completeness) plus a visual polish round. Closes the
@@ -379,7 +417,8 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.3
 [0.2.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.2
 [0.2.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.1
 [0.2.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.0
