@@ -373,8 +373,8 @@ func TestRenderFetchErrorBanner_TruncatesToWidth(t *testing.T) {
 	// ellipsis rather than wrap. The +N-more collapse is by COUNT
 	// (n > 3), so width-based truncation is the only guard for the
 	// wide-names-but-few-of-them case. Measured in runes — the
-	// same semantic trunc uses, since the multi-byte ellipsis byte
-	// length isn't the visual width that matters in a terminal.
+	// same semantic trunc uses (rune-aware, so multi-byte names
+	// can't be split mid-codepoint).
 	errs := []FetchError{
 		{Repo: "long-name-repository-one", Err: errors.New("x")},
 		{Repo: "long-name-repository-two", Err: errors.New("x")},

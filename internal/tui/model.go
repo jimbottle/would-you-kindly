@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -1323,12 +1324,23 @@ func friendlyError(err error) string {
 	}
 }
 
+// trunc caps s at n runes, replacing the trailing rune with `…`
+// when truncation actually happens. Rune-aware (not byte-aware) so
+// non-ASCII content — issue titles, repo names with diacritics —
+// can't be split mid-codepoint. Width semantics throughout the TUI
+// (column widths, banner caps) are visual, not byte, so this is
+// the right unit. n<=0 returns ""; n==1 returns the first rune
+// (no ellipsis, since … would consume the slot).
 func trunc(s string, n int) string {
-	if len(s) <= n {
+	if utf8.RuneCountInString(s) <= n {
 		return s
 	}
-	if n <= 1 {
-		return s[:n]
+	if n <= 0 {
+		return ""
 	}
-	return s[:n-1] + "…"
+	runes := []rune(s)
+	if n == 1 {
+		return string(runes[:1])
+	}
+	return string(runes[:n-1]) + "…"
 }

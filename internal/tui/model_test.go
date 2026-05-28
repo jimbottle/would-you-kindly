@@ -863,3 +863,40 @@ func TestRefreshAfterTerminalErrorRestartsTickAndRetiresOldChain(t *testing.T) {
 		t.Error("stale-gen tick should be dropped, not re-arm a chain")
 	}
 }
+
+func TestTrunc_RuneAware(t *testing.T) {
+	// Width semantics in the TUI are visual, not byte: a column
+	// width of N should hold N characters regardless of whether
+	// each is one byte or four. Pre-fix trunc sliced with s[:n-1]
+	// which could split a multi-byte rune mid-codepoint and emit
+	// invalid UTF-8 before the ellipsis. Pin the contract on a few
+	// concrete inputs so a future "performance" refactor back to
+	// byte semantics fails here loudly.
+	cases := []struct {
+		name string
+		in   string
+		n    int
+		want string
+	}{
+		{"short-ascii-untouched", "abc", 5, "abc"},
+		{"long-ascii-truncated", "abcdefgh", 5, "abcd…"},
+		{"zero-width-empty", "anything", 0, ""},
+		{"one-width-single-rune", "abc", 1, "a"},
+		// Multi-byte content — café is 5 bytes (é = 2 bytes), 4
+		// runes. Cap at 3: pre-fix, byte-trunc gave "ca" + "…" =
+		// 5 bytes ("ca…") OR worse split inside é. Post-fix:
+		// "ca…" (3 runes, valid UTF-8).
+		{"multibyte-stays-valid", "café", 3, "ca…"},
+		// A name made entirely of multi-byte runes; truncation
+		// must not split any of them.
+		{"all-multibyte", "αβγδ", 3, "αβ…"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := trunc(tc.in, tc.n)
+			if got != tc.want {
+				t.Errorf("trunc(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+			}
+		})
+	}
+}
