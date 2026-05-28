@@ -1,0 +1,104 @@
+# Human-in-the-loop contract
+
+`would-you-kindly` (binary `wyk`) surfaces beads issues that an agent has handed
+back to a human. The convention below uses only features bd already supports —
+no schema changes, no parallel storage — so any bd CLI or compatible tool can
+read and write it.
+
+## The convention
+
+A task is "for a human" when it carries the **`human`** label. That single
+label is the only signal `wyk` requires.
+
+Two supporting conventions complete the contract:
+
+| Concern               | Encoding                                                                                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Needs human action**| Label `human`. Set by an agent (or a person) the moment a task requires hands-on work that an agent cannot or should not perform.                       |
+| **Instructions**      | The issue **description** holds the specific, ordered steps the human must perform. Treat it as a runbook the human can follow without further context.|
+| **Who filed it**      | Label `src:agent` if an agent created the issue, `src:human` if a person did. Exactly one of the two should be present on every issue `wyk` tracks.     |
+
+### Why these and not others
+
+- **`human` label, not status.** bd's built-in statuses (`open`, `in_progress`,
+  `blocked`, …) describe workflow state, not audience. A task can be `open` and
+  for a human, or `open` and for an agent. Conflating audience with status
+  would lose information.
+- **Description, not notes.** `bd show --json` and `bd list --json` return
+  `description` in their default payload; `notes` is a separate field intended
+  for ongoing context. The description is the right place for the *single
+  authoritative set of instructions*; notes accrete around it.
+- **`src:` prefix on the source label.** Namespaced label prefixes are the
+  ecosystem-standard way to encode small, controlled vocabularies in bd
+  without inventing a custom field.
+
+### Closing the loop
+
+When the human finishes the task, they close the issue (`bd close <id>`).
+If they cannot complete it and want to bounce it back, they remove the
+`human` label (`bd label remove <id> human`). The agent — via its own tooling
+in a later phase — discovers the un-labeled issue and resumes.
+
+## Exact bd commands
+
+### File a human-flagged task (agent)
+
+```bash
+bd create "Configure production OAuth client" \
+  --description="$(cat <<'EOF'
+1. Sign in to console.cloud.google.com as the prod service account.
+2. Create an OAuth 2.0 client of type "Web application".
+3. Add https://app.example.com/auth/callback to authorized redirect URIs.
+4. Copy the client ID and secret into 1Password at "Prod / OAuth / Google".
+5. Paste the client ID (only) into this issue's notes via `bd note`.
+EOF
+)" \
+  --labels=human,src:agent \
+  --priority=1
+```
+
+### File a human-flagged task (person, at the CLI)
+
+```bash
+bd create "Review the Q3 access audit before Friday" \
+  --description="Open the audit at https://example.atlassian.net/wiki/Q3-access and confirm or revoke each row by Friday EOD." \
+  --labels=human,src:human \
+  --priority=1
+```
+
+### Filter to exactly the human-flagged work
+
+The canonical query — used by `wyk`'s dedicated human-view keystroke — is:
+
+```bash
+bd query "label=human AND status!=closed" --json
+```
+
+Equivalent flag-based form (handy in shell pipelines):
+
+```bash
+bd list --label=human --status=open,in_progress,blocked --json
+```
+
+Both return the same set. `wyk` uses the `bd query` form because it composes
+cleanly with future predicates (e.g. `AND priority<=1`).
+
+### Discover handoffs from an agent specifically
+
+```bash
+bd query "label=human AND label=src:agent AND status!=closed" --json
+```
+
+### See what humans have filed for themselves
+
+```bash
+bd query "label=human AND label=src:human AND status!=closed" --json
+```
+
+## Versioning the contract
+
+This document is the contract. If the labels or the field-mapping change,
+bump the **Schema** line below and update `wyk`'s preset query strings in the
+same commit.
+
+**Schema:** `wyk-contract/v1`
