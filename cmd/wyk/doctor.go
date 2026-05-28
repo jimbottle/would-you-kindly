@@ -196,15 +196,23 @@ func checkRepo(r registry.Repo) []check {
 		// Separate check: does bd actually respond? Bounded by a
 		// timeout so a broken/locked workspace doesn't hang the whole
 		// doctor run.
+		//
+		// Detect timeouts via ctx.Err() rather than errors.Is on the
+		// returned error: exec.CommandContext kills the process when
+		// the context expires, and cmd.Run() returns an *exec.ExitError
+		// like "signal: killed" — which does NOT wrap
+		// context.DeadlineExceeded. The context itself does, so check
+		// the ctx state BEFORE calling cancel().
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		c := beads.NewClient()
 		c.Dir = r.Path
 		_, qerr := c.Query(ctx, `status!=closed`)
+		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()
 		switch {
 		case qerr == nil:
 			out = append(out, check{name: prefix + ": bd query responds", status: statusPass})
-		case errors.Is(qerr, context.DeadlineExceeded):
+		case timedOut:
 			out = append(out, check{
 				name:   prefix + ": bd query responds",
 				status: statusWarn,

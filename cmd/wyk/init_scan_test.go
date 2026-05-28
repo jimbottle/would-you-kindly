@@ -128,6 +128,33 @@ func TestRunScanAndRegister_NonExistentRootExits2(t *testing.T) {
 	}
 }
 
+func TestRunScanAndRegister_PermissionDeniedExits1(t *testing.T) {
+	// Pin the exit-1 contract for non-ENOENT stat errors. An
+	// unreadable directory (mode 0) triggers EACCES on stat; the
+	// implementation must return 1, not 2 (the exit-2 lane is
+	// reserved for missing / not-a-directory).
+	//
+	// Skip if running as root — root can stat anything regardless
+	// of mode bits, so the test can't reproduce the failure.
+	if os.Geteuid() == 0 {
+		t.Skip("test cannot reproduce EACCES when running as root")
+	}
+	parent := t.TempDir()
+	bad := filepath.Join(parent, "no-stat")
+	if err := os.Mkdir(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Drop read+execute on the parent so stat-ing the child fails.
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) }) // let TempDir clean up
+
+	if code := runScanAndRegister(bad, false); code != 1 {
+		t.Errorf("expected exit 1 for permission-denied stat; got %d", code)
+	}
+}
+
 func TestInit_ScanRejectsIncompatibleFlags(t *testing.T) {
 	// -scan only registers — combining it with per-repo flags is a
 	// usage error, not silent. Each per-repo flag should be flagged
