@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
@@ -267,10 +268,13 @@ func TestMultiBDSource_PartialFailureKeepsGood(t *testing.T) {
 	if len(got) != 1 || got[0].ID != "ok-1" {
 		t.Errorf("expected just the good repo's issue; got %+v", got)
 	}
-	// LastFetchErrors must surface the silent sub failure — the TUI
-	// uses it to render the per-sub banner. Pre-m99 these errors
-	// were dropped on the floor.
-	errs := m.LastFetchErrors()
+	// FetchWithSubErrors must surface the silent sub failure —
+	// the TUI uses it to render the per-sub banner. Pre-m99 these
+	// errors were dropped on the floor.
+	_, errs, err2 := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err2 != nil {
+		t.Fatalf("partial-failure FetchWithSubErrors: %v", err2)
+	}
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 fetch error tracked; got %d (%+v)", len(errs), errs)
 	}
@@ -282,10 +286,10 @@ func TestMultiBDSource_PartialFailureKeepsGood(t *testing.T) {
 	}
 }
 
-func TestMultiBDSource_LastFetchErrors_ClearsOnSuccess(t *testing.T) {
+func TestMultiBDSource_FetchWithSubErrors_ClearsOnSuccess(t *testing.T) {
 	// First Fetch errors on one sub; second Fetch (after the sub
 	// "recovers") should return zero errors. The model assumes
-	// stashed errors are a snapshot of the *last* fetch, not a
+	// per-fetch errors are a snapshot of *this* fetch, not a
 	// cumulative log.
 	sub := &fakeRepoSource{fetchErr: errors.New("transient")}
 	m := newMultiForTest(t,
@@ -300,19 +304,31 @@ func TestMultiBDSource_LastFetchErrors_ClearsOnSuccess(t *testing.T) {
 			src    *fakeRepoSource
 		}{"ok", "main", &fakeRepoSource{issues: []beads.Issue{{ID: "ok-1"}}}},
 	)
-	if _, err := m.Fetch(context.Background(), filter.PresetAll); err != nil {
-		t.Fatal(err)
+	_, errs1, err1 := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err1 != nil {
+		t.Fatal(err1)
 	}
-	if got := len(m.LastFetchErrors()); got != 1 {
-		t.Fatalf("first fetch should have 1 err; got %d", got)
+	if len(errs1) != 1 {
+		t.Fatalf("first fetch should have 1 err; got %d", len(errs1))
 	}
 	sub.fetchErr = nil
 	sub.issues = []beads.Issue{{ID: "flaky-1"}}
-	if _, err := m.Fetch(context.Background(), filter.PresetAll); err != nil {
-		t.Fatal(err)
+	_, errs2, err2 := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err2 != nil {
+		t.Fatal(err2)
 	}
-	if got := len(m.LastFetchErrors()); got != 0 {
-		t.Errorf("second fetch should clear errs; got %d (%+v)", got, m.LastFetchErrors())
+	if len(errs2) != 0 {
+		t.Errorf("second fetch should clear errs; got %d (%+v)", len(errs2), errs2)
+	}
+}
+
+func TestMultiBDSource_SatisfiesMultiSource(t *testing.T) {
+	// Compile-time check is already in source.go; this is a runtime
+	// type-assert pin so a future refactor that accidentally
+	// removed the method would surface here too.
+	var src Source = &MultiBDSource{}
+	if _, ok := src.(MultiSource); !ok {
+		t.Fatal("*MultiBDSource no longer satisfies MultiSource — model's type-assert in fetchCmd will silently fall back to plain Fetch")
 	}
 }
 
@@ -320,7 +336,9 @@ func TestRenderFetchErrorBanner(t *testing.T) {
 	// Banner format pins three regimes: single, few-enough-to-list,
 	// truncated. Phrasing matters because the user reads this and
 	// the next action they take depends on it (press r vs. wyk
-	// doctor).
+	// doctor). All variants — including the +N-more truncation —
+	// must carry the actionable retry hint; the truncated case is
+	// when retry is most likely the right move.
 	mk := func(names ...string) []FetchError {
 		out := make([]FetchError, len(names))
 		for i, n := range names {
@@ -333,19 +351,42 @@ func TestRenderFetchErrorBanner(t *testing.T) {
 		errs     []FetchError
 		contains []string
 	}{
-		{"single", mk("a"), []string{"1 repo failed", "a", "press r"}},
-		{"few", mk("a", "b", "c"), []string{"3 repos failed", "a, b, c", "press r"}},
-		{"many", mk("a", "b", "c", "d", "e"), []string{"5 repos failed", "a, b, c", "+2 more", "wyk doctor"}},
+		{"single", mk("a"), []string{"1 repo failed", "a", "press r to retry", "wyk doctor"}},
+		{"few", mk("a", "b", "c"), []string{"3 repos failed", "a, b, c", "press r to retry", "wyk doctor"}},
+		{"many", mk("a", "b", "c", "d", "e"), []string{"5 repos failed", "a, b, c", "+2 more", "press r to retry", "wyk doctor"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := renderFetchErrorBanner(tc.errs)
+			got := renderFetchErrorBanner(tc.errs, 0) // width=0 disables truncation
 			for _, want := range tc.contains {
 				if !strings.Contains(got, want) {
 					t.Errorf("banner missing %q in %q", want, got)
 				}
 			}
 		})
+	}
+}
+
+func TestRenderFetchErrorBanner_TruncatesToWidth(t *testing.T) {
+	// Three long-named repos with the full retry tail will exceed
+	// a narrow terminal; the banner must cap at width with an
+	// ellipsis rather than wrap. The +N-more collapse is by COUNT
+	// (n > 3), so width-based truncation is the only guard for the
+	// wide-names-but-few-of-them case. Measured in runes — the
+	// same semantic trunc uses, since the multi-byte ellipsis byte
+	// length isn't the visual width that matters in a terminal.
+	errs := []FetchError{
+		{Repo: "long-name-repository-one", Err: errors.New("x")},
+		{Repo: "long-name-repository-two", Err: errors.New("x")},
+		{Repo: "long-name-repository-three", Err: errors.New("x")},
+	}
+	const width = 60
+	got := renderFetchErrorBanner(errs, width)
+	if rc := utf8.RuneCountInString(got); rc > width {
+		t.Errorf("banner exceeds width: runes=%d, width=%d, banner=%q", rc, width, got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("expected ellipsis-truncated banner; got %q", got)
 	}
 }
 

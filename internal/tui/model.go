@@ -212,10 +212,20 @@ func (m Model) Init() tea.Cmd {
 // its own per-call timeout. The originating preset is echoed back in
 // the result so stale fetches (a tick that arrived while the user was
 // switching presets) can be dropped instead of overwriting newer data.
+//
+// When the Source is a MultiSource, per-sub errors are pulled
+// atomically with the issues (via FetchWithSubErrors) so a
+// concurrent next-tick fetch cannot interleave its errors with this
+// fetch's rows.
 func (m Model) fetchCmd() tea.Cmd {
 	src, preset := m.src, m.preset
 	return func() tea.Msg {
-		issues, err := src.Fetch(context.Background(), preset)
+		ctx := context.Background()
+		if ms, ok := src.(MultiSource); ok {
+			issues, subErrs, err := ms.FetchWithSubErrors(ctx, preset)
+			return fetchedMsg{preset: preset, issues: issues, subErrs: subErrs, err: err}
+		}
+		issues, err := src.Fetch(ctx, preset)
 		return fetchedMsg{preset: preset, issues: issues, err: err}
 	}
 }
@@ -225,9 +235,10 @@ func tickCmd(gen int) tea.Cmd {
 }
 
 type fetchedMsg struct {
-	preset filter.Preset
-	issues []beads.Issue
-	err    error
+	preset  filter.Preset
+	issues  []beads.Issue
+	subErrs []FetchError
+	err     error
 }
 
 type tickMsg struct{ gen int }
@@ -276,13 +287,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commonPrefix = commonIDPrefix(m.all)
 			m.recomputeVisible()
 		}
-		// Pull per-sub fetch errors if the source tracks them
-		// (multi-repo). Always read — even on whole-fetch error —
-		// so a partial-failure → total-failure transition clears
-		// the per-sub banner cleanly.
-		if ms, ok := m.src.(MultiSource); ok {
-			m.fetchErrors = ms.LastFetchErrors()
-		}
+		// Per-sub fetch errors travel on the msg itself so they
+		// always reflect THIS fetch — not a concurrent one that
+		// happened to win the race for shared state. Always
+		// assigned so a partial-failure → total-failure transition
+		// clears the per-sub banner cleanly.
+		m.fetchErrors = msg.subErrs
 		if recovered {
 			m.tickGen++
 			return m, tickCmd(m.tickGen)
@@ -958,10 +968,11 @@ func (m Model) viewList() string {
 	// fetch-error banner: per-sub Fetch failures from a multi-repo
 	// source. Surfaces above the transient status banner so it isn't
 	// overwritten by write feedback. Re-rendered every paint from
-	// m.fetchErrors so it tracks the latest fetch.
+	// m.fetchErrors so it tracks the latest fetch. Bounded by
+	// m.width so several repos with long names can't wrap.
 	if len(m.fetchErrors) > 0 {
 		b.WriteString("\n")
-		b.WriteString(fetchErrorStyle.Render(renderFetchErrorBanner(m.fetchErrors)))
+		b.WriteString(fetchErrorStyle.Render(renderFetchErrorBanner(m.fetchErrors, m.width)))
 	}
 
 	// status banner (transient write feedback) above the status bar
@@ -1269,23 +1280,36 @@ func keyHit(msg tea.KeyMsg, b key.Binding) bool {
 
 // renderFetchErrorBanner formats the per-sub Fetch failures into a
 // single line. Names are joined with commas; a long list collapses
-// to "N repos failed: a, b, c, +M more" to keep the banner from
-// wrapping. Caller decides styling.
-func renderFetchErrorBanner(errs []FetchError) string {
+// to "N repos failed: a, b, c, +M more" so a registry full of
+// failing repos doesn't blow out the line. The actionable hint
+// ("press r to retry; wyk doctor for details") rides on every
+// variant — the truncated case is exactly when retrying is most
+// likely the right move. If width > 0 and the formatted message
+// still exceeds it (e.g. several repos with long names), trunc
+// caps it with an ellipsis so the banner can't wrap. width<=0
+// disables the cap (used by tests).
+func renderFetchErrorBanner(errs []FetchError, width int) string {
 	const showFirst = 3
+	const tail = " (press r to retry; wyk doctor for details)"
 	n := len(errs)
 	names := make([]string, 0, n)
 	for _, e := range errs {
 		names = append(names, e.Repo)
 	}
-	if n <= showFirst {
-		if n == 1 {
-			return fmt.Sprintf("1 repo failed to load: %s (press r to retry; wyk doctor for details)", names[0])
-		}
-		return fmt.Sprintf("%d repos failed to load: %s (press r to retry; wyk doctor for details)", n, strings.Join(names, ", "))
+	var s string
+	switch {
+	case n == 1:
+		s = "1 repo failed to load: " + names[0] + tail
+	case n <= showFirst:
+		s = fmt.Sprintf("%d repos failed to load: %s%s", n, strings.Join(names, ", "), tail)
+	default:
+		s = fmt.Sprintf("%d repos failed to load: %s, +%d more%s",
+			n, strings.Join(names[:showFirst], ", "), n-showFirst, tail)
 	}
-	return fmt.Sprintf("%d repos failed to load: %s, +%d more (wyk doctor for details)",
-		n, strings.Join(names[:showFirst], ", "), n-showFirst)
+	if width > 0 && len(s) > width {
+		s = trunc(s, width)
+	}
+	return s
 }
 
 func friendlyError(err error) string {

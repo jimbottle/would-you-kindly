@@ -185,21 +185,29 @@ type subRepo struct {
 }
 
 // FetchError pairs a sub-source's display name with the error that
-// sub-source returned during the most recent MultiBDSource.Fetch.
-// Surfaced via MultiSource so the TUI can render a banner — a sub
-// that errors out otherwise contributes zero rows and is invisible
-// to the user (the bug that hid domo-mcp's broken state).
+// sub-source returned. Surfaced atomically with the fetched issues
+// (via MultiSource.FetchWithSubErrors) so the TUI can render a
+// banner — a sub that errors out otherwise contributes zero rows
+// and is invisible to the user (the bug that hid domo-mcp's
+// broken state).
 type FetchError struct {
 	Repo string
 	Err  error
 }
 
 // MultiSource is the optional interface MultiBDSource satisfies so
-// callers can read per-sub failures after a Fetch. Single-repo
-// BDSource doesn't implement it — there's no "other repo" to fail.
-// The model runtime type-asserts.
+// callers can fetch issues AND per-sub failures in a single atomic
+// snapshot. Single-repo BDSource doesn't implement it — there's no
+// "other repo" to fail. The model runtime type-asserts and prefers
+// this method over plain Source.Fetch when available.
+//
+// Returning errors directly (rather than stashing them on the
+// source and exposing a getter) is deliberate: a getter races with
+// concurrent fetches scheduled by the auto-refresh tick — the model
+// could read errors from fetch N+1 alongside issues from fetch N.
+// Atomic return eliminates that window.
 type MultiSource interface {
-	LastFetchErrors() []FetchError
+	FetchWithSubErrors(ctx context.Context, p filter.Preset) ([]beads.Issue, []FetchError, error)
 }
 
 // MultiBDSource queries every registered bd workspace and unions
@@ -209,16 +217,8 @@ type MultiSource interface {
 // is no bare-ID fallback. Issues with an empty Repo are a
 // programmer error in this package and produce a clear "repo not
 // set" failure rather than a silent ID-collision mis-route.
-//
-// lastErrs stashes per-sub Fetch failures; LastFetchErrors returns
-// a defensive copy. Guarded by mu because Fetch and LastFetchErrors
-// can race when the model schedules a refresh while reading the
-// previous fetch's errors.
 type MultiBDSource struct {
 	subs []subRepo
-
-	mu       sync.Mutex
-	lastErrs []FetchError
 }
 
 // Compile-time check.
@@ -251,16 +251,27 @@ func NewMultiBDSource(clients []*beads.Client, names []string, me string) (*Mult
 	return &MultiBDSource{subs: subs}, nil
 }
 
-// Fetch queries every sub-source concurrently and concatenates their
-// results in stable registry order. Each row is decorated with its
-// repo name and the repo's current git branch. Per-repo errors are
-// tolerated as long as at least one repo returned data; if every
-// repo errored, the first error (in registry order) is surfaced.
+// Fetch satisfies Source. Discards per-sub error detail; callers
+// that need it should use FetchWithSubErrors via the MultiSource
+// interface.
+func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, error) {
+	issues, _, err := m.FetchWithSubErrors(ctx, p)
+	return issues, err
+}
+
+// FetchWithSubErrors queries every sub-source concurrently and
+// concatenates their results in stable registry order. Each row is
+// decorated with its repo name and the repo's current git branch.
+// Per-repo errors are tolerated as long as at least one repo
+// returned data; if every repo errored, the first error (in
+// registry order) is surfaced as the top-level error. Either way
+// the per-sub error slice is returned atomically with the issues so
+// callers don't race a concurrent next fetch.
 //
 // Parallelism matters because each sub.Fetch shells out to `bd`,
 // and with 4–5 registered workspaces the sequential cost was
 // user-perceptible on every refresh.
-func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, error) {
+func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset) ([]beads.Issue, []FetchError, error) {
 	type result struct {
 		issues []beads.Issue
 		err    error
@@ -301,27 +312,10 @@ func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Iss
 		all = append(all, r.issues...)
 	}
 
-	m.mu.Lock()
-	m.lastErrs = fetchErrs
-	m.mu.Unlock()
-
 	if len(all) == 0 && firstErr != nil {
-		return nil, firstErr
+		return nil, fetchErrs, firstErr
 	}
-	return all, nil
-}
-
-// LastFetchErrors returns a snapshot of the per-sub errors from the
-// most recent Fetch. Empty slice (not nil) means "everything
-// succeeded last fetch" — callers can range over it unconditionally.
-// Returns a defensive copy so callers can hold onto the slice
-// without racing the next Fetch.
-func (m *MultiBDSource) LastFetchErrors() []FetchError {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]FetchError, len(m.lastErrs))
-	copy(out, m.lastErrs)
-	return out
+	return all, fetchErrs, nil
 }
 
 // repoForIssue returns the sub whose name matches issue.Repo.
