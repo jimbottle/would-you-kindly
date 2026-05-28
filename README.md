@@ -203,11 +203,82 @@ above the help bar (e.g. `closed wyk-42`, or `close wyk-42 failed: …`).
 
 The list also refreshes itself every 10 seconds.
 
+## A day in the life
+
+The product's whole point is the round-trip between an agent and a
+human. Here's what that looks like end-to-end across two sessions.
+
+**Morning, in your editor — an agent is doing work.** It hits
+something it can't do alone (rotate a secret, click "Publish" on a
+release, decide which legal entity signs a contract). It files a bd
+issue and hands it off in one shot:
+
+```bash
+$ echo "1. ...  2. ...  3. Close this issue when done." \
+    | wyk handoff -create "Rotate the staging DB password" -priority 1
+created would-you-kindly-2oa — "Rotate the staging DB password"
+handed would-you-kindly-2oa to human (87-byte runbook)
+```
+
+The agent moves on to other work. The bd issue now carries `human`,
+`src:agent`, and the runbook as its description.
+
+**Afternoon, at your terminal.** You run `wyk` (or it's already
+open). Press `h` to jump to the human view:
+
+```
+Repo               Branch     ID         T     Status  P   Updated  Title
+would-you-kindly   main       2oa        task  open    P1  3h ago   Rotate the staging DB password  ← HUMAN
+acme-pipeline      feat/x     mc-42      bug   open    P0  1h ago   Latest broken                   ← HUMAN
+```
+
+(The `← HUMAN` badge means an agent put it there. `· HUMAN` means
+you filed it for yourself.)
+
+Press `enter` to read the runbook, `c` to close when done, or `H` to
+bounce it back to the agent if the next step is theirs again. The
+list refreshes every 10 seconds and across every repo you've
+registered with `wyk init`.
+
+**Next morning, in your editor.** Your agent starts a session and
+checks its inbox:
+
+```bash
+$ wyk inbox -json
+[
+  {"id":"would-you-kindly-2oa","title":"Rotate the staging DB password",
+   "labels":["src:agent"], "status":"open", ...}
+]
+```
+
+These are issues the agent filed (`src:agent`) that no longer carry
+`human` — i.e. you handled the runbook step, removed the label, and
+now expect the agent to do the next thing. The agent picks them up,
+re-applies `human` if another round is needed, or closes when fully
+done.
+
+The label flips trace the conversation. The TUI is the human's
+window into it; `wyk handoff` and `wyk inbox` are the agent's.
+
+## Screenshots
+
+<!--
+Drop screenshots of the TUI here. Good captures:
+1. The default `all` preset across multiple registered repos —
+   shows the Repo / Branch columns and the `← HUMAN` / `· HUMAN`
+   badges side-by-side.
+2. The detail view (enter on a human-flagged issue) — shows the
+   runbook as the description and the source-label hint.
+3. The `?` help overlay — captures the full keymap at a glance.
+4. The `/` filter prompt with a fuzzy query narrowing the list.
+-->
+
 ## Status
 
-**Phase 1 — read-only MVP.** wyk can list, filter, and read bd issues.
-It cannot yet create, update, or close them; those are the next phase.
-See `bd ready` in this repo for the open work.
+**v0.1.0 shipped** with read + write + handoff + post-commit hook +
+multi-repo registry + agent skill. `[Unreleased]` (see `CHANGELOG.md`)
+tracks the Phase 5 polish round: cleaner ID column, source-aware
+HUMAN badge, `wyk inbox`, `wyk handoff -create`, hook composability.
 
 ## License
 
