@@ -112,6 +112,35 @@ func (c *Client) Close(ctx context.Context, id string) error {
 	return err
 }
 
+// CreateOptions configures `bd create` invocations.
+type CreateOptions struct {
+	Title    string
+	Labels   []string // applied as --labels=a,b
+	Priority string   // empty means bd's default ("2")
+	IssueType string  // task / bug / feature / chore / epic / decision / spike / story / milestone
+}
+
+// Create runs `bd create <title> --silent` with the given options
+// and returns the new issue's ID. `--silent` makes bd emit only the
+// ID on stdout — clean for programmatic chaining.
+func (c *Client) Create(ctx context.Context, opts CreateOptions) (string, error) {
+	args := []string{"create", opts.Title, "--silent", autoCommitFlag}
+	if len(opts.Labels) > 0 {
+		args = append(args, "--labels="+strings.Join(opts.Labels, ","))
+	}
+	if opts.Priority != "" {
+		args = append(args, "--priority="+opts.Priority)
+	}
+	if opts.IssueType != "" {
+		args = append(args, "--type="+opts.IssueType)
+	}
+	out, err := c.run(ctx, nil, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // AddLabel adds a label to an issue (`bd label add <id> <label>`).
 func (c *Client) AddLabel(ctx context.Context, id, label string) error {
 	_, err := c.run(ctx, nil, "label", "add", id, label, autoCommitFlag)

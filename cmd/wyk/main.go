@@ -125,10 +125,17 @@ func buildSource(dir, me string) (tui.Source, error) {
 	}
 }
 
-// runHandoff implements `wyk handoff <id>`: read a runbook from stdin
+// runHandoff implements `wyk handoff`: read a runbook from stdin
 // (or --file), then call pkg/handoff.BounceToHuman against the bd
-// CLI client. Designed for invocation from an agent skill — short,
-// non-interactive, idempotent.
+// CLI client. Two modes:
+//
+//   wyk handoff <id>             hand off an EXISTING issue
+//   wyk handoff -create "title"  FILE a new issue and hand it off
+//                                in one step (the common agent case)
+//
+// The -create mode is the more common agent-side path: the agent
+// has just decided this needs a human, so it both files the bd
+// issue and applies the human label in a single invocation.
 //
 // Exit codes:
 //   0   success (also returned for --help, which is a deliberate request)
@@ -141,6 +148,12 @@ func runHandoff(args []string) int {
 	file := fs.String("file", "", "read the runbook from this file (default: stdin)")
 	allowEmpty := fs.Bool("allow-empty", false,
 		"permit an empty runbook (clears the issue's description). Required when stdin is a TTY.")
+	createTitle := fs.String("create", "",
+		"file a NEW bd issue with this title and hand it off; mutually exclusive with the <id> positional")
+	priority := fs.String("priority", "1",
+		"priority for the newly-created issue (only used with -create; 0-4 or P0-P4)")
+	issueType := fs.String("type", "task",
+		"issue type for the newly-created issue (only used with -create)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -149,11 +162,18 @@ func runHandoff(args []string) int {
 		}
 		return 64
 	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] <issue-id>")
+
+	// Validate the two modes.
+	switch {
+	case *createTitle != "" && fs.NArg() > 0:
+		fmt.Fprintln(os.Stderr, "wyk handoff: -create and a positional <issue-id> are mutually exclusive")
+		return 64
+	case *createTitle == "" && fs.NArg() != 1:
+		fmt.Fprintln(os.Stderr,
+			"usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] <issue-id>\n"+
+				"   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-file <path>]")
 		return 64
 	}
-	id := fs.Arg(0)
 
 	// Reading from a TTY would block waiting for user input — easy to
 	// hit by accident when invoked interactively without a redirect.
@@ -191,21 +211,47 @@ func runHandoff(args []string) int {
 
 	client := beads.NewClient()
 	client.Dir = *dir
-	if err := handoff.BounceToHuman(context.Background(), client, id, runbook); err != nil {
-		switch {
-		case errors.Is(err, beads.ErrBDNotFound):
-			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
-			return 2
-		case errors.Is(err, beads.ErrNoWorkspace):
-			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
-			return 2
-		default:
-			fmt.Fprintln(os.Stderr, "wyk handoff:", err)
-			return 1
+
+	// -create mode: file the issue first, then hand off the resulting ID.
+	var id string
+	if *createTitle != "" {
+		newID, err := client.Create(context.Background(), beads.CreateOptions{
+			Title:     *createTitle,
+			Labels:    []string{"src:agent"}, // BounceToHuman will add `human` on top
+			Priority:  *priority,
+			IssueType: *issueType,
+		})
+		if err != nil {
+			return handoffErrExit(err, "wyk handoff: create:")
 		}
+		id = newID
+		fmt.Printf("created %s — %q\n", id, *createTitle)
+	} else {
+		id = fs.Arg(0)
+	}
+
+	if err := handoff.BounceToHuman(context.Background(), client, id, runbook); err != nil {
+		return handoffErrExit(err, "wyk handoff:")
 	}
 	fmt.Printf("handed %s to human (%d-byte runbook)\n", id, len(runbook))
 	return 0
+}
+
+// handoffErrExit centralises the error → exit-code mapping so both
+// the create step and the BounceToHuman step report the same
+// friendly messages for the two well-known sentinels.
+func handoffErrExit(err error, prefix string) int {
+	switch {
+	case errors.Is(err, beads.ErrBDNotFound):
+		fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
+		return 2
+	case errors.Is(err, beads.ErrNoWorkspace):
+		fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
+		return 2
+	default:
+		fmt.Fprintln(os.Stderr, prefix, err)
+		return 1
+	}
 }
 
 // runProbe fetches the human preset and prints a one-line summary

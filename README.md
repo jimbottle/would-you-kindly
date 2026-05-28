@@ -84,7 +84,16 @@ other errors.
 
 ### Handing a task to a human (agent side)
 
-For an agent that wants to bounce an issue back for human attention:
+For an agent that's just decided "this needs a human" (no bd issue
+yet), file and hand off in one shot:
+
+```bash
+cat runbook.md | wyk handoff -create "Rotate staging DB password" -priority 1
+# created would-you-kindly-63o — "Rotate staging DB password"
+# handed would-you-kindly-63o to human (327-byte runbook)
+```
+
+For an existing issue:
 
 ```bash
 cat runbook.md | wyk handoff wyk-42
@@ -92,7 +101,9 @@ cat runbook.md | wyk handoff wyk-42
 ```
 
 `wyk handoff` tags the issue with the `human` label and replaces its
-description with the runbook from stdin (or `--file <path>`). Same
+description with the runbook from stdin (or `--file <path>`). With
+`-create`, it runs `bd create` first (with `src:agent`) and uses the
+new ID for the handoff. Same
 contract as the TUI's `H` key — see
 [`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
 [`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.

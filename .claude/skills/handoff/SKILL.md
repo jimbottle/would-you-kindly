@@ -48,8 +48,13 @@ Use it when **all** of these are true:
 
 ## How to use it
 
+Two modes, depending on whether the bd issue already exists:
+
+**Common case — you just decided this needs a human, no issue yet.**
+File and hand off in one shot:
+
 ```bash
-cat <<'EOF' | wyk handoff <issue-id>
+cat <<'EOF' | wyk handoff -create "Rotate the staging DB password" -priority 1
 1. Open <where>.
 2. <action>.
 3. <action>.
@@ -58,10 +63,22 @@ cat <<'EOF' | wyk handoff <issue-id>
 EOF
 ```
 
+That single invocation runs `bd create` with `src:agent`, then
+`pkg/handoff.BounceToHuman` to apply the `human` label and write the
+runbook as the description. The output is the new issue ID.
+
+**Alt — the issue already exists** (e.g. you've been working on it
+and only now realised it needs a handoff):
+
+```bash
+cat runbook.md | wyk handoff <existing-issue-id>
+```
+
 `wyk handoff` reads the runbook from stdin (or `--file <path>`). It
 exits 0 on success, 2 if bd is missing or there's no workspace, 1 on
 other errors, and 64 on usage problems (empty runbook without
-`-allow-empty`, TTY stdin, missing issue ID).
+`-allow-empty`, TTY stdin, missing issue ID, both `-create` and a
+positional ID).
 
 ### Writing a good runbook
 
