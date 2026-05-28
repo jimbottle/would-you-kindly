@@ -118,6 +118,36 @@ orphan, and a recoverable orphan can be retried. The CLI prints an
 explicit WARNING with the orphan ID and cleanup commands; agents
 consuming the CLI's exit codes should check stderr too.
 
+## The runbook structure (required)
+
+A handoff is more than a label change — it's a **claim** by the
+agent that the human is genuinely required, and a **spec** of
+what the agent needs back. Both have to be in the description
+text the human reads. Every handoff description carries three
+sections, in this order:
+
+1. **`## Why this needs you (please confirm this is accurate)`** —
+   the agent's self-verification. Names three concrete attempts
+   the agent ran, the boundary it hit, and why no workaround
+   exists. Phrased as a claim the human is invited to push back
+   on. If the agent overclaimed, the human bounces it back with
+   `H` and the issue lands in `wyk inbox` for the agent to try
+   harder.
+2. **`## Steps`** — numbered, concrete, with locations and a
+   verification step. Last step: "Close this issue when complete."
+3. **`## What unblocks me when this returns`** — the concrete
+   artifact the agent expects when the issue closes or bounces
+   back (credential at a known path, URL in a constant, decision
+   recorded in the description). Without this, the next agent
+   that picks up the bounce-back has no idea what changed.
+
+These sections are not aesthetic preference — they are how the
+contract makes the agent's reasoning legible to the human and
+keeps state visible across the round-trip. Skip them and you
+get either (a) a handoff for something the agent could have done
+itself, with no way for the human to push back, or (b) a returned
+issue the next agent can't resume from.
+
 ## Exact bd commands
 
 ### File a human-flagged task (agent)
@@ -125,11 +155,29 @@ consuming the CLI's exit codes should check stderr too.
 ```bash
 bd create "Configure production OAuth client" \
   --description="$(cat <<'EOF'
+## Why this needs you (please confirm this is accurate)
+
+I cannot create the OAuth client myself: the Google Cloud Console
+requires interactive auth with the prod service account, which is
+behind your hardware key. What I tried: `gcloud iam service-accounts
+list` (returned only my dev account), `gcloud auth print-access-token`
+(no prod scope), and checking ~/.config/gcloud (no prod credentials
+cached). No workaround — the console click flow is the only path.
+
+## Steps
+
 1. Sign in to console.cloud.google.com as the prod service account.
 2. Create an OAuth 2.0 client of type "Web application".
 3. Add https://app.example.com/auth/callback to authorized redirect URIs.
 4. Copy the client ID and secret into 1Password at "Prod / OAuth / Google".
 5. Paste the client ID (only) into this issue's notes via `bd note`.
+6. Close this issue when complete.
+
+## What unblocks me when this returns
+
+The client ID in a `bd note` on this issue. With that ID I can
+update the config file at `config/oauth.ts` and verify the auth
+flow. The secret stays in 1Password — I don't need it.
 EOF
 )" \
   --labels=human,src:agent \

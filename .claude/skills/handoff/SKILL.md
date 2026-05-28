@@ -46,20 +46,77 @@ Use it when **all** of these are true:
 - **Internal investigation / reasoning steps.** Handoff is the end
   of your part of the work; not a place to dump partial thinking.
 
+## Before you write the runbook: self-verify and own the claim
+
+A handoff is not just a list of steps — it is a **claim** by you,
+the agent, that the human is genuinely required AND a specification
+of what you need back from them. Both have to be in the runbook in
+words the human can read and push back on. Skip these and you ship
+either (a) a handoff for something you could have done yourself, or
+(b) a handoff that comes back without enough new state for you to
+make progress.
+
+Before you call `wyk handoff`, answer these out loud (literally —
+write the answers into the runbook text):
+
+1. **What did you try?** Name the specific commands, tools, or
+   approaches you ran. "I tried X, X returned Y." If you can't
+   name three concrete attempts, you have not earned the handoff
+   yet — try those first.
+2. **Where exactly did you hit the wall?** Identify the boundary
+   you cannot cross — auth lives in a 1Password vault you can't
+   read, the decision is policy/legal/spend authority you don't
+   have, the action is a physical or third-party-UI click, etc.
+3. **Why can you not work around it?** Briefly: why is there no
+   alternative path that keeps the work on your side?
+4. **What concrete artifact unblocks you when this returns?** A
+   credential dropped at a known path, a URL pasted into a
+   constant, a decision recorded in the description, a config
+   value committed. If the answer is "I'll figure it out from
+   notes," you don't yet know what you're asking for — sharpen it.
+
+The first three live in a "**Why this needs you (please confirm
+this is accurate)**" section at the top of the runbook. The last
+lives in a "**What unblocks me when this returns**" section right
+after the numbered steps. Both are explicit invitations for the
+human to push back: if the agent overclaimed in #1–3, the human
+sends it back with `H` and the issue lands in `wyk inbox` for the
+agent to try harder. If #4 is wrong, the human says so and the
+agent revises.
+
 ## How to use it
 
 Two modes, depending on whether the bd issue already exists:
 
 **Common case — you just decided this needs a human, no issue yet.**
-File and hand off in one shot:
+File and hand off in one shot. Every runbook follows the same
+shape:
 
 ```bash
 cat <<'EOF' | wyk handoff -create "Rotate the staging DB password" -priority 1
+## Why this needs you (please confirm this is accurate)
+
+I cannot do this myself because <specific capability the agent lacks>.
+What I tried: <three concrete attempts and what each returned>.
+If you think I could have done this without you, send it back with
+H and tell me what to try; I'll resume from the inbox.
+
+## Steps
+
 1. Open <where>.
 2. <action>.
 3. <action>.
 4. <verification step>.
 5. Close this issue when complete.
+
+## What unblocks me when this returns
+
+When this comes back closed (or via `H` for partial progress) I
+expect to find: <concrete artifact — e.g. "the new password in
+1Password vault X under key Y", "the URL pasted into
+UNINSTALL_FEEDBACK_URL in src/constants.ts", "a one-line decision
+recorded in this issue's description">. If that artifact is
+missing, the next agent that picks this up cannot resume.
 EOF
 ```
 
@@ -119,6 +176,17 @@ If you've answered no, no, no, no — proceed to handoff.
 ```bash
 # Issue wyk-staging-rotate already exists.
 cat <<'EOF' | wyk handoff wyk-staging-rotate
+## Why this needs you (please confirm this is accurate)
+
+I cannot read or write the 1Password vault — credentials live in
+your hardware-key-protected device. What I tried: `op vault list`
+(no items returned because I'm not authenticated), `op item get
+staging-postgres` (auth error), checking ~/.config/op for any
+existing session token (none present). I have no path to the
+secret without your authenticated session.
+
+## Steps
+
 1. Open 1Password vault 'Engineering / Staging' and locate
    'staging-postgres'.
 2. Generate a new password (40 chars, alphanumeric + symbols).
@@ -126,6 +194,14 @@ cat <<'EOF' | wyk handoff wyk-staging-rotate
 4. Update the 1Password entry with the new value.
 5. Verify staging boots: curl -sS https://wyk-staging.example.com/healthz
 6. Close this issue when complete.
+
+## What unblocks me when this returns
+
+I do not need the new password itself — the rotation is the work.
+When this is closed I will treat the staging credential as rotated
+and move on. If you'd like me to follow up (e.g. update a runbook
+note or expire the OLD credential's audit log entry), drop a
+`bd note <id> "<followup>"` and bounce it back with `H`.
 EOF
 ```
 
@@ -133,11 +209,28 @@ EOF
 
 ```bash
 cat <<'EOF' | wyk handoff release-v0-3-0
+## Why this needs you (please confirm this is accurate)
+
+Publishing the release is a reputational/contractual decision I
+don't have authority for — once the page goes live, it's visible
+to customers and the version pin in our public release notes.
+What I tried: confirming the changelog is accurate (it is — diff
+against main matches), running the test suite green, and pushing
+the tag. The 'Publish release' button click is the only step left.
+
+## Steps
+
 1. Open https://github.com/example/wyk/releases/tag/v0.3.0-rc1
 2. Review the changelog entries; confirm no breaking changes are
    marked as patches.
 3. Click 'Publish release' to promote the RC to GA.
 4. Close this issue once the release page is live.
+
+## What unblocks me when this returns
+
+The release URL transitioning from /tag/v0.3.0-rc1 to /tag/v0.3.0
+is the signal — when this issue closes I will update README's
+install pin to v0.3.0 and announce.
 EOF
 ```
 

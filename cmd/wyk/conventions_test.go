@@ -48,6 +48,45 @@ func TestConventions_StructuredHasFixedSchema(t *testing.T) {
 	}
 }
 
+func TestConventions_RunbookSectionsPinned(t *testing.T) {
+	// Three required sections, in this order. Both the schema
+	// shape and the literal headings matter — agent tooling
+	// parses descriptions for these exact strings.
+	c := conventionsStructured()
+	wantHeadings := []string{
+		"## Why this needs you (please confirm this is accurate)",
+		"## Steps",
+		"## What unblocks me when this returns",
+	}
+	if len(c.RunbookSections) != len(wantHeadings) {
+		t.Fatalf("expected %d runbook sections; got %d", len(wantHeadings), len(c.RunbookSections))
+	}
+	for i, want := range wantHeadings {
+		if c.RunbookSections[i].Heading != want {
+			t.Errorf("section[%d].Heading = %q, want %q", i, c.RunbookSections[i].Heading, want)
+		}
+		if c.RunbookSections[i].Purpose == "" {
+			t.Errorf("section[%d] missing Purpose", i)
+		}
+	}
+}
+
+func TestConventions_ProseBodyDocumentsRequiredSections(t *testing.T) {
+	// The human-readable body MUST mention all three section
+	// headings — that's how a reader learns the convention from
+	// `wyk conventions` alone, without having to dig into the
+	// skill file or CONTRACT.md.
+	for _, want := range []string{
+		"## Why this needs you (please confirm this is accurate)",
+		"## Steps",
+		"## What unblocks me when this returns",
+	} {
+		if !strings.Contains(conventionsBody, want) {
+			t.Errorf("conventionsBody missing required section heading %q", want)
+		}
+	}
+}
+
 func TestConventions_QueriesAlignAcrossForms(t *testing.T) {
 	// Both the prose body and the structured form now interpolate
 	// the same agentInboxQuery / humanTasksQuery constants — pin

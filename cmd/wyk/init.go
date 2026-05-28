@@ -438,7 +438,7 @@ const rememberedConventionKey = "wyk-handoff-convention"
 // rememberedConventionMemory is the memory text wyk init stores
 // via bd remember. Kept as a const so a test can assert the labels
 // are present.
-const rememberedConventionMemory = "wyk handoff convention: tasks for a human carry label=human + label=src:agent. The agent's inbox is `" + agentInboxQuery + "` (run `wyk inbox`). To file or hand off a human task, prefer `wyk handoff <id>` (or `wyk handoff -create \"<title>\"` for file+handoff in one step) over hand-rolling labels via `bd create`. Full text: `wyk conventions`."
+const rememberedConventionMemory = "wyk handoff convention: tasks for a human carry label=human + label=src:agent. The agent's inbox is `" + agentInboxQuery + "` (run `wyk inbox`). To file or hand off a human task, prefer `wyk handoff <id>` (or `wyk handoff -create \"<title>\"` for file+handoff in one step) over hand-rolling labels via `bd create`. A handoff runbook MUST include three sections: '## Why this needs you (please confirm this is accurate)' (agent self-verification — what was tried, where the wall was, why no workaround), '## Steps' (numbered with verification + close), and '## What unblocks me when this returns' (the concrete artifact the agent expects to find when the issue returns). Without those, the human can't push back on overclaim and the next agent can't resume. Full text: `wyk conventions`."
 
 // teachBDConvention writes a single bd memory describing the wyk
 // label convention into repoRoot's bd workspace. The --key makes
