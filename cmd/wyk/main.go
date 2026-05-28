@@ -41,6 +41,8 @@ func main() {
 			os.Exit(runInit(os.Args[2:]))
 		case "hook":
 			os.Exit(runHook(os.Args[2:]))
+		case "inbox":
+			os.Exit(runInbox(os.Args[2:]))
 		}
 	}
 

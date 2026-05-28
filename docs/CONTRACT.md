@@ -37,8 +37,27 @@ Two supporting conventions complete the contract:
 When the human finishes the task, they close the issue (`bd close <id>`,
 or `c` in the TUI). If they cannot complete it and want to bounce it
 back to the agent, they remove the `human` label (`bd label remove
-<id> human`, or `H` in the TUI). The agent then discovers the un-
-labeled issue and resumes.
+<id> human`, or `H` in the TUI).
+
+The agent discovers bounced-back work via **`wyk inbox`**:
+
+```bash
+wyk inbox          # human-readable list across every registered repo
+wyk inbox -json    # structured output for LLM ingestion
+```
+
+`wyk inbox` runs the canonical query
+
+```
+label=src:agent AND NOT label=human AND status!=closed
+```
+
+across every registered workspace. The intent: an issue an agent
+filed (`src:agent`) that no longer carries `human` and isn't closed
+is sitting in the agent's lap — the human acted on it but left
+follow-up work. The agent picks it up, either closes it (work is
+done) or re-applies `human` after another step (back to the human
+for another round). The label flips trace the conversation.
 
 ### The agent's side: `pkg/handoff` and `wyk handoff`
 

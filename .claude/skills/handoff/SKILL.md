@@ -148,6 +148,23 @@ EOF
 **Fix:** Update the callsites yourself. Handoff is not a way to opt
 out of work.
 
+## Picking up bounced-back work
+
+At the start of a session, check whether any of your previous
+handoffs were bounced back for follow-up:
+
+```bash
+wyk inbox -json
+```
+
+The output is a JSON array of issues you (an agent, per `src:agent`)
+filed that the human has un-flagged with `H` — meaning they acted on
+them and want you to do the next step. Re-flag with `human` if you
+finish a chunk and need another round; close when fully done.
+
+This closes the round-trip with `wyk handoff`: handoff sends work
+to the human, inbox picks up what they sent back.
+
 ## Discovering existing handoffs
 
 To see what's currently flagged for a human:

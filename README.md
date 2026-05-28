@@ -97,6 +97,23 @@ contract as the TUI's `H` key — see
 [`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
 [`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.
 
+### Picking up bounced-back work (agent inbox)
+
+The other direction of the handoff loop: when a human presses `H` to
+remove the `human` label, the issue lands in the agent's inbox.
+
+```bash
+wyk inbox          # human-readable list across every registered repo
+wyk inbox -json    # structured output for an LLM to ingest
+# > 1 issue(s) in inbox:
+# >   would-you-kindly-037   P4  Configure production OAuth client
+```
+
+The canonical query is `label=src:agent AND NOT label=human AND
+status!=closed` — things you (the agent) filed that a human has
+touched but left open. Use this at the start of a session to find
+what you need to act on next.
+
 #### Claude Code skill
 
 A project-local Claude Code skill at
