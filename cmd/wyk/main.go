@@ -1,15 +1,18 @@
 // wyk (would-you-kindly) is a terminal UI over the bd (beads) issue
-// tracker. It is designed to surface tasks an agent has handed to a
-// human — see docs/CONTRACT.md for the convention it follows.
+// tracker. It surfaces tasks an agent has handed to a human — see
+// docs/CONTRACT.md for the convention it follows.
 //
 // This is the Phase 1 entry point: read-only TUI over real bd JSON.
-// Until the bd client is wired in, the binary renders a small static
-// fixture so the UI can be iterated on without a live database.
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -19,7 +22,19 @@ import (
 )
 
 func main() {
-	src := staticSource{}
+	dir := flag.String("C", "", "run as if bd had been started in this directory")
+	me := flag.String("me", defaultMe(), "current user, used by the 'mine' preset (default: git user.email or $USER)")
+	probe := flag.Bool("probe", false, "non-TTY: print the human-flagged issues and exit (useful in scripts/CI)")
+	flag.Parse()
+
+	client := beads.NewClient()
+	client.Dir = *dir
+	src := &tui.BDSource{Client: client, Me: *me}
+
+	if *probe {
+		os.Exit(runProbe(src))
+	}
+
 	p := tea.NewProgram(tui.New(src), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
@@ -27,30 +42,40 @@ func main() {
 	}
 }
 
-// staticSource returns a hardcoded fixture so the TUI can render
-// before the bd CLI client lands. Will be replaced in the next
-// commit by a Source that shells out to `bd query --json`.
-type staticSource struct{}
+// runProbe fetches the human preset and prints a one-line summary
+// per issue. Returns the process exit code: 0 on success (any count),
+// 2 if bd is missing or there's no workspace, 1 on other errors.
+func runProbe(src *tui.BDSource) int {
+	issues, err := src.Fetch(context.Background(), filter.PresetHuman)
+	if err != nil {
+		switch {
+		case errors.Is(err, beads.ErrBDNotFound):
+			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
+			return 2
+		case errors.Is(err, beads.ErrNoWorkspace):
+			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
+			return 2
+		default:
+			fmt.Fprintln(os.Stderr, "wyk:", err)
+			return 1
+		}
+	}
+	fmt.Printf("%d issue(s) flagged for human:\n", len(issues))
+	for _, i := range issues {
+		fmt.Printf("  %-24s P%d  %s\n", i.ID, i.Priority, i.Title)
+	}
+	return 0
+}
 
-func (staticSource) Fetch(_ filter.Preset) ([]beads.Issue, error) {
-	return []beads.Issue{
-		{
-			ID: "demo-001", Title: "Rotate the staging database password",
-			Status: "open", Priority: 1, IssueType: "task",
-			Labels: []string{"human", "src:agent"},
-			Description: "1. Open 1Password.\n2. Generate a new password.\n3. Update Heroku config.",
-		},
-		{
-			ID: "demo-002", Title: "Approve the v0.3.0 release on GitHub",
-			Status: "open", Priority: 2, IssueType: "task",
-			Labels: []string{"human", "src:agent"},
-			Description: "Review the release notes and click Publish.",
-		},
-		{
-			ID: "demo-003", Title: "Implement the bd client",
-			Status: "in_progress", Priority: 1, IssueType: "feature",
-			Labels: []string{"src:agent"},
-			Description: "Wire internal/beads to shell out to the bd CLI.",
-		},
-	}, nil
+// defaultMe resolves the current identity the way bd itself does:
+// prefer git's configured user.email, then $USER. Empty string is a
+// fine fallback — the "mine" preset degrades to "all open" when the
+// identity is unknown.
+func defaultMe() string {
+	if out, err := exec.Command("git", "config", "user.email").Output(); err == nil {
+		if s := strings.TrimSpace(string(out)); s != "" {
+			return s
+		}
+	}
+	return os.Getenv("USER")
 }

@@ -7,6 +7,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,6 +22,11 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 )
 
+// refreshInterval is how often the TUI polls bd for changes. A timer
+// keeps things simple and avoids a filesystem-watcher dependency;
+// .beads/issues.jsonl rewrites are cheap to re-query.
+const refreshInterval = 10 * time.Second
+
 // mode tracks the user's interaction context.
 type mode int
 
@@ -29,12 +36,12 @@ const (
 	modeFilter             // / prompt active, typing into textinput
 )
 
-// Source abstracts where issues come from so the skeleton can render
-// fake data and Phase 1 can swap in the real bd CLI without touching
-// the TUI. Implementations must be safe to call from a Bubble Tea
-// command goroutine.
+// Source abstracts where issues come from so a test can plug in
+// fixtures while the binary uses the real bd CLI. Implementations
+// must be safe to call from a Bubble Tea command goroutine and
+// respect context cancellation so the program can exit cleanly.
 type Source interface {
-	Fetch(preset filter.Preset) ([]beads.Issue, error)
+	Fetch(ctx context.Context, preset filter.Preset) ([]beads.Issue, error)
 }
 
 // Model is the Bubble Tea model.
@@ -73,24 +80,32 @@ func New(src Source) Model {
 	}
 }
 
-// Init triggers the first fetch.
+// Init triggers the first fetch and starts the refresh tick.
 func (m Model) Init() tea.Cmd {
-	return m.fetchCmd()
+	return tea.Batch(m.fetchCmd(), tickCmd())
 }
 
 // fetchCmd asks the Source for issues matching the current preset.
+// It uses a fresh background context per call; the bd Client applies
+// its own per-call timeout.
 func (m Model) fetchCmd() tea.Cmd {
 	src, preset := m.src, m.preset
 	return func() tea.Msg {
-		issues, err := src.Fetch(preset)
+		issues, err := src.Fetch(context.Background(), preset)
 		return fetchedMsg{issues: issues, err: err}
 	}
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(refreshInterval, func(_ time.Time) tea.Msg { return tickMsg{} })
 }
 
 type fetchedMsg struct {
 	issues []beads.Issue
 	err    error
 }
+
+type tickMsg struct{}
 
 // Update is the main event router.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -107,6 +122,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recomputeVisible()
 		}
 		return m, nil
+
+	case tickMsg:
+		return m, tea.Batch(m.fetchCmd(), tickCmd())
 
 	case tea.KeyMsg:
 		switch m.mode {
@@ -232,7 +250,7 @@ func (m Model) viewList() string {
 
 	switch {
 	case m.lastErr != nil:
-		b.WriteString(errorStyle.Render("error: " + m.lastErr.Error()))
+		b.WriteString(errorStyle.Render(friendlyError(m.lastErr)))
 		b.WriteString("\n\n")
 		b.WriteString(emptyStyle.Render("press r to retry, q to quit"))
 	case len(m.all) == 0:
@@ -339,6 +357,17 @@ func (m Model) statusBar() string {
 
 func keyHit(msg tea.KeyMsg, b key.Binding) bool {
 	return key.Matches(msg, b)
+}
+
+func friendlyError(err error) string {
+	switch {
+	case errors.Is(err, beads.ErrBDNotFound):
+		return "bd is not installed (or not on PATH). Install from https://github.com/gastownhall/beads"
+	case errors.Is(err, beads.ErrNoWorkspace):
+		return "no beads workspace here. Run `bd init` in your repo root."
+	default:
+		return "error: " + err.Error()
+	}
 }
 
 func max(a, b int) int {
