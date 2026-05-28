@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
@@ -21,9 +22,20 @@ var ErrBDNotFound = errors.New("bd binary not found in PATH")
 // rather than a panic.
 var ErrNoWorkspace = errors.New("no bd workspace in this directory")
 
+// dolt-auto-commit=on is the project-wide policy for every write the
+// client issues. bd defaults to "off", and writes silently revert if
+// it isn't passed — see the saved bd memory.
+const autoCommitFlag = "--dolt-auto-commit=on"
+
+// runner is the function the client uses to invoke bd. The default
+// implementation shells out via os/exec; tests replace it to inspect
+// the constructed argv and return synthetic stdout/error without
+// touching a real bd binary.
+type runner func(ctx context.Context, binary string, args []string, stdin io.Reader) (stdout, stderr []byte, err error)
+
 // Client shells out to the bd CLI and parses its JSON output. It is
-// the single seam between would-you-kindly and bd; later phases that
-// add write actions hang their methods here.
+// the single seam between would-you-kindly and bd; all reads and
+// writes hang their methods here.
 type Client struct {
 	// Binary is the bd executable name or absolute path.
 	// Defaults to "bd" via NewClient.
@@ -35,6 +47,9 @@ type Client struct {
 
 	// Timeout caps a single bd invocation. Zero means no timeout.
 	Timeout time.Duration
+
+	// runner is the exec function. Zero value uses the real binary.
+	runner runner
 }
 
 // NewClient returns a Client with sensible defaults.
@@ -42,9 +57,11 @@ func NewClient() *Client {
 	return &Client{Binary: "bd", Timeout: 10 * time.Second}
 }
 
+// --- read methods --------------------------------------------------
+
 // Query runs `bd query <expr> --json` and unmarshals the result.
 func (c *Client) Query(ctx context.Context, expr string) ([]Issue, error) {
-	out, err := c.run(ctx, "query", expr, "--json")
+	out, err := c.run(ctx, nil, "query", expr, "--json")
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +72,7 @@ func (c *Client) Query(ctx context.Context, expr string) ([]Issue, error) {
 // PresetReady maps to. Use this rather than reproducing the
 // semantics with `bd query`.
 func (c *Client) Ready(ctx context.Context) ([]Issue, error) {
-	out, err := c.run(ctx, "ready", "--json")
+	out, err := c.run(ctx, nil, "ready", "--json")
 	if err != nil {
 		return nil, err
 	}
@@ -65,17 +82,61 @@ func (c *Client) Ready(ctx context.Context) ([]Issue, error) {
 // ListAll runs `bd list --all --json` for the "all" preset, which
 // must include closed and other states the default `list` omits.
 func (c *Client) ListAll(ctx context.Context) ([]Issue, error) {
-	out, err := c.run(ctx, "list", "--all", "--json")
+	out, err := c.run(ctx, nil, "list", "--all", "--json")
 	if err != nil {
 		return nil, err
 	}
 	return parseIssues(out)
 }
 
+// --- write methods -------------------------------------------------
+
+// Close closes the given issue. Every write passes --dolt-auto-commit=on;
+// without it bd's default 'off' policy leaves the change in the working
+// set so a subsequent read still returns the unclosed issue.
+func (c *Client) Close(ctx context.Context, id string) error {
+	_, err := c.run(ctx, nil, "close", id, autoCommitFlag)
+	return err
+}
+
+// AddLabel adds a label to an issue (`bd label add <id> <label>`).
+func (c *Client) AddLabel(ctx context.Context, id, label string) error {
+	_, err := c.run(ctx, nil, "label", "add", id, label, autoCommitFlag)
+	return err
+}
+
+// RemoveLabel removes a label from an issue (`bd label remove <id> <label>`).
+func (c *Client) RemoveLabel(ctx context.Context, id, label string) error {
+	_, err := c.run(ctx, nil, "label", "remove", id, label, autoCommitFlag)
+	return err
+}
+
+// Note appends a note to an issue (`bd note <id> <text>`). The text is
+// passed as a single argv element so multi-word / multi-line content
+// doesn't need shell quoting.
+func (c *Client) Note(ctx context.Context, id, text string) error {
+	_, err := c.run(ctx, nil, "note", id, text, autoCommitFlag)
+	return err
+}
+
+// UpdateDescription replaces an issue's description. The description
+// is piped to bd via stdin (`bd update <id> --stdin`) so callers can
+// pass arbitrarily long runbooks without hitting argv length limits
+// or shell quoting concerns. Empty strings are rejected by bd unless
+// --allow-empty-description is set; we pass it so the agent skill
+// can choose to clear a description if it wants.
+func (c *Client) UpdateDescription(ctx context.Context, id, description string) error {
+	_, err := c.run(ctx, strings.NewReader(description),
+		"update", id, "--stdin", "--allow-empty-description", autoCommitFlag)
+	return err
+}
+
+// --- runner plumbing ----------------------------------------------
+
 // run executes a bd subcommand and returns its stdout, classifying
 // "not found" and "no workspace" errors so callers can render
-// targeted messages.
-func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
+// targeted messages. stdin may be nil for commands that don't need it.
+func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
@@ -87,33 +148,46 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 		full = append([]string{"-C", c.Dir}, args...)
 	}
 
-	cmd := exec.CommandContext(ctx, c.Binary, full...)
+	r := c.runner
+	if r == nil {
+		r = execRunner
+	}
+	stdout, stderr, err := r(ctx, c.Binary, full, stdin)
+	if err == nil {
+		return stdout, nil
+	}
+
+	// exec.ErrNotFound surfaces as *exec.Error with Err == ErrNotFound;
+	// be liberal about how we recognise it.
+	if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "executable file not found") {
+		return nil, ErrBDNotFound
+	}
+	// bd writes its error as JSON on stderr; look at the combined
+	// stderr+stdout to be robust to either channel.
+	errOut := strings.TrimSpace(string(stderr))
+	if errOut == "" {
+		errOut = strings.TrimSpace(string(stdout))
+	}
+	if isNoWorkspaceErr(errOut) {
+		return nil, ErrNoWorkspace
+	}
+	if errOut == "" {
+		errOut = err.Error()
+	}
+	return nil, fmt.Errorf("bd %s: %s", strings.Join(args, " "), errOut)
+}
+
+// execRunner is the default runner: shells out to the real bd binary.
+func execRunner(ctx context.Context, binary string, args []string, stdin io.Reader) (stdoutBytes, stderrBytes []byte, err error) {
+	cmd := exec.CommandContext(ctx, binary, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		// exec.ErrNotFound surfaces as *exec.Error with Err == ErrNotFound;
-		// be liberal about how we recognise it.
-		if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "executable file not found") {
-			return nil, ErrBDNotFound
-		}
-		// bd writes its error as JSON on stderr; look at the combined
-		// stderr+stdout to be robust to either channel.
-		errOut := strings.TrimSpace(stderr.String())
-		if errOut == "" {
-			errOut = strings.TrimSpace(stdout.String())
-		}
-		if isNoWorkspaceErr(errOut) {
-			return nil, ErrNoWorkspace
-		}
-		if errOut == "" {
-			errOut = err.Error()
-		}
-		return nil, fmt.Errorf("bd %s: %s", strings.Join(args, " "), errOut)
+	if stdin != nil {
+		cmd.Stdin = stdin
 	}
-	return stdout.Bytes(), nil
+	err = cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
 }
 
 // isNoWorkspaceErr matches the various ways bd has phrased the
