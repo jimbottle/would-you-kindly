@@ -53,18 +53,77 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+go build ./...                # all packages compile
+go build -o ./bin/wyk ./cmd/wyk   # produce the CLI binary
+go test ./...                 # full suite
+go test -race ./...           # race detector (load-bearing for MultiBDSource)
+go vet ./...
 ```
+
+CI runs vet + build + `test -race` on every PR; keep them green locally
+before pushing.
+
+Most bd-shelling code uses a swappable runner field so tests can
+inject a stub command without needing a real `bd` binary on PATH —
+mimic that pattern (e.g. `beads.Client`'s `runner`, `runScanAndRegister`'s
+`probeBDFunc`) when adding new bd-dispatching code.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+- **`cmd/wyk`** — the CLI binary and subcommand dispatchers. Each
+  subcommand (`init`, `handoff`, `hook`, `inbox`, `stats`, `doctor`,
+  `registry`, `version`) owns its own `flag.FlagSet`; `main.go` switches
+  on `os.Args[1]` before parsing top-level flags. The TUI starts when no
+  subcommand matches.
+- **`internal/beads`** — typed wrapper over the `bd` CLI. `Client` shells
+  out via a swappable runner; methods (`Query`, `List`, `Ready`, `Show`,
+  `Create`, `Close`, `AddLabel`, `RemoveLabel`, `Note`, `UpdateDescription`)
+  parse bd's JSON. Never reads bd's storage directly.
+- **`internal/tui`** — the Bubble Tea Model + the `Source` / `Mutator` /
+  `Detailer` / `MultiSource` interfaces it consumes. `BDSource` wraps one
+  workspace; `MultiBDSource` parallel-fetches across many and unions the
+  result. Per-sub errors travel atomically on `fetchedMsg`.
+- **`internal/registry`** — JSON-backed registry of bd workspaces at
+  `~/.config/wyk/repos.json` (XDG-aware). `Load` / `Save` / `Add` /
+  `Remove` / `RemoveByName` / `Has`. Save writes atomically via
+  temp-file + rename.
+- **`internal/filter`** — preset → bd-query mapping (`all`, `ready`,
+  `human`, `mine`, `blocked`) plus the keymap's preset-cycle order.
+- **`pkg/handoff`** — the `BounceToHuman` helper that filed bd issues use
+  to transition agent → human (adds `human` label, replaces description
+  with the runbook). External programs can call this directly.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+**bd writes must pass `--dolt-auto-commit=on`.** bd defaults to leaving
+writes in Dolt's working set; without the flag, `bd dolt push` later
+can't see them. Every `Client` write method already does this — when
+shelling out from a script/test, do the same.
+
+**The handoff contract.** A task is for a human when it carries the
+`human` label; its description IS the runbook the human follows;
+`src:agent` / `src:human` labels record who filed it. See
+`docs/CONTRACT.md` for the full text. New code that changes who's
+holding the work should obey this contract — adding/removing `human`,
+preserving the source label.
+
+**Source / Mutator / Detailer.** Three small interfaces in
+`internal/tui` segment the TUI's read, write, and lazy-detail needs.
+Implementations can opt into any subset; the model runtime
+type-asserts. `MultiSource` is a fourth (optional) interface that lets
+the model render per-sub fetch failures.
+
+**Commit conventions.** Conventional-Commits prefixes (`feat`, `fix`,
+`docs`, `ci`, `chore`) with a scope (`feat(tui):`, `fix(doctor):`).
+Issues are closed via `Closes: <id>` trailers (one ID per line — the
+auto-close hook deliberately rejects multi-ID lines, see README).
+
+**Trunc is rune-aware** (`internal/tui.trunc`) — width semantics
+throughout the TUI are visual, not byte. Don't reach for byte-level
+slicing for column widths.
+
+**Registry path normalisation.** `internal/registry.normalizePath`
+resolves symlinks before dedup so the same workspace can't register
+twice via macOS's `/var` → `/private/var` shortcut or any user
+shortcut symlink.
