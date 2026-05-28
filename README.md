@@ -31,7 +31,7 @@ You'll need Go 1.26+ (matching `go.mod`) and
 
 ```bash
 # Latest tagged release:
-go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.2.1
+go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.2.2
 
 # Or tip of main:
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest

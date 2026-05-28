@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (nothing yet)
 
+## [0.2.2] — 2026-05-28
+
+Phase 9 (TUI completeness) plus a visual polish round. Closes the
+most common reasons a user would drop out of the TUI to a shell.
+
+### Added
+
+- **`N` quick-add**: file a new issue from the TUI without dropping
+  to `bd create`. Capital `N` opens a title-only prompt; on enter
+  it runs in the cursor's current repo (so a multi-repo view files
+  in the right workspace) and labels the new issue `src:human`.
+  The list refetches so the row appears immediately.
+- **Notes in the detail view**: bd accumulates ad-hoc context via
+  `bd note` (or the TUI's `n`), but the previous detail view only
+  showed the description. A new `Detailer` interface lets the model
+  lazy-fetch the full record (via `bd show`) on enter; notes appear
+  a beat after the rest of the detail view loads. `beads.Issue`
+  gains a `Notes` field; `beads.Client.Show` returns a fully-
+  populated `Issue` (description AND notes — list/query drop one
+  or the other for efficiency).
+
+### Changed
+
+- **Table cell colors flattened to the terminal default**: Repo,
+  Branch, ID, T, P, Updated, and the header row now use the
+  terminal's default foreground (typically white on dark themes)
+  instead of the previous dim grey. Reads at the same brightness
+  as the Title — matches the roborev reference and feels less
+  hierarchical, more like a structured report. Status colors and
+  HUMAN badges are unchanged.
+
 ## [0.2.1] — 2026-05-28
 
 Onboarding fixes after the first v0.2.0 user hit the registry-empty
@@ -348,7 +379,8 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.2
 [0.2.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.1
 [0.2.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.0
 [0.1.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.1.0
