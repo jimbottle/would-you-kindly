@@ -95,6 +95,18 @@ func runDoctor(args []string) int {
 	fmt.Println("         agent inbox: label=src:agent AND NOT label=human AND status!=closed")
 	fmt.Println("         prefer `wyk handoff <id>` over hand-rolling labels; full text in `wyk conventions`")
 
+	// Update status. Reads the cached snapshot (no live fetch)
+	// so doctor stays fast and offline-friendly. PASS when up to
+	// date, WARN when an upgrade is available, no line if there's
+	// no cache yet (first run, before background check populated
+	// it).
+	if nudge := readUpdateNudge(versionString()); nudge != "" {
+		fmt.Println()
+		fmt.Printf("  [%s] wyk update available\n", statusWarn)
+		fmt.Printf("         %s\n", nudge)
+		fmt.Println("         Run `wyk update` to install (or `wyk update -dry-run` to see the install command first).")
+	}
+
 	fmt.Println()
 	switch {
 	case hasFail:

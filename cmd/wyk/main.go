@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
+	"github.com/jimbottle/would-you-kindly/internal/updater"
 	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
 
@@ -54,6 +56,8 @@ func main() {
 			os.Exit(runRegistry(os.Args[2:]))
 		case "conventions":
 			os.Exit(runConventions(os.Args[2:]))
+		case "update":
+			os.Exit(runUpdate(os.Args[2:]))
 		case "version", "--version", "-v":
 			fmt.Println(versionString())
 			os.Exit(0)
@@ -83,11 +87,34 @@ func main() {
 		os.Exit(runProbe(src))
 	}
 
-	p := tea.NewProgram(tui.NewWithHint(src, hint), tea.WithAltScreen())
+	model := tui.NewWithHint(src, hint)
+	// Read the cached update nudge once at startup so the banner
+	// can render immediately if there's already a snapshot on
+	// disk. The background goroutine below refreshes it for the
+	// next run.
+	if nudge := readUpdateNudge(versionString()); nudge != "" {
+		model = model.WithUpdateNudge(nudge)
+	}
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	// Kick a best-effort live check in the background. We don't
+	// post the result back into the running TUI — the snapshot
+	// lands on disk and the NEXT wyk invocation reads it. This
+	// keeps the TUI hot path free of network I/O entirely.
+	go backgroundUpdateCheck()
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
 		os.Exit(1)
 	}
+}
+
+// backgroundUpdateCheck refreshes the update-check cache without
+// blocking the TUI. Runs in a goroutine launched from main. All
+// failures are swallowed silently — the cache stays stale and the
+// next run still works.
+func backgroundUpdateCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, _ = updater.LatestCached(ctx, nil)
 }
 
 // buildSource picks single-repo vs multi-repo wiring based on the
@@ -395,6 +422,7 @@ Subcommands:
   stats        aggregate handoff metrics across registered repos
   registry     list / remove / prune registered workspaces
   conventions  print the agent-facing label convention (–json for structured)
+  update       check for and install a newer wyk release
   version      print the version string
   hook         internal: invoked by the installed post-commit hook
 

@@ -1307,3 +1307,27 @@ func TestTitleTruncation_WideTerminalShowsFullTitle(t *testing.T) {
 		t.Errorf("wide pane should show the full title; got:\n%s", out)
 	}
 }
+
+func TestUpdateNudge_RenderedAboveStatusBar(t *testing.T) {
+	// When WithUpdateNudge is set, the model renders the nudge
+	// line above the status bar. Pin both that it appears AND
+	// that it does NOT appear when unset, so a future banner
+	// shuffle can't accidentally hide it.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	nudge := "↑ wyk v0.99.0 available — run `wyk update`"
+	m = m.WithUpdateNudge(nudge)
+	out := m.View()
+	if !strings.Contains(out, nudge) {
+		t.Errorf("update nudge should render in the view; got:\n%s", out)
+	}
+}
+
+func TestUpdateNudge_EmptyByDefault(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	out := m.View()
+	if strings.Contains(out, "wyk update") || strings.Contains(out, "available — run") {
+		t.Errorf("update nudge should NOT render when unset; got:\n%s", out)
+	}
+}

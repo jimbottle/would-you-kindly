@@ -173,6 +173,13 @@ type Model struct {
 	// round-trip. Cleared on fetchedMsg arrival.
 	refreshing bool
 
+	// updateNudge is a one-line "↑ wyk vX.Y.Z available — run
+	// `wyk update`" message read from the updater cache at start-
+	// up. Rendered above the help bar when non-empty so the user
+	// sees the upgrade path inline; the cache refresh happens out
+	// of band in main's background goroutine.
+	updateNudge string
+
 	// scroll is the row index at the top of the rendered window —
 	// used to keep the column header visible when m.visible has
 	// more rows than the terminal can fit. Without it, the terminal
@@ -213,6 +220,15 @@ func New(src Source) Model {
 func NewWithHint(src Source, hint string) Model {
 	m := New(src)
 	m.setupHint = hint
+	return m
+}
+
+// WithUpdateNudge returns a copy of the model with the update nudge
+// string set. main reads the updater cache at startup and feeds
+// the result here when there's a newer release available; the
+// model renders it as a one-line banner above the help bar.
+func (m Model) WithUpdateNudge(nudge string) Model {
+	m.updateNudge = nudge
 	return m
 }
 
@@ -1096,6 +1112,16 @@ func (m Model) viewList() string {
 		b.WriteString(statusBannerStyle.Render(m.status))
 	}
 
+	// update nudge: read from the updater cache at startup, shown
+	// just above the status bar so the upgrade path is in view
+	// without competing with the more dynamic status/fetch-error
+	// lines above. Same amber-italic styling as setupHint — these
+	// are both "thing you should do" prompts.
+	if m.updateNudge != "" {
+		b.WriteString("\n")
+		b.WriteString(setupHintStyle.Render(m.updateNudge))
+	}
+
 	b.WriteString("\n")
 	b.WriteString(m.statusBar())
 	return b.String()
@@ -1526,6 +1552,9 @@ func (m Model) chromeExtra() int {
 	}
 	if m.status != "" {
 		n++ // transient write-feedback banner
+	}
+	if m.updateNudge != "" {
+		n++ // update-available nudge
 	}
 	switch m.mode {
 	case modeFilter, modeNote, modeQuickAdd:
