@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enumeration (the enumeration omits `deferred`); softened the
   `src:agent`/`src:human` invariant to acknowledge legacy issues with
   no source label.
+- **TUI duplicate tick chains**: a generation counter on `tickMsg`
+  retires stale ticks, so rapid recovery from a terminal-error state
+  (refresh within 10s) no longer spawns concurrent tick chains.
+- **TUI loading state**: `switchPreset` and manual refresh now set a
+  `loading` flag the view renders as `loading…`, distinguishing an
+  in-flight fetch from a genuinely empty result.
 
 ### Out of scope (deferred to Phase 2+)
 

@@ -59,6 +59,13 @@ type Model struct {
 	height   int
 	lastErr  error
 	lastSync time.Time
+	loading  bool // true between a fetch dispatch and its result
+
+	// tickGen identifies the currently-live tick chain. Each suspend
+	// or restart bumps it; stale ticks (e.g. one scheduled before a
+	// refresh restart) carry an older gen and are dropped, preventing
+	// duplicate tick chains after a terminal-error → recovery cycle.
+	tickGen int
 
 	input textinput.Model
 }
@@ -82,7 +89,9 @@ func New(src Source) Model {
 
 // Init triggers the first fetch and starts the refresh tick.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchCmd(), tickCmd())
+	// gen 0 is implicit on the zero-valued Model; the matching tick
+	// message carries gen 0 too, so the chain starts coherently.
+	return tea.Batch(m.fetchCmd(), tickCmd(m.tickGen))
 }
 
 // fetchCmd asks the Source for issues matching the current preset.
@@ -98,8 +107,8 @@ func (m Model) fetchCmd() tea.Cmd {
 	}
 }
 
-func tickCmd() tea.Cmd {
-	return tea.Tick(refreshInterval, func(_ time.Time) tea.Msg { return tickMsg{} })
+func tickCmd(gen int) tea.Cmd {
+	return tea.Tick(refreshInterval, func(_ time.Time) tea.Msg { return tickMsg{gen: gen} })
 }
 
 type fetchedMsg struct {
@@ -108,7 +117,7 @@ type fetchedMsg struct {
 	err    error
 }
 
-type tickMsg struct{}
+type tickMsg struct{ gen int }
 
 // isTerminalErr reports whether an error is one the auto-refresh tick
 // should give up on. These don't self-heal mid-session; the user must
@@ -131,6 +140,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.preset != m.preset {
 			return m, nil
 		}
+		m.loading = false
 		m.lastSync = time.Now()
 		m.lastErr = msg.err
 		if msg.err == nil {
@@ -140,13 +150,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		// Suspend the auto-refresh while we're in a terminal error
-		// state (no bd / no workspace). The user must press `r` to
-		// retry; on success the refresh loop restarts.
-		if isTerminalErr(m.lastErr) {
+		// Drop ticks from a chain we've already replaced — this
+		// happens when a manual refresh restarts the tick before
+		// an earlier one has had a chance to fire and self-suspend.
+		if msg.gen != m.tickGen {
 			return m, nil
 		}
-		return m, tea.Batch(m.fetchCmd(), tickCmd())
+		// Suspend the auto-refresh while we're in a terminal error
+		// state (no bd / no workspace). Bump the generation so any
+		// later refresh starts a fresh chain that supersedes this one.
+		if isTerminalErr(m.lastErr) {
+			m.tickGen++
+			return m, nil
+		}
+		return m, tea.Batch(m.fetchCmd(), tickCmd(m.tickGen))
 
 	case tea.KeyMsg:
 		switch m.mode {
@@ -201,10 +218,14 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switchPreset(filter.NextPreset(m.preset))
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
-		// suspended after a terminal error.
+		// suspended after a terminal error. Bumping tickGen retires
+		// any older tick that's still in-flight, so the new chain is
+		// the only one alive.
+		m.loading = true
 		cmds := []tea.Cmd{m.fetchCmd()}
 		if isTerminalErr(m.lastErr) {
-			cmds = append(cmds, tickCmd())
+			m.tickGen++
+			cmds = append(cmds, tickCmd(m.tickGen))
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -213,13 +234,15 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // switchPreset clears the visible rows before dispatching the new
 // fetch so the UI doesn't flash the old preset's data under the new
-// header. The cursor is also reset, and any pending fuzzy filter
-// stays (it re-applies once the new data arrives).
+// header. The loading flag distinguishes the in-flight state from a
+// genuinely empty result. Any pending fuzzy filter stays — it re-
+// applies once the new data arrives.
 func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
 	m.preset = p
 	m.cursor = 0
 	m.all = nil
 	m.visible = nil
+	m.loading = true
 	return m, m.fetchCmd()
 }
 
@@ -303,6 +326,8 @@ func (m Model) viewList() string {
 		b.WriteString(errorStyle.Render(friendlyError(m.lastErr)))
 		b.WriteString("\n\n")
 		b.WriteString(emptyStyle.Render("press r to retry, q to quit"))
+	case m.loading:
+		b.WriteString(emptyStyle.Render("loading…"))
 	case len(m.all) == 0:
 		b.WriteString(emptyStyle.Render("no issues — bd returned an empty list"))
 	case len(m.visible) == 0:

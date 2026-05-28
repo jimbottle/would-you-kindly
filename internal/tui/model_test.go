@@ -134,8 +134,80 @@ func TestTickSuspendsOnTerminalError(t *testing.T) {
 	m := New(src)
 	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
 	m = model.(Model)
-	_, cmd := m.Update(tickMsg{})
+	_, cmd := m.Update(tickMsg{gen: m.tickGen})
 	if cmd != nil {
 		t.Error("tick should not re-arm while error state is terminal")
+	}
+}
+
+func TestCtrlCQuitsFromFilterPrompt(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	// open the / prompt
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	if m.mode != modeFilter {
+		t.Fatalf("setup: expected modeFilter, got %v", m.mode)
+	}
+
+	// ctrl+c at the prompt must produce tea.Quit, not be absorbed by textinput.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c in / prompt should return a command")
+	}
+	if got := cmd(); got != tea.Quit() {
+		t.Errorf("ctrl+c in / prompt should produce tea.Quit, got %T", got)
+	}
+}
+
+func TestSwitchPresetClearsRowsAndShowsLoading(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = model.(Model)
+
+	if len(m.all) != 0 || len(m.visible) != 0 {
+		t.Errorf("switchPreset should clear all/visible; got all=%d visible=%d",
+			len(m.all), len(m.visible))
+	}
+	if m.cursor != 0 {
+		t.Errorf("switchPreset should reset cursor; got %d", m.cursor)
+	}
+	if !m.loading {
+		t.Error("switchPreset should set loading=true")
+	}
+	if !strings.Contains(m.View(), "loading…") {
+		t.Error("view should render the loading indicator during a preset switch")
+	}
+}
+
+func TestRefreshAfterTerminalErrorRestartsTickAndRetiresOldChain(t *testing.T) {
+	src := &stubSource{err: beads.ErrBDNotFound}
+	m := New(src)
+	// land a terminal error and let the tick handler retire the current chain.
+	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
+	m = model.(Model)
+	model, _ = m.Update(tickMsg{gen: m.tickGen})
+	m = model.(Model)
+	preGen := m.tickGen
+
+	// manual refresh from the error state: tickGen bumps and a new tick is scheduled.
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = model.(Model)
+	if m.tickGen <= preGen {
+		t.Errorf("refresh from terminal error should bump tickGen (was %d, now %d)",
+			preGen, m.tickGen)
+	}
+	if cmd == nil {
+		t.Error("refresh from terminal error should produce a batched command")
+	}
+
+	// a tick from the OLD generation must be dropped — it would otherwise
+	// re-arm and yield duplicate tick chains forever.
+	_, staleCmd := m.Update(tickMsg{gen: preGen})
+	if staleCmd != nil {
+		t.Error("stale-gen tick should be dropped, not re-arm a chain")
 	}
 }
