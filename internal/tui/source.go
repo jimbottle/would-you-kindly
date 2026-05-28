@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -293,6 +294,33 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 	}
 	wg.Wait()
 
+	// Cross-workspace leak guard. Precompute the registered names
+	// sorted longest-first so we can do longest-prefix-match on
+	// each issue ID. A naive "ID starts with sub.name + '-'" check
+	// misroutes when registrations have nested prefixes — e.g.
+	// subs `foo` and `foo-bar`: an issue `foo-bar-1` matches both
+	// `foo-` and `foo-bar-`, and the shorter sub would mis-claim
+	// it. Resolving to the LONGEST matching prefix and requiring
+	// it to equal sub.name catches both classes of leak (foreign-
+	// prefix and nested-prefix collision) in one rule.
+	namesByLen := make([]string, len(m.subs))
+	for i, sub := range m.subs {
+		namesByLen[i] = sub.name
+	}
+	sort.Slice(namesByLen, func(i, j int) bool { return len(namesByLen[i]) > len(namesByLen[j]) })
+
+	// longestPrefixMatch returns the longest registered sub name N
+	// such that id begins with N + "-". Empty string means no
+	// registered sub claims this ID.
+	longestPrefixMatch := func(id string) string {
+		for _, n := range namesByLen {
+			if strings.HasPrefix(id, n+"-") {
+				return n
+			}
+		}
+		return ""
+	}
+
 	var all []beads.Issue
 	var firstErr error
 	var fetchErrs []FetchError
@@ -305,24 +333,23 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 			}
 			continue
 		}
-		// Cross-workspace leak guard. Drop any issue whose ID
-		// prefix doesn't match the registered Name — bd has been
-		// observed serving foreign workspace data when a sub's
-		// `.beads/` is broken (e.g. a dead jsonl-only export
-		// alongside other healthy workspaces, bd's daemon then
-		// returns whichever workspace is currently warm). Without
-		// this guard, those foreign rows render attributed to the
-		// wrong repo, hiding a P0 bug as a duplicate-looking row.
+		// Drop any issue whose longest-prefix-match is not THIS
+		// sub. bd has been observed serving foreign workspace data
+		// when a sub's `.beads/` is broken (e.g. a dead jsonl-only
+		// export alongside other healthy workspaces, bd's daemon
+		// then returns whichever workspace is currently warm).
+		// Without this guard, those foreign rows render attributed
+		// to the wrong repo, hiding a P0 bug as a duplicate-looking
+		// row.
 		//
 		// False positive: a workspace where the user manually set
 		// Name (in repos.json) to something other than the bd
 		// `issue-prefix`. Surfaced as a fetch error pointing them
 		// at the registry; they fix by editing the entry.
-		expect := sub.name + "-"
 		var clean []beads.Issue
 		var foreign int
 		for j := range r.issues {
-			if !strings.HasPrefix(r.issues[j].ID, expect) {
+			if longestPrefixMatch(r.issues[j].ID) != sub.name {
 				foreign++
 				continue
 			}
@@ -333,7 +360,7 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 		if foreign > 0 {
 			fetchErrs = append(fetchErrs, FetchError{
 				Repo: sub.name,
-				Err:  fmt.Errorf("%d issue(s) had foreign ID prefix (expected %q*) — bd may be serving the wrong workspace; check `wyk doctor` and ~/.config/wyk/repos.json", foreign, expect),
+				Err:  fmt.Errorf("%d issue(s) had foreign or nested-prefix ID (expected %q*) — bd may be serving the wrong workspace; check `wyk doctor` and ~/.config/wyk/repos.json", foreign, sub.name+"-"),
 			})
 		}
 		all = append(all, clean...)

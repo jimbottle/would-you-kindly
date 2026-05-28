@@ -7,12 +7,21 @@ import (
 	"os"
 )
 
+// agentInboxQuery and humanTasksQuery are the canonical bd query
+// expressions for the two convention-driven views. Kept as
+// constants so the prose form (conventionsBody) and the structured
+// form (conventionsStructured) interpolate the SAME string —
+// previously the two forms duplicated the literal query text and
+// could silently drift.
+const agentInboxQuery = "label=src:agent AND NOT label=human AND status!=closed"
+const humanTasksQuery = "label=human AND status!=closed"
+
 // conventionsBody is the agent-ready tip printed by `wyk conventions`.
-// Kept as a package-level const so doctor.go (the Conventions stanza)
+// Kept as a package-level value so doctor.go (the Conventions stanza)
 // can reference the same canonical text — drift between what doctor
 // says and what `conventions` prints would itself be a discoverability
 // failure. Surface from one place.
-const conventionsBody = `bd / wyk task labels
+var conventionsBody = `bd / wyk task labels
 ====================
 
 wyk filters task issues by two labels. Apply them when filing with bd create:
@@ -24,7 +33,7 @@ wyk filters task issues by two labels. Apply them when filing with bd create:
 The back-and-forth handshake: a human REMOVES the 'human' label when they're
 done. The agent's inbox is then anything matching:
 
-    label=src:agent AND NOT label=human AND status!=closed
+    ` + agentInboxQuery + `
 
 …surfaced by 'wyk inbox' (-json for structured ingest).
 
@@ -54,8 +63,8 @@ type conventionsJSON struct {
 		SrcHuman string `json:"src:human"`
 	} `json:"labels"`
 	Queries struct {
-		HumanTasks  string `json:"human_tasks"`
-		AgentInbox  string `json:"agent_inbox"`
+		HumanTasks string `json:"human_tasks"`
+		AgentInbox string `json:"agent_inbox"`
 	} `json:"queries"`
 	PreferredCommand string `json:"preferred_command"`
 	BdCreateExample  string `json:"bd_create_example"`
@@ -67,8 +76,8 @@ func conventionsStructured() conventionsJSON {
 	c.Labels.Human = "task is for a human to act on; surfaced in TUI 'h' view and 'wyk --probe'"
 	c.Labels.SrcAgent = "filed by an agent (provenance); persists across the back-and-forth"
 	c.Labels.SrcHuman = "filed by a human (provenance); applied by the TUI's N quick-add and wyk handoff -create when stdin is absent"
-	c.Queries.HumanTasks = "label=human"
-	c.Queries.AgentInbox = "label=src:agent AND NOT label=human AND status!=closed"
+	c.Queries.HumanTasks = humanTasksQuery
+	c.Queries.AgentInbox = agentInboxQuery
 	c.PreferredCommand = "wyk handoff <id>   (or 'wyk handoff -create \"<title>\"' to file + hand off in one step)"
 	c.BdCreateExample = `bd create --priority=1 --type=task --add-label="human" --add-label="src:agent" --title="<imperative>" --description="<numbered runbook steps>"`
 	c.ContractURL = "https://github.com/jimbottle/would-you-kindly/blob/main/docs/CONTRACT.md"

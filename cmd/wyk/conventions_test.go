@@ -48,6 +48,23 @@ func TestConventions_StructuredHasFixedSchema(t *testing.T) {
 	}
 }
 
+func TestConventions_QueriesAlignAcrossForms(t *testing.T) {
+	// Both the prose body and the structured form now interpolate
+	// the same agentInboxQuery / humanTasksQuery constants — pin
+	// that they're literally the same string in both forms so a
+	// future edit can't silently drift one side.
+	c := conventionsStructured()
+	if c.Queries.AgentInbox != agentInboxQuery {
+		t.Errorf("structured agent_inbox = %q, want shared const %q", c.Queries.AgentInbox, agentInboxQuery)
+	}
+	if c.Queries.HumanTasks != humanTasksQuery {
+		t.Errorf("structured human_tasks = %q, want shared const %q", c.Queries.HumanTasks, humanTasksQuery)
+	}
+	if !strings.Contains(conventionsBody, agentInboxQuery) {
+		t.Errorf("prose form should embed the canonical agentInboxQuery (%q); got:\n%s", agentInboxQuery, conventionsBody)
+	}
+}
+
 func TestConventions_RunDefaultIsText(t *testing.T) {
 	if code := runConventions(nil); code != 0 {
 		t.Errorf("runConventions(nil) = %d, want 0", code)

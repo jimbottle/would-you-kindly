@@ -19,12 +19,12 @@ import (
 // records the writes routed to it so the multi-source test can
 // assert routing.
 type fakeRepoSource struct {
-	issues    []beads.Issue
-	fetchErr  error
-	closed    []string
-	added     []labelOp
-	removed   []labelOp
-	notes     []labelOp
+	issues   []beads.Issue
+	fetchErr error
+	closed   []string
+	added    []labelOp
+	removed  []labelOp
+	notes    []labelOp
 }
 
 func (f *fakeRepoSource) Fetch(_ context.Context, _ filter.Preset) ([]beads.Issue, error) {
@@ -374,8 +374,8 @@ func TestMultiBDSource_DropsForeignIssueIDs(t *testing.T) {
 	if errs[0].Repo != "leaky" {
 		t.Errorf("fetch error repo = %q, want %q", errs[0].Repo, "leaky")
 	}
-	if !strings.Contains(errs[0].Err.Error(), "foreign ID prefix") {
-		t.Errorf("fetch error message = %q, want it to mention 'foreign ID prefix'", errs[0].Err.Error())
+	if !strings.Contains(errs[0].Err.Error(), "foreign or nested-prefix ID") {
+		t.Errorf("fetch error message = %q, want it to mention 'foreign or nested-prefix ID'", errs[0].Err.Error())
 	}
 	if !strings.Contains(errs[0].Err.Error(), "\"leaky-\"") {
 		t.Errorf("fetch error message should name the expected prefix %q; got %q", "leaky-", errs[0].Err.Error())
@@ -388,6 +388,68 @@ func idsOf(issues []beads.Issue) []string {
 		out[i] = x.ID
 	}
 	return out
+}
+
+func TestMultiBDSource_NestedPrefixCollision(t *testing.T) {
+	// Regression: when two registered subs have nested prefixes
+	// (e.g. `foo` and `foo-bar`), the naive HasPrefix-on-shorter
+	// check accepted `foo-bar-1` under the shorter `foo` sub, so
+	// a `foo`-sub leak that included `foo-bar`'s data would
+	// mis-attribute rather than be rejected. Longest-prefix-match
+	// fixes this — `foo-bar-1` resolves to `foo-bar`, not `foo`.
+	short := &fakeRepoSource{issues: []beads.Issue{
+		{ID: "foo-1", Title: "real foo row"},
+		{ID: "foo-bar-1", Title: "actually belongs to foo-bar"},
+	}}
+	long := &fakeRepoSource{issues: []beads.Issue{
+		{ID: "foo-bar-9", Title: "real foo-bar row"},
+	}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"foo", "main", short},
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"foo-bar", "main", long},
+	)
+	issues, errs, err := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err != nil {
+		t.Fatalf("FetchWithSubErrors: %v", err)
+	}
+	// foo-1 (legit foo) + foo-bar-9 (legit foo-bar) survive.
+	// foo-bar-1 returned by `foo` sub gets rejected because its
+	// longest match is `foo-bar`, not `foo`.
+	if len(issues) != 2 {
+		t.Errorf("expected 2 surviving issues; got %d (%+v)", len(issues), idsOf(issues))
+	}
+	for _, i := range issues {
+		switch i.ID {
+		case "foo-1":
+			if i.Repo != "foo" {
+				t.Errorf("foo-1 attributed to %q, want foo", i.Repo)
+			}
+		case "foo-bar-9":
+			if i.Repo != "foo-bar" {
+				t.Errorf("foo-bar-9 attributed to %q, want foo-bar", i.Repo)
+			}
+		case "foo-bar-1":
+			t.Errorf("foo-bar-1 should have been rejected as nested-prefix leak (returned by `foo` sub, longest match is `foo-bar`)")
+		}
+	}
+	// The short sub should have a FetchError for the rejected row.
+	var sawShortErr bool
+	for _, e := range errs {
+		if e.Repo == "foo" {
+			sawShortErr = true
+		}
+	}
+	if !sawShortErr {
+		t.Errorf("expected a FetchError for sub `foo` (nested-prefix leak); got %+v", errs)
+	}
 }
 
 func TestMultiBDSource_SatisfiesMultiSource(t *testing.T) {

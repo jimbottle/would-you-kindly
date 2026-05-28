@@ -157,7 +157,9 @@ func runInit(args []string) int {
 		// bd remember failure is WARNed to stderr but doesn't gate
 		// the rest of init (the hook install is the load-bearing
 		// part).
-		if !*dryRun {
+		if *dryRun {
+			fmt.Println("wyk init: would store handoff convention via `bd remember` (visible to agents via `bd prime`)")
+		} else {
 			if err := teachBDConvention(repoRoot); err != nil {
 				fmt.Fprintln(os.Stderr, "wyk init: bd remember (handoff convention) failed:", err)
 				fmt.Fprintln(os.Stderr, "wyk init: continuing — this enrichment is best-effort, the post-commit hook is the load-bearing install step")
@@ -366,7 +368,6 @@ func registerRepo(repoRoot string) int {
 	return 0
 }
 
-
 // findGitPaths returns (gitDir, repoRoot) in a single `git rev-parse`
 // invocation. Both paths are absolute. Returns an error if cwd is
 // not inside a git repository.
@@ -403,19 +404,18 @@ func findGitPaths() (gitDir, repoRoot string, err error) {
 	return gitDir, repoRoot, nil
 }
 
-// teachBDConvention writes a single bd memory describing the wyk
-// label convention into repoRoot's bd workspace. The --key makes
-// the call idempotent — repeated `wyk init` runs update in place
-// rather than duplicating. bd prime surfaces memories at session
-// start, so this is the channel by which the convention reaches
-// agents working in repos wyk init has touched.
-//
-// We pass --dolt-auto-commit=on per the project's bd write
-// convention (otherwise the memory lives in Dolt's working set
-// and won't survive `bd dolt push`).
-func teachBDConvention(repoRoot string) error {
-	const key = "wyk-handoff-convention"
-	const memory = "wyk handoff convention: tasks for a human carry label=human + label=src:agent. The agent's inbox is `label=src:agent AND NOT label=human AND status!=closed` (run `wyk inbox`). To file or hand off a human task, prefer `wyk handoff <id>` (or `wyk handoff -create \"<title>\"` for file+handoff in one step) over hand-rolling labels via `bd create`. Full text: `wyk conventions`."
+// bdRememberRunner is the test seam for teachBDConvention's bd
+// shell-out. Production points at runBDRemember (real exec); tests
+// swap in a stub so they can assert the args/keys without needing
+// bd on PATH or a real workspace. Mirrors the probeBDFunc pattern
+// elsewhere in this file.
+var bdRememberRunner = runBDRemember
+
+// runBDRemember invokes `bd remember --key <key> --dolt-auto-commit=on <memory>`
+// in repoRoot. Trims stderr into the returned error message when
+// non-empty so the user sees bd's specific complaint rather than the
+// generic "exit status 1".
+func runBDRemember(repoRoot, key, memory string) error {
 	cmd := exec.Command("bd", "remember", "--key", key, "--dolt-auto-commit=on", memory)
 	cmd.Dir = repoRoot
 	var stderr bytes.Buffer
@@ -428,6 +428,30 @@ func teachBDConvention(repoRoot string) error {
 		return fmt.Errorf("%s", msg)
 	}
 	return nil
+}
+
+// rememberedConventionKey is the bd-remember --key for wyk's
+// convention memory. Exposed as a const so tests can assert it
+// without duplicating the magic string.
+const rememberedConventionKey = "wyk-handoff-convention"
+
+// rememberedConventionMemory is the memory text wyk init stores
+// via bd remember. Kept as a const so a test can assert the labels
+// are present.
+const rememberedConventionMemory = "wyk handoff convention: tasks for a human carry label=human + label=src:agent. The agent's inbox is `" + agentInboxQuery + "` (run `wyk inbox`). To file or hand off a human task, prefer `wyk handoff <id>` (or `wyk handoff -create \"<title>\"` for file+handoff in one step) over hand-rolling labels via `bd create`. Full text: `wyk conventions`."
+
+// teachBDConvention writes a single bd memory describing the wyk
+// label convention into repoRoot's bd workspace. The --key makes
+// the call idempotent — repeated `wyk init` runs update in place
+// rather than duplicating. bd prime surfaces memories at session
+// start, so this is the channel by which the convention reaches
+// agents working in repos wyk init has touched.
+//
+// We pass --dolt-auto-commit=on per the project's bd write
+// convention (otherwise the memory lives in Dolt's working set
+// and won't survive `bd dolt push`).
+func teachBDConvention(repoRoot string) error {
+	return bdRememberRunner(repoRoot, rememberedConventionKey, rememberedConventionMemory)
 }
 
 // resolveGitHookPath returns the absolute path to <hook> inside
