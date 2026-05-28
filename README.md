@@ -30,6 +30,10 @@ You'll need Go 1.26+ (matching `go.mod`) and
 [bd](https://github.com/gastownhall/beads) on your `PATH`.
 
 ```bash
+# Latest tagged release:
+go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.1.0
+
+# Or tip of main:
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest
 ```
 

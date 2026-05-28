@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(nothing yet — open Phase 4 work lives here once filed)
+
+## [0.1.0] — 2026-05-28
+
+First tagged release. Builds out the read path (Phase 1 TUI), the
+write path (Phase 2 client + TUI + handoff CLI + post-commit hook),
+and the agent-facing skill (Phase 3.A) on top of a single small
+human-in-the-loop convention pinned in `docs/CONTRACT.md`. Polished
+into a usable terminal product (Phase 3.B). Reviewed and iterated
+through multiple roborev rounds.
+
 ### Added
 
 - **Human-in-the-loop contract** (`docs/CONTRACT.md`): tasks carry the
@@ -210,4 +221,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/commits/main
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.1.0
