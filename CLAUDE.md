@@ -127,3 +127,24 @@ slicing for column widths.
 resolves symlinks before dedup so the same workspace can't register
 twice via macOS's `/var` → `/private/var` shortcut or any user
 shortcut symlink.
+
+**Feedback on wyk's experience IS wyk product feedback.** When the
+user comments on the TUI, the CLI, the handoff flow, or any wyk
+surface ("the headers don't show", "the W column is unclear", "this
+should be deferred not held open"), the right first move is to file
+a bd issue capturing the improvement, then handle the immediate
+symptom. Don't stop at patching the one-off case — every piece of
+friction the user reports has either revealed a real product gap or
+a missing piece of convention documentation, and both deserve
+durable fixes. The implicit rule the user follows: the agent's
+behaviour against wyk is data about wyk itself.
+
+**Status lifecycle.** When filing or updating bd issues from this
+project, follow the lifecycle documented in `docs/CONTRACT.md` —
+default to `open`, reach for `deferred` when the blocker is "the
+rest of the project hasn't caught up yet", `blocked` (with
+`--add-dependency`) when the blocker is another tracked issue, and
+the `human` label + handoff when a human is genuinely required.
+Holding-open a task that depends on an unstable subsystem clutters
+the ready view and creates false signals about what someone could
+start now.

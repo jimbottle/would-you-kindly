@@ -48,6 +48,48 @@ func TestConventions_StructuredHasFixedSchema(t *testing.T) {
 	}
 }
 
+func TestConventions_StatusGuidancePinned(t *testing.T) {
+	// Lifecycle order matters — agents may key on the index.
+	// Pin both the status names and that deferred carries the
+	// "WIP subsystem" guidance that triggered this contract bit.
+	c := conventionsStructured()
+	wantOrder := []string{"open", "in_progress", "blocked", "deferred", "closed"}
+	if len(c.Statuses) != len(wantOrder) {
+		t.Fatalf("expected %d statuses; got %d", len(wantOrder), len(c.Statuses))
+	}
+	for i, want := range wantOrder {
+		if c.Statuses[i].Status != want {
+			t.Errorf("statuses[%d].Status = %q, want %q", i, c.Statuses[i].Status, want)
+		}
+		if c.Statuses[i].When == "" {
+			t.Errorf("statuses[%d] missing When guidance", i)
+		}
+	}
+	// deferred specifically must mention the "not stabilised" /
+	// "hidden from bd ready" framing — that's the rule the user
+	// fed back to encode.
+	deferred := c.Statuses[3]
+	if !strings.Contains(deferred.When, "stabilis") || !strings.Contains(deferred.When, "ready") {
+		t.Errorf("deferred guidance lost its core framing; got %q", deferred.When)
+	}
+}
+
+func TestConventions_ProseBodyDocumentsStatusLifecycle(t *testing.T) {
+	for _, want := range []string{
+		"Status lifecycle",
+		"open ",
+		"in_progress",
+		"blocked",
+		"deferred",
+		"closed ",
+		"stabilised",
+	} {
+		if !strings.Contains(conventionsBody, want) {
+			t.Errorf("conventionsBody missing lifecycle keyword %q", want)
+		}
+	}
+}
+
 func TestConventions_RunbookSectionsPinned(t *testing.T) {
 	// Three required sections, in this order. Both the schema
 	// shape and the literal headings matter — agent tooling

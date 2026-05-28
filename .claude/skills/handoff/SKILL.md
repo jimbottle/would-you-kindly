@@ -29,6 +29,33 @@ Use it when **all** of these are true:
 4. The next agent that picks up this issue would benefit from a
    written runbook, not a back-and-forth.
 
+## Status lifecycle: open vs deferred vs closed
+
+A surprising number of "should I handoff?" calls turn out to be
+"should I defer?" instead. The lifecycle:
+
+- **open** — actionable now. The default for newly-filed issues.
+- **in_progress** — someone has claimed it (`bd update --claim`).
+- **blocked** — waiting on another tracked bd issue. Pair with
+  `--add-dependency <id>` so the blocker is explicit and the
+  dependency-closes-this-unblocks chain works.
+- **deferred** — waiting on a subsystem that hasn't stabilised
+  yet. Screenshots of a WIP UI, automation for an API still being
+  redesigned, polish that depends on an unfinished feature. The
+  task is real but prematurely actionable; deferring hides it
+  from `bd ready` and the TUI's `ready` preset so the queue
+  reflects what someone could actually start now.
+- **closed** — done. The post-commit hook auto-closes from
+  `Closes:`/`Fixes:`/`Resolves:` trailers.
+
+Default to OPEN. Reach for **DEFERRED** instead of holding-open
+when the blocker is "the rest of the project hasn't caught up
+yet" — holding-open implies someone should do this now and
+clutters the ready view. Reach for **BLOCKED** when the blocker
+IS another tracked issue. Reach for **HANDOFF + human label**
+(this skill) only when a human is genuinely required to do the
+remaining work.
+
 ## When NOT to use it
 
 - **Clarifying questions.** If the blocker is "what should I do?",

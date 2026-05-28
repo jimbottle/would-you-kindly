@@ -118,6 +118,31 @@ orphan, and a recoverable orphan can be retried. The CLI prints an
 explicit WARNING with the orphan ID and cleanup commands; agents
 consuming the CLI's exit codes should check stderr too.
 
+## Status lifecycle
+
+bd's five statuses, with the convention for picking each:
+
+| Status        | Use when                                                                |
+|---------------|--------------------------------------------------------------------------|
+| `open`        | Actionable now. The default for newly-filed issues.                      |
+| `in_progress` | Someone has claimed it. `bd update --claim` sets this AND assigns.        |
+| `blocked`     | Waiting on another tracked bd issue. Pair with `--add-dependency <id>`. |
+| `deferred`    | Waiting on a subsystem that hasn't stabilised yet (WIP UI, redesigned API, polish that depends on an unfinished feature). Hidden from `bd ready` and the TUI's `ready` preset. |
+| `closed`      | Done. Post-commit hook auto-closes from `Closes:`/`Fixes:`/`Resolves:` trailers. |
+
+Default to **open**. Reach for **deferred** instead of holding-open
+when the blocker is "the rest of the project hasn't caught up yet" —
+holding-open implies someone should do this now and clutters the
+ready view. Reach for **blocked** when the blocker IS another
+tracked issue (use `--add-dependency` so the unblock-on-close chain
+works). Reach for **the `human` label + handoff** only when a
+human is genuinely required to do the remaining work.
+
+A common failure mode: filing a task for screenshots / docs /
+follow-up polish on a feature that isn't shipped yet and leaving
+it open. That task should be deferred; opening it implies it's
+ready for someone to pick up, which it isn't.
+
 ## The runbook structure (required)
 
 A handoff is more than a label change — it's a **claim** by the

@@ -42,6 +42,33 @@ right labels AND lets you attach a runbook from stdin in one shot.
 'wyk handoff -create "<title>"' files a new bd issue and hands it off
 atomically (with src:agent on creation), the recommended one-step path.
 
+Status lifecycle (pick the right one when filing or updating)
+-------------------------------------------------------------
+
+bd has five statuses; the convention is when to use each:
+
+  - open         actionable now; ready to work or to hand off.
+  - in_progress  someone has claimed it. 'bd update --claim' is
+                 the canonical way to set this; it also assigns.
+  - blocked      waiting on another tracked bd issue. Use
+                 '--add-dependency <other-id>' so the blocker is
+                 explicit; the dependency closes → this unblocks.
+  - deferred     waiting on a subsystem that hasn't stabilised
+                 yet. Use this when the task is real but
+                 prematurely actionable — screenshots of a WIP
+                 UI, automation for an API still being redesigned,
+                 etc. Deferred issues are hidden from 'bd ready'
+                 and the TUI's 'ready' preset; they reappear when
+                 you 'bd update --status open'.
+  - closed       done. The post-commit hook auto-closes from
+                 'Closes:'/'Fixes:'/'Resolves:' trailers.
+
+Default to OPEN. Reach for DEFERRED instead of holding-open when
+the blocker is "the rest of the project hasn't caught up yet" —
+holding-open implies someone should do this now and clutters the
+ready view. Reach for BLOCKED when the blocker IS another tracked
+issue.
+
 The runbook structure (REQUIRED, not optional)
 ----------------------------------------------
 
@@ -102,10 +129,19 @@ type conventionsJSON struct {
 		HumanTasks string `json:"human_tasks"`
 		AgentInbox string `json:"agent_inbox"`
 	} `json:"queries"`
+	Statuses         []statusGuidance `json:"statuses"`
 	PreferredCommand string           `json:"preferred_command"`
 	BdCreateExample  string           `json:"bd_create_example"`
 	RunbookSections  []runbookSection `json:"runbook_sections"`
 	ContractURL      string           `json:"contract_url"`
+}
+
+// statusGuidance pairs a bd status name with a one-line rule for
+// when it's the right choice. Agents consuming the JSON form can
+// branch on this without parsing the prose.
+type statusGuidance struct {
+	Status string `json:"status"`
+	When   string `json:"when"`
 }
 
 // runbookSection is one of the three required sections in a wyk
@@ -124,6 +160,13 @@ func conventionsStructured() conventionsJSON {
 	c.Labels.SrcHuman = "filed by a human (provenance); applied by the TUI's N quick-add and wyk handoff -create when stdin is absent"
 	c.Queries.HumanTasks = humanTasksQuery
 	c.Queries.AgentInbox = agentInboxQuery
+	c.Statuses = []statusGuidance{
+		{Status: "open", When: "actionable now; default for newly-filed issues"},
+		{Status: "in_progress", When: "someone has claimed it; set via `bd update --claim` which also assigns"},
+		{Status: "blocked", When: "waiting on another tracked bd issue; pair with `--add-dependency <id>`"},
+		{Status: "deferred", When: "waiting on a subsystem that hasn't stabilised yet (WIP UI, redesigned API, etc.); hidden from `bd ready` and the TUI's `ready` preset"},
+		{Status: "closed", When: "done; the post-commit hook auto-closes from `Closes:`/`Fixes:`/`Resolves:` trailers"},
+	}
 	c.PreferredCommand = "wyk handoff <id>   (or 'wyk handoff -create \"<title>\"' to file + hand off in one step)"
 	c.BdCreateExample = `bd create --priority=1 --type=task --add-label="human" --add-label="src:agent" --title="<imperative>" --description="<runbook with required sections>"`
 	c.RunbookSections = []runbookSection{
