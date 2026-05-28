@@ -157,12 +157,40 @@ func runInit(args []string) int {
 	// that's the idempotency guarantee the doc promises.
 	if !*skipRegister {
 		if *dryRun {
-			fmt.Printf("wyk init: would register %s in the wyk registry\n", repoRoot)
+			// Preview must match what the real run would print —
+			// distinguish "already registered" from "would register"
+			// so the dry-run is genuinely observational.
+			previewRegister(repoRoot)
 		} else if code := registerRepo(repoRoot); code != 0 {
 			return code
 		}
 	}
 	return 0
+}
+
+// previewRegister inspects the current registry and prints the same
+// "already registered" / "would register" message the real run
+// would produce. Errors loading the registry are surfaced inline
+// (and don't abort init — the real run is the source of truth).
+func previewRegister(repoRoot string) {
+	path, err := registry.DefaultPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: resolve registry path:", err)
+		return
+	}
+	reg, err := registry.Load(path)
+	if err != nil {
+		// Pre-flight load failed; the real run would error here too,
+		// but for a dry-run we just describe the intended action.
+		fmt.Printf("wyk init: would register %s in %s (current registry unreadable: %v)\n",
+			repoRoot, path, err)
+		return
+	}
+	if reg.Has(repoRoot) {
+		fmt.Printf("wyk init: already registered in %s\n", path)
+		return
+	}
+	fmt.Printf("wyk init: would register %s in %s\n", repoRoot, path)
 }
 
 // runBDInit invokes `bd init` in the given repo root and returns an

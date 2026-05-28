@@ -77,28 +77,24 @@ type fullSource interface {
 
 // subRepo is one row in MultiBDSource's per-repo table. Held as an
 // interface (fullSource) so tests can substitute a stub for the real
-// BDSource; `dir` is the path used to query the current git branch
-// and is empty for stubs (and for that case `branchFn` provides the
-// value tests want to assert against).
+// BDSource; `branchFn` takes a context so a canceled Fetch (TUI
+// quit, refresh-during-refresh) actually unblocks any in-flight
+// `git rev-parse`. Tests pass a constant.
 type subRepo struct {
 	name     string
 	src      fullSource
-	branchFn func() string
+	branchFn func(context.Context) string
 }
 
 // MultiBDSource queries every registered bd workspace and unions
 // the results, populating Issue.Repo and Issue.Branch on each row
 // so the TUI can show them as columns. Mutator methods route to the
-// right sub by remembering which repo each issue ID came from on
-// the most recent Fetch.
+// right sub by reading Issue.Repo (which Fetch populates) — there
+// is no bare-ID fallback. Issues with an empty Repo are a
+// programmer error in this package and produce a clear "repo not
+// set" failure rather than a silent ID-collision mis-route.
 type MultiBDSource struct {
 	subs []subRepo
-
-	// idToRepo is rebuilt on every Fetch and lets Mutator methods
-	// route writes without changing the Source/Mutator interface
-	// shape (still id-string-based, same as BDSource).
-	mu       sync.RWMutex
-	idToRepo map[string]string
 }
 
 // Compile-time check.
@@ -123,13 +119,10 @@ func NewMultiBDSource(clients []*beads.Client, names []string, me string) (*Mult
 		subs[i] = subRepo{
 			name:     names[i],
 			src:      &BDSource{Client: c, Me: me},
-			branchFn: func() string { return gitBranch(context.Background(), dir) },
+			branchFn: func(ctx context.Context) string { return gitBranch(ctx, dir) },
 		}
 	}
-	return &MultiBDSource{
-		subs:     subs,
-		idToRepo: make(map[string]string),
-	}, nil
+	return &MultiBDSource{subs: subs}, nil
 }
 
 // Fetch queries every sub-source concurrently and concatenates their
@@ -157,7 +150,7 @@ func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Iss
 			issues, err := sub.src.Fetch(ctx, p)
 			results[i] = result{issues: issues, err: err}
 			if err == nil {
-				branches[i] = sub.branchFn()
+				branches[i] = sub.branchFn(ctx)
 			}
 		}(i, sub)
 	}
@@ -165,7 +158,6 @@ func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Iss
 
 	var all []beads.Issue
 	var firstErr error
-	idMap := make(map[string]string)
 	for i, sub := range m.subs {
 		r := results[i]
 		if r.err != nil {
@@ -177,17 +169,9 @@ func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Iss
 		for j := range r.issues {
 			r.issues[j].Repo = sub.name
 			r.issues[j].Branch = branches[i]
-			idMap[r.issues[j].ID] = sub.name
 		}
 		all = append(all, r.issues...)
 	}
-
-	// Atomically replace the id→repo map so a subsequent write's
-	// legacy-fallback path (used when Issue.Repo is empty) routes
-	// against THIS fetch's view of the world.
-	m.mu.Lock()
-	m.idToRepo = idMap
-	m.mu.Unlock()
 
 	if len(all) == 0 && firstErr != nil {
 		return nil, firstErr
@@ -196,36 +180,21 @@ func (m *MultiBDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Iss
 }
 
 // repoForIssue returns the sub whose name matches issue.Repo.
-// Routing on the issue's Repo field (set at Fetch time) rather than
-// a bare ID guarantees writes can't mis-route on ID collisions
-// across workspaces. Falls back to the idToRepo map only when the
-// issue lacks a Repo (e.g. a stale call site that hadn't been
-// updated yet) — the map can return wrong-repo results on
-// collisions, so a missing Repo logs visibly via the error string.
+// Routing strictly on Issue.Repo (populated by Fetch) guarantees
+// writes can never mis-route via ID collisions across workspaces.
+// An empty Repo is a programmer error: every in-tree caller obtains
+// the Issue from a Source.Fetch which populates Repo. The explicit
+// error is louder than a silent fallback would be.
 func (m *MultiBDSource) repoForIssue(i beads.Issue) (fullSource, error) {
-	if i.Repo != "" {
-		for _, sub := range m.subs {
-			if sub.name == i.Repo {
-				return sub.src, nil
-			}
-		}
-		return nil, fmt.Errorf("issue %q claims repo %q which is not in the registry", i.ID, i.Repo)
-	}
-	// Legacy path: bare ID lookup. Kept so callers that obtain an
-	// Issue from a non-multi source still work; multi-source Fetch
-	// always populates Repo so this branch isn't reached for them.
-	m.mu.RLock()
-	name, ok := m.idToRepo[i.ID]
-	m.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("no repo known for issue %q (try refreshing)", i.ID)
+	if i.Repo == "" {
+		return nil, fmt.Errorf("issue %q has no Repo set (multi-repo Mutator requires it; did you obtain the Issue from Fetch?)", i.ID)
 	}
 	for _, sub := range m.subs {
-		if sub.name == name {
+		if sub.name == i.Repo {
 			return sub.src, nil
 		}
 	}
-	return nil, fmt.Errorf("internal: repo %q not in subs", name)
+	return nil, fmt.Errorf("issue %q claims repo %q which is not in the registry", i.ID, i.Repo)
 }
 
 func (m *MultiBDSource) Close(ctx context.Context, i beads.Issue) error {

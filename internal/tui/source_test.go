@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -54,13 +55,13 @@ func newMultiForTest(t *testing.T, subs ...struct {
 	src    *fakeRepoSource
 }) *MultiBDSource {
 	t.Helper()
-	m := &MultiBDSource{idToRepo: map[string]string{}}
+	m := &MultiBDSource{}
 	for _, s := range subs {
 		b := s.branch
 		m.subs = append(m.subs, subRepo{
 			name:     s.name,
 			src:      s.src,
-			branchFn: func() string { return b },
+			branchFn: func(_ context.Context) string { return b },
 		})
 	}
 	return m
@@ -199,7 +200,7 @@ func TestMultiBDSource_WriteRoutesToCorrectRepo(t *testing.T) {
 	}
 }
 
-func TestMultiBDSource_WriteToUnknownIDErrors(t *testing.T) {
+func TestMultiBDSource_WriteToUnknownRepoErrors(t *testing.T) {
 	a := &fakeRepoSource{issues: []beads.Issue{{ID: "a-1", Title: "a"}}}
 	m := newMultiForTest(t,
 		struct {
@@ -214,6 +215,33 @@ func TestMultiBDSource_WriteToUnknownIDErrors(t *testing.T) {
 	err := m.Close(context.Background(), beads.Issue{ID: "z-99", Repo: "ghost"})
 	if err == nil {
 		t.Error("Close on unknown Repo should error so the TUI can surface 'not in registry'")
+	}
+}
+
+func TestMultiBDSource_WriteWithEmptyRepoErrors(t *testing.T) {
+	// Programmer-error guardrail: every in-tree caller obtains the
+	// Issue from Source.Fetch which populates Repo. An empty Repo on
+	// a multi-repo write is therefore a misuse and must surface
+	// loudly rather than silently routing somewhere via a bare-ID
+	// lookup (which could mis-route on ID collisions across repos).
+	a := &fakeRepoSource{issues: []beads.Issue{{ID: "a-1", Title: "a"}}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"alpha", "main", a},
+	)
+	_, _ = m.Fetch(context.Background(), filter.PresetAll)
+	err := m.Close(context.Background(), beads.Issue{ID: "a-1"}) // Repo not set
+	if err == nil {
+		t.Fatal("Close with empty Repo should error")
+	}
+	if !strings.Contains(err.Error(), "no Repo set") {
+		t.Errorf("error should mention the empty-Repo cause; got %q", err.Error())
+	}
+	if len(a.closed) != 0 {
+		t.Errorf("alpha should not have been routed to; got %+v", a.closed)
 	}
 }
 
