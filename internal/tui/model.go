@@ -1111,6 +1111,7 @@ func (m Model) viewList() string {
 // remaining suffix is usually ≤ 8 chars (e.g. `ma5.2.1`), so the
 // extra width was just whitespace in every row.
 const (
+	colHuman   = 9 // human-flagged indicator: " ← HUMAN ", " · HUMAN ", or blank. 9 = " ← HUMAN " visual width (Padding(0,1) + 7-char content). Placed second-from-left to put the most important "needs your attention" signal where the eye lands first.
 	colWyk     = 3 // wyk-hook indicator: ✓ if installed, blank if not. Header reads "wyk" so the column is self-explanatory.
 	colRepo    = 18
 	colBranch  = 10
@@ -1202,6 +1203,11 @@ func lcp(a, b string) string {
 // spans multiple workspaces.
 func (m Model) renderHeader() string {
 	const cursor = "  "
+	// human column is always present so the badge has a stable
+	// home regardless of single/multi-repo mode. Header lower-
+	// cased to match `wyk` — both are indicator columns rather
+	// than data ones.
+	humanCol := fmt.Sprintf("%-*s  ", colHuman, "human")
 	var prefix string
 	if m.isMultiRepo() {
 		prefix = fmt.Sprintf("%-*s  %-*s  %-*s  ",
@@ -1210,8 +1216,8 @@ func (m Model) renderHeader() string {
 			colBranch, "Branch",
 		)
 	}
-	h := fmt.Sprintf("%s%s%-*s  %-*s  %-*s  %-*s  %-*s  %s",
-		cursor, prefix,
+	h := fmt.Sprintf("%s%s%s%-*s  %-*s  %-*s  %-*s  %-*s  %s",
+		cursor, humanCol, prefix,
 		colID, "ID",
 		colType, "T",
 		colStatus, "Status",
@@ -1227,6 +1233,8 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	if selected {
 		cursor = cursorStyle.Render("▶ ")
 	}
+
+	humanCol := paddedHumanBadge(i) + "  "
 
 	var prefix string
 	if m.isMultiRepo() {
@@ -1248,11 +1256,66 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	pri := fmt.Sprintf("P%d", i.Priority)
 	upd := updatedStyle.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt)))
 
-	row := fmt.Sprintf("%s%s%s  %s  %s  %s  %s  %s", cursor, prefix, id, tp, st, pri, upd, i.Title)
-	if i.IsHuman() {
-		row += "  " + humanBadgeFor(i)
+	// Truncate the title to whatever space remains after every
+	// preceding column. Without this, long titles wrap or overflow
+	// the right edge — most existing rows in real use spill past
+	// the terminal. Detail view (enter) still shows the full text.
+	title := i.Title
+	if avail := m.titleBudget(); avail > 0 {
+		title = trunc(title, avail)
 	}
-	return row
+	return fmt.Sprintf("%s%s%s%s  %s  %s  %s  %s  %s", cursor, humanCol, prefix, id, tp, st, pri, upd, title)
+}
+
+// titleBudget returns how many runes are available for the title
+// column given the current terminal width and the fixed widths of
+// every preceding column. Returns 0 when m.width is unknown (before
+// the first WindowSizeMsg) so we just print the full title — the
+// next paint will redraw with the right budget. A 20-rune floor
+// keeps the column from collapsing to nothing on absurdly narrow
+// panes; the user can widen and re-render.
+func (m Model) titleBudget() int {
+	if m.width <= 0 {
+		return 0
+	}
+	// Each "  " separator is 2 spaces; we count one after every
+	// non-final column to mirror what renderRow prints.
+	const sep = 2
+	used := 2 // cursor (▶ or 2 spaces is 2 visual cols either way)
+	used += colHuman + sep
+	if m.isMultiRepo() {
+		used += colWyk + sep
+		used += colRepo + sep
+		used += colBranch + sep
+	}
+	used += colID + sep
+	used += colType + sep
+	used += colStatus + sep
+	used += colPrio + sep // "Pn" is 2 chars
+	used += colUpdated + sep
+	avail := m.width - used
+	if avail < 20 {
+		avail = 20 // floor so we don't render an empty title cell
+	}
+	return avail
+}
+
+// paddedHumanBadge renders the per-row HUMAN cell so the column
+// stays aligned regardless of badge presence/variant. Empty rows
+// emit colHuman spaces; human-flagged rows emit the styled badge
+// padded out to the same visual width with trailing blanks. We
+// can't just %-*s the badge string because lipgloss escape codes
+// would be counted as visual width by fmt.
+func paddedHumanBadge(i beads.Issue) string {
+	if !i.IsHuman() {
+		return strings.Repeat(" ", colHuman)
+	}
+	badge := humanBadgeFor(i)
+	pad := colHuman - lipgloss.Width(badge)
+	if pad > 0 {
+		badge += strings.Repeat(" ", pad)
+	}
+	return badge
 }
 
 // humanBadgeFor distinguishes the two states the contract supports:

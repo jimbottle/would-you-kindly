@@ -1242,3 +1242,68 @@ func TestStickyHeader_CursorStaysInViewWhenModalOpens(t *testing.T) {
 			m.cursor, m.scroll, m.scroll+m.bodyHeight())
 	}
 }
+
+func TestColumnOrder_HumanIsSecondFromLeft(t *testing.T) {
+	// Header pin: in multi-repo mode the column order should be
+	// cursor (whitespace) → human → wyk → Repo → Branch → ID → ...
+	// "human" must appear before "wyk" in the rendered header
+	// string so the HUMAN signal is the second-from-left thing the
+	// eye lands on.
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "alpha-1", Repo: "alpha", Title: "row in alpha"},
+		{ID: "beta-9", Repo: "beta", Title: "row in beta"},
+	}}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	out := m.View()
+	hi := strings.Index(out, "human")
+	wi := strings.Index(out, "wyk")
+	if hi < 0 || wi < 0 {
+		t.Fatalf("expected both 'human' and 'wyk' headers in view; got:\n%s", out)
+	}
+	if hi > wi {
+		t.Errorf("'human' header should appear before 'wyk' header in the column row; got human at %d, wyk at %d", hi, wi)
+	}
+}
+
+func TestTitleTruncation_NarrowTerminalEllipsizesTitle(t *testing.T) {
+	// On a narrow pane the title used to spill past the right
+	// edge. With titleBudget capping the column, long titles get
+	// the ellipsis treatment; details still live behind enter.
+	longTitle := "Pivot to eBay OAuth + Trading API (Chrome Custom Tabs for auth) — replaces WebView-only sign-in"
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: longTitle, Status: "open", Labels: []string{}},
+	}}
+	m := New(src)
+	// Narrow pane: 80 columns. Multi-repo chrome eats ~80; the
+	// budget floor (20) kicks in, so the title is heavily clipped.
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	out := m.View()
+	if strings.Contains(out, longTitle) {
+		t.Errorf("expected long title to be truncated on a 80-col pane; got full title:\n%s", out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Errorf("expected ellipsis after a clipped title; got:\n%s", out)
+	}
+}
+
+func TestTitleTruncation_WideTerminalShowsFullTitle(t *testing.T) {
+	// Sanity check: with plenty of room the title is rendered
+	// verbatim. titleBudget should NOT collapse content that fits.
+	title := "Decide uninstall feedback form provider"
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: title, Status: "open", Labels: []string{}},
+	}}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 300, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	out := m.View()
+	if !strings.Contains(out, title) {
+		t.Errorf("wide pane should show the full title; got:\n%s", out)
+	}
+}
