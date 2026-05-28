@@ -108,6 +108,18 @@ contract as the TUI's `H` key — see
 [`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
 [`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.
 
+### Stats
+
+```bash
+wyk stats          # human-readable counts + timing across all registered repos
+wyk stats -json    # structured output for scripting
+```
+
+Aggregate snapshot: issue counts by status, currently human-flagged
+(split by `src:agent` vs `src:human`), agent inbox count, closures in
+the last 7/30 days, and median/p95 time-to-close for human-flagged
+issues. Useful as a heartbeat for the handoff loop.
+
 ### Picking up bounced-back work (agent inbox)
 
 The other direction of the handoff loop: when a human presses `H` to
