@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -97,10 +98,28 @@ func TestDecorateIssues_StampsRepoAndBranchWhenNameSet(t *testing.T) {
 }
 
 func TestWykHookInstalled(t *testing.T) {
-	// Three cases, one tempdir per: matching hook → true; foreign
-	// hook → false; missing hook file → false. Pins the substring
-	// the TUI greps for ("wyk hook post-commit") so a rename of
-	// wyk's hook payload surfaces here too.
+	// Detection runs `git rev-parse --git-path hooks/post-commit`
+	// so each case needs a real git repo. Pins the substring the
+	// TUI greps for ("wyk hook post-commit") and the three failure
+	// modes (foreign hook, missing hook file, non-git directory),
+	// plus a gitlink regression where `.git` is a file pointing
+	// into a parent repo's git dir — the exact layout that broke
+	// the literal-`.git`-dir read this function originally used.
+	gitInit := func(t *testing.T, dir string) {
+		t.Helper()
+		if err := exec.Command("git", "-C", dir, "init", "-q").Run(); err != nil {
+			t.Skipf("git init failed (git not on PATH?): %v", err)
+		}
+	}
+	writeHook := func(t *testing.T, hookPath, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hookPath, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, tc := range []struct {
 		name string
 		body string
@@ -112,26 +131,51 @@ func TestWykHookInstalled(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(dir, ".git", "hooks"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, ".git", "hooks", "post-commit"), []byte(tc.body), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			gitInit(t, dir)
+			writeHook(t, filepath.Join(dir, ".git", "hooks", "post-commit"), tc.body)
 			if got := wykHookInstalled(dir); got != tc.want {
 				t.Errorf("wykHookInstalled(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
 	}
-	t.Run("missing-file", func(t *testing.T) {
+	t.Run("missing-hook-file", func(t *testing.T) {
 		dir := t.TempDir()
+		gitInit(t, dir)
 		if got := wykHookInstalled(dir); got {
 			t.Errorf("wykHookInstalled with no hook file = true, want false")
 		}
 	})
-	t.Run("empty-dir", func(t *testing.T) {
+	t.Run("not-a-git-repo", func(t *testing.T) {
+		// rev-parse errors out cleanly when dir isn't a git repo
+		// at all; we treat that as "not installed".
+		if got := wykHookInstalled(t.TempDir()); got {
+			t.Errorf("wykHookInstalled on non-git dir = true, want false")
+		}
+	})
+	t.Run("empty-dir-string", func(t *testing.T) {
 		if got := wykHookInstalled(""); got {
 			t.Errorf("wykHookInstalled(\"\") = true, want false")
+		}
+	})
+	t.Run("gitlink-subdir", func(t *testing.T) {
+		// Subdir whose `.git` is a file containing `gitdir: <path>`
+		// — the layout `git worktree add` and submodules create.
+		// The hook lives under the resolved git dir, not under
+		// `<subdir>/.git/hooks/`. Pre-fix this returned false; the
+		// new rev-parse-based resolver should find it.
+		parent := t.TempDir()
+		gitInit(t, parent)
+		sub := filepath.Join(parent, "sub")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// gitdir: must point at the parent's .git directory.
+		if err := os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: "+filepath.Join(parent, ".git")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		writeHook(t, filepath.Join(parent, ".git", "hooks", "post-commit"), "#!/bin/sh\nexec wyk hook post-commit\n")
+		if got := wykHookInstalled(sub); !got {
+			t.Errorf("wykHookInstalled on gitlink subdir = false, want true (hook in parent's git dir was missed)")
 		}
 	})
 }

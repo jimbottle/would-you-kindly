@@ -88,11 +88,28 @@ func decorateIssues(issues []beads.Issue, name string, branchFn func() string, w
 // invocation present in both variants and absent from foreign hooks.
 // Returns false on any I/O error — a missing or unreadable hook is
 // effectively "not installed" from the user's perspective.
+//
+// Resolves the hook path via `git rev-parse --git-path` so gitlinks
+// (a `.git` file pointing into a parent repo's git dir, common for
+// submodules and worktree-style subdirectory registrations) and
+// custom GIT_DIR layouts land on the right hook — matching where
+// `wyk init` would have installed it.
 func wykHookInstalled(dir string) bool {
 	if dir == "" {
 		return false
 	}
-	body, err := os.ReadFile(filepath.Join(dir, ".git", "hooks", "post-commit"))
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--git-path", "hooks/post-commit").Output()
+	if err != nil {
+		return false
+	}
+	hookPath := strings.TrimSpace(string(out))
+	if hookPath == "" {
+		return false
+	}
+	if !filepath.IsAbs(hookPath) {
+		hookPath = filepath.Join(dir, hookPath)
+	}
+	body, err := os.ReadFile(hookPath)
 	if err != nil {
 		return false
 	}
