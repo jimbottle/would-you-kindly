@@ -50,6 +50,8 @@ func main() {
 			os.Exit(runStats(os.Args[2:]))
 		case "doctor":
 			os.Exit(runDoctor(os.Args[2:]))
+		case "registry":
+			os.Exit(runRegistry(os.Args[2:]))
 		case "version", "--version", "-v":
 			fmt.Println(versionString())
 			os.Exit(0)

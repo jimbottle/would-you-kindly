@@ -70,6 +70,18 @@ For a single repo (without going through the registry):
 wyk -C /path/to/repo
 ```
 
+### Managing the registry
+
+```bash
+wyk registry list             # human-readable list (-json for structured)
+wyk registry remove <name>    # drop one entry by display name
+wyk registry prune            # drop entries whose path or .git is gone
+```
+
+`prune` asks for `[y/N]` confirmation before writing; pass `-y` to skip
+the prompt in scripts. The registry file lives at
+`~/.config/wyk/repos.json` and stays editable by hand too.
+
 If the registry is empty or has only one entry, `wyk` (no args)
 falls back to running against the current directory — the v0.1.0
 single-repo behaviour.

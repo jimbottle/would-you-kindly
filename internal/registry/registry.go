@@ -171,6 +171,21 @@ func (r *Registry) Remove(path string) (bool, error) {
 	return false, nil
 }
 
+// RemoveByName unregisters the repo with the given display name.
+// Returns true if an entry was removed, false if no entry matched.
+// Used by `wyk registry remove <name>` so users can target an entry
+// by the same label the TUI shows, without having to type the
+// absolute path.
+func (r *Registry) RemoveByName(name string) bool {
+	for i, repo := range r.Repos {
+		if repo.Name == name {
+			r.Repos = append(r.Repos[:i], r.Repos[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // Has reports whether path is registered.
 func (r *Registry) Has(path string) bool {
 	abs, err := normalizePath(path)
