@@ -98,6 +98,68 @@ func TestInit_RefusesToOverwriteForeignHook(t *testing.T) {
 	}
 }
 
+func TestInit_ChainPreservesForeignHook(t *testing.T) {
+	// -chain is the safer alternative to -force: it preserves the
+	// existing hook at .pre-wyk and writes a wrapper that runs both.
+	dir := gitInit(t)
+	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
+	preWykPath := hookPath + ".pre-wyk"
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []byte("#!/bin/sh\n# roborev-style hook\necho roborev ran\n")
+	if err := os.WriteFile(hookPath, foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runInitIn(t, dir, "-chain", "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Fatalf("expected 0 with -chain; got %d", code)
+	}
+	// Original was moved to .pre-wyk
+	preserved, err := os.ReadFile(preWykPath)
+	if err != nil {
+		t.Fatalf("preserved hook missing: %v", err)
+	}
+	if string(preserved) != string(foreign) {
+		t.Errorf(".pre-wyk content mismatch; got:\n%s", preserved)
+	}
+	// New hook is the chained wrapper
+	body, _ := os.ReadFile(hookPath)
+	if !strings.Contains(string(body), "post-commit.pre-wyk") {
+		t.Errorf("hook should reference the preserved .pre-wyk; got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "wyk hook post-commit") {
+		t.Errorf("hook should still exec wyk; got:\n%s", body)
+	}
+}
+
+func TestInit_ChainRefusesWhenPreWykAlreadyExists(t *testing.T) {
+	// Guard against silently clobbering a previously-preserved hook.
+	dir := gitInit(t)
+	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
+	preWykPath := hookPath + ".pre-wyk"
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\n# fresh foreign hook\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(preWykPath, []byte("#!/bin/sh\n# previously preserved\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runInitIn(t, dir, "-chain", "-skip-bd-init", "-skip-register"); code != 64 {
+		t.Errorf("expected 64 (refuse) when .pre-wyk already exists; got %d", code)
+	}
+}
+
+func TestInit_ChainAndForceMutuallyExclusive(t *testing.T) {
+	dir := gitInit(t)
+	if code := runInitIn(t, dir, "-chain", "-force", "-skip-bd-init", "-skip-register"); code != 64 {
+		t.Errorf("expected 64 when -chain and -force are both set; got %d", code)
+	}
+}
+
 func TestInit_DryRunDoesNotWrite(t *testing.T) {
 	dir := gitInit(t)
 	if code := runInitIn(t, dir, "-dry-run", "-skip-bd-init", "-skip-register"); code != 0 {

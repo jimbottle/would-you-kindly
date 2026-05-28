@@ -157,9 +157,20 @@ bd-2`) is rejected wholesale — use two separate `Closes:` lines.
 This is deliberate; it avoids closing extras from prose like
 `Closes: bd-1 (we'll handle bd-2 next week)`.
 
-If `.git/hooks/post-commit` already exists from another tool,
-`wyk init` refuses to overwrite without `-force`. Use
-`wyk init -dry-run` to preview, or `wyk init -force` to replace.
+If `.git/hooks/post-commit` already exists from another tool
+(e.g. `roborev`, `husky`, `pre-commit`), you have three options:
+
+- `wyk init -chain` (recommended) — preserves the existing hook
+  at `post-commit.pre-wyk` and writes a wrapper that runs both:
+  the original first, then wyk's auto-close. Non-destructive.
+- `wyk init -force` — overwrites the existing hook entirely.
+  Destructive — only use if you don't need the other tool's hook.
+- `wyk init -dry-run` — preview what either path would do without
+  writing anything.
+
+To uninstall a chained install: `rm .git/hooks/post-commit` and
+(optionally) `mv .git/hooks/post-commit.pre-wyk .git/hooks/post-commit`
+to restore the original.
 
 ## Keys
 

@@ -30,10 +30,29 @@ const postCommitHook = `#!/bin/sh
 exec wyk hook post-commit
 `
 
-// hookMarker identifies a wyk-installed hook so re-running init
-// without -force can refuse safely when the existing hook is from
-// some other source.
-const hookMarker = "Installed by `wyk init`"
+// chainedPostCommitHook wraps a pre-existing post-commit hook
+// alongside wyk's. The original is preserved at post-commit.pre-wyk
+// and invoked first; wyk's logic runs after via exec, so its output
+// reaches the user without an extra shell layer. The pre-wyk hook's
+// exit code is intentionally NOT checked — wyk's auto-close shouldn't
+// be blocked by an unrelated tool's hiccup, and vice versa.
+const chainedPostCommitHook = `#!/bin/sh
+# Installed by ` + "`wyk init -chain`" + `. Runs the pre-existing
+# post-commit hook (preserved at post-commit.pre-wyk) THEN wyk's
+# auto-close logic.
+#
+# To uninstall: rm "$0" and (optionally) restore .pre-wyk to post-commit.
+PREWYK="$(dirname "$0")/post-commit.pre-wyk"
+if [ -x "$PREWYK" ]; then
+    "$PREWYK" "$@"
+fi
+exec wyk hook post-commit
+`
+
+// hookMarker identifies any wyk-installed hook (plain or chained).
+// Either variant of the script contains this substring so the
+// re-run detection works for both.
+const hookMarker = "Installed by `wyk init"
 
 // runInit implements `wyk init`: a one-stop bootstrap for using wyk
 // in a repo. It (1) initialises a bd workspace if none exists,
@@ -50,7 +69,8 @@ const hookMarker = "Installed by `wyk init`"
 //	64  usage error or refusal to overwrite a foreign hook without -force
 func runInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	force := fs.Bool("force", false, "overwrite an existing post-commit hook")
+	force := fs.Bool("force", false, "overwrite an existing post-commit hook (destructive — drops the existing hook entirely)")
+	chain := fs.Bool("chain", false, "preserve an existing post-commit hook and chain wyk's logic after it (preferred over -force when the existing hook is from another tool like roborev)")
 	dryRun := fs.Bool("dry-run", false, "print what would happen without writing the hook")
 	skipBD := fs.Bool("skip-bd-init", false, "do not run `bd init` even if .beads is missing")
 	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
@@ -62,7 +82,11 @@ func runInit(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk init [-force] [-dry-run] [-skip-bd-init] [-skip-register]")
+		fmt.Fprintln(os.Stderr, "usage: wyk init [-force | -chain] [-dry-run] [-skip-bd-init] [-skip-register]")
+		return 64
+	}
+	if *force && *chain {
+		fmt.Fprintln(os.Stderr, "wyk init: -force and -chain are mutually exclusive")
 		return 64
 	}
 
@@ -94,37 +118,58 @@ func runInit(args []string) int {
 	}
 
 	hookPath := filepath.Join(gitDir, "hooks", "post-commit")
+	preWykPath := hookPath + ".pre-wyk"
 
 	// Step 2: install the post-commit hook. Each branch sets
 	// `skipWrite` rather than returning early so step 3 (registry)
 	// still runs — that's what makes init idempotent on repos where
 	// the hook is already in place but the registry write previously
-	// failed.
+	// failed. `chainMove` is set when we need to move an existing
+	// foreign hook to its .pre-wyk preservation slot.
 	skipWrite := false
+	chainMove := false
 	switch existing, err := os.ReadFile(hookPath); {
 	case err == nil:
 		if bytes.Contains(existing, []byte(hookMarker)) {
 			if *dryRun {
 				fmt.Printf("wyk init: would reinstall %s (existing hook is from a previous `wyk init`)\n", hookPath)
 				skipWrite = true
-			} else if !*force {
+			} else if !*force && !*chain {
 				fmt.Println("wyk init: post-commit hook already installed (use -force to reinstall)")
 				skipWrite = true
 			}
 		} else {
-			// Foreign hook. Dry-run is observation-only and must not
-			// return the usage exit code — describe what the real run
-			// would do and continue.
+			// Foreign hook. Three options: refuse (default), overwrite
+			// (-force, destructive), or chain (-chain, preserves the
+			// original at .pre-wyk and runs both).
 			if *dryRun {
-				if *force {
+				switch {
+				case *chain:
+					fmt.Printf("wyk init: would chain foreign hook at %s (move to %s, install wyk wrapper)\n",
+						hookPath, preWykPath)
+				case *force:
 					fmt.Printf("wyk init: would overwrite foreign hook at %s (-force)\n", hookPath)
-				} else {
-					fmt.Printf("wyk init: would refuse to overwrite foreign hook at %s (re-run with -force to replace)\n", hookPath)
+				default:
+					fmt.Printf("wyk init: would refuse to overwrite foreign hook at %s\n", hookPath)
+					fmt.Println("  Re-run with -chain to keep both hooks, or -force to replace.")
 				}
 				skipWrite = true
+			} else if *chain {
+				// Preservation slot already in use? Refuse — we don't
+				// want to silently clobber a previously-chained hook.
+				if _, err := os.Stat(preWykPath); err == nil {
+					fmt.Fprintf(os.Stderr,
+						"wyk init: -chain refused: %s already exists\n  (the foreign hook would overwrite a previously-preserved hook)\n",
+						preWykPath)
+					return 64
+				} else if !errors.Is(err, os.ErrNotExist) {
+					fmt.Fprintln(os.Stderr, "wyk init: stat .pre-wyk:", err)
+					return 1
+				}
+				chainMove = true
 			} else if !*force {
 				fmt.Fprintf(os.Stderr,
-					"wyk init: refusing to overwrite existing %s\n  (use -force to replace it)\n",
+					"wyk init: refusing to overwrite existing %s\n  Use -chain to keep both hooks, or -force to replace.\n",
 					hookPath)
 				return 64
 			}
@@ -132,6 +177,25 @@ func runInit(args []string) int {
 	case !errors.Is(err, os.ErrNotExist):
 		fmt.Fprintln(os.Stderr, "wyk init: stat hook:", err)
 		return 1
+	}
+
+	// If -chain decided to preserve the existing hook, do the move
+	// before writing the wrapper. The wrapper script reads its
+	// dirname at runtime, so the .pre-wyk filename matters.
+	if chainMove {
+		if err := os.Rename(hookPath, preWykPath); err != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: preserve foreign hook:", err)
+			return 1
+		}
+		fmt.Printf("wyk init: preserved existing hook → %s\n", preWykPath)
+	}
+
+	// Pick the hook script body to write: chained wrapper (when -chain
+	// was just applied OR a previously-chained install is being
+	// re-applied) or the plain hook.
+	hookBody := postCommitHook
+	if chainMove || preWykExists(preWykPath) {
+		hookBody = chainedPostCommitHook
 	}
 
 	if !skipWrite {
@@ -142,7 +206,7 @@ func runInit(args []string) int {
 				fmt.Fprintln(os.Stderr, "wyk init: mkdir hooks dir:", err)
 				return 1
 			}
-			if err := os.WriteFile(hookPath, []byte(postCommitHook), 0o755); err != nil {
+			if err := os.WriteFile(hookPath, []byte(hookBody), 0o755); err != nil {
 				fmt.Fprintln(os.Stderr, "wyk init: write hook:", err)
 				return 1
 			}
@@ -278,4 +342,14 @@ func findGitPaths() (gitDir, repoRoot string, err error) {
 		return "", "", errors.New("git rev-parse returned empty paths")
 	}
 	return gitDir, repoRoot, nil
+}
+
+// preWykExists reports whether a .pre-wyk preservation file is
+// already in place at path. Used to decide whether to write the
+// chained wrapper variant of the post-commit hook even when we're
+// not moving anything this run (idempotent re-install of a chained
+// hook).
+func preWykExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
