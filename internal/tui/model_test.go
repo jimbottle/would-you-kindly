@@ -127,6 +127,43 @@ func TestFuzzyFilterNarrowsVisible(t *testing.T) {
 	}
 }
 
+func TestFuzzyFilterDoesNotBleedAcrossTitleDescBoundary(t *testing.T) {
+	// Title and description are scored independently. A query that
+	// would only match as a subsequence spanning the boundary
+	// (e.g. "ad" against {title: "cat", desc: "dog"} — `a` in
+	// "cat", `d` in "dog") must NOT match.
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "cat", Description: "dog", Labels: nil},
+		{ID: "a-2", Title: "rotate password", Description: "step",
+			Labels: []string{"human"}},
+	}}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	for _, r := range "ad" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	for _, i := range m.visible {
+		if i.ID == "a-1" {
+			t.Errorf("'ad' should NOT cross-field-match a-1 {cat, dog}; visible: %+v",
+				visibleIDs(m.visible))
+		}
+	}
+}
+
+func visibleIDs(issues []beads.Issue) []string {
+	out := make([]string, 0, len(issues))
+	for _, i := range issues {
+		out = append(out, i.ID)
+	}
+	return out
+}
+
 func TestFuzzyFilterMatchesSubsequence(t *testing.T) {
 	// sahilm/fuzzy ranks by subsequence score, so a query that's
 	// NOT a substring but IS a subsequence still matches. This is

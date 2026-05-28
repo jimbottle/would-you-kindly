@@ -163,6 +163,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only set or clear `m.status` on prompt resolution, not on every
   keystroke.
 
+### Fixed (Phase 3.B review pass)
+
+- **`go mod tidy`**: `sahilm/fuzzy` was added without running tidy,
+  so it landed in the indirect block. Tidied — it now sits in the
+  direct-require list alongside the Bubble Tea ecosystem.
+- **Fuzzy cross-field bleed**: title and description are now scored
+  independently and merged on the max score, so a query like `ad`
+  can't subsequence-match by picking the `a` from a title and the
+  `d` from a description. Locked in by
+  `TestFuzzyFilterDoesNotBleedAcrossTitleDescBoundary`.
+
 ### Phase 3.B — TUI polish
 
 - **True fuzzy matcher** (`github.com/sahilm/fuzzy` v0.1.2): `/`

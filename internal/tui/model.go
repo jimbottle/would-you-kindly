@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,17 +24,21 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 )
 
-// fuzzyIssueSource adapts a slice of issues to sahilm/fuzzy's
-// Source interface. Each "haystack" entry concatenates title and
-// description so the matcher considers both fields with the same
-// scoring rules — a `bd note` line in the description gets the same
-// fuzzy treatment as a word in the title.
-type fuzzyIssueSource []beads.Issue
+// titleSource and descSource each expose ONE field of the issue
+// list to sahilm/fuzzy. We score the two fields separately and take
+// the better of the two per issue, rather than concatenating them
+// into a single haystack — concatenation would let a subsequence
+// query (e.g. "xy") match across the title→description boundary
+// even though those characters live in different fields.
+type titleSource []beads.Issue
 
-func (s fuzzyIssueSource) String(i int) string {
-	return s[i].Title + "\n" + s[i].Description
-}
-func (s fuzzyIssueSource) Len() int { return len(s) }
+func (s titleSource) String(i int) string { return s[i].Title }
+func (s titleSource) Len() int            { return len(s) }
+
+type descSource []beads.Issue
+
+func (s descSource) String(i int) string { return s[i].Description }
+func (s descSource) Len() int            { return len(s) }
 
 // refreshInterval is how often the TUI polls bd for changes. A timer
 // keeps things simple and avoids a filesystem-watcher dependency;
@@ -616,23 +621,50 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // recomputeVisible applies the fuzzy filter to m.all. The matcher
-// is rank-based (sahilm/fuzzy) — partial subsequence matches like
-// "rpw" against "rotate password" score lower than exact substrings,
-// and the result is sorted best-first. Title and description are
-// concatenated so a query can hit either; ties resolve to the order
-// the underlying fuzzy matcher returns, which is stable for a given
-// input.
+// is rank-based (sahilm/fuzzy): subsequence matches score lower
+// than exact substrings, results are sorted best-first, and ties
+// fall back to the issue's position in m.all so the cursor doesn't
+// jump as the user types.
+//
+// Title and description are scored independently and merged on the
+// max score, which avoids letting a query span the title→description
+// boundary (a query "xy" must hit "x" and "y" in the same field).
 func (m *Model) recomputeVisible() {
 	if m.query == "" {
 		m.visible = m.all
-	} else {
-		matches := fuzzy.FindFrom(m.query, fuzzyIssueSource(m.all))
-		out := make([]beads.Issue, 0, len(matches))
-		for _, mt := range matches {
-			out = append(out, m.all[mt.Index])
+		if m.cursor >= len(m.visible) {
+			m.cursor = max(0, len(m.visible)-1)
 		}
-		m.visible = out
+		return
 	}
+
+	best := make(map[int]int, len(m.all))
+	for _, mt := range fuzzy.FindFrom(m.query, titleSource(m.all)) {
+		best[mt.Index] = mt.Score
+	}
+	for _, mt := range fuzzy.FindFrom(m.query, descSource(m.all)) {
+		if s, ok := best[mt.Index]; !ok || mt.Score > s {
+			best[mt.Index] = mt.Score
+		}
+	}
+
+	type scored struct{ idx, score int }
+	list := make([]scored, 0, len(best))
+	for idx, score := range best {
+		list = append(list, scored{idx, score})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].score != list[j].score {
+			return list[i].score > list[j].score
+		}
+		return list[i].idx < list[j].idx
+	})
+	out := make([]beads.Issue, 0, len(list))
+	for _, s := range list {
+		out = append(out, m.all[s.idx])
+	}
+	m.visible = out
+
 	if m.cursor >= len(m.visible) {
 		m.cursor = max(0, len(m.visible)-1)
 	}
