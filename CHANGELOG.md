@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(nothing yet — open Phase 8+ work lives here once filed)
+
+## [0.2.0] — 2026-05-28
+
+Multi-repo support, the agent-side handoff loop, hook composability,
+TUI polish, a diagnostic subcommand, and observability — all the
+post-v0.1.0 work consolidated. Renamed the project (and the Go
+module path, bd issue prefix, and GitHub repo) from `would-you-kindly`
+to `would-you-kindly` mid-cycle.
+
 ### Added
 
 - **`internal/registry`** — JSON-backed registry of bd workspaces at
@@ -311,5 +321,6 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.0
 [0.1.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.1.0
