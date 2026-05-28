@@ -83,6 +83,16 @@ contract as the TUI's `H` key — see
 [`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
 [`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.
 
+#### Claude Code skill
+
+A project-local Claude Code skill at
+[`.claude/skills/handoff/SKILL.md`](.claude/skills/handoff/SKILL.md)
+tells any Claude session that opens this repo *when* `handoff` is the
+right call and *how* to write a runbook the human can act on. The
+skill is explicit about what handoff is NOT (clarifying questions,
+tedious-but-doable work, quick reversible edits) — handoff is for
+"I know what to do but genuinely cannot do it."
+
 ### Auto-closing issues on commit (`wyk init`)
 
 ```bash

@@ -163,6 +163,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only set or clear `m.status` on prompt resolution, not on every
   keystroke.
 
+### Phase 3.A — Claude Code skill file
+
+- New `.claude/skills/handoff/SKILL.md` makes the handoff convention
+  discoverable to any Claude Code session that opens this repo. The
+  skill documents *when* to call `wyk handoff` (steps requiring
+  human authority, irreversible decisions, third-party UI clicks),
+  *when NOT to* (clarifying questions belong in `AskUserQuestion`,
+  tedious-but-doable tasks should just be done), how to write a
+  runbook that a human can actually act on, and good vs. bad handoff
+  examples. Closes the "last mile" the original brief implied:
+  infrastructure → an actually-callable agent skill.
+
 ### Out of scope (deferred to a later phase)
 
 - Composing with an existing post-commit hook from another tool
