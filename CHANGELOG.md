@@ -31,6 +31,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (e.g. moved/deleted on disk) does not poison the whole view; only
   if every sub fails does the user see an error.
 
+### Fixed (Phase 4.B review pass — round 2)
+
+- **`gitBranch` context actually plumbed**: `branchFn` is now
+  `func(context.Context) string` rather than a closure that
+  hard-coded `context.Background()`. A canceled `Fetch` (TUI quit
+  or refresh-during-refresh) now unblocks any in-flight
+  `git rev-parse` instead of waiting for it to return.
+- **Dropped the legacy bare-ID fallback in `MultiBDSource.repoForIssue`**:
+  every in-tree caller obtains the Issue from a `Source.Fetch`
+  which populates Repo, so a missing Repo on a multi-repo write is
+  a programmer error — surface it loudly rather than silently
+  mis-routing via a stale id→repo map. `MultiBDSource` is smaller
+  too (no `idToRepo` map, no `sync.RWMutex`). Locked in by
+  `TestMultiBDSource_WriteWithEmptyRepoErrors`.
+- **`wyk init -dry-run` register preview matches real run**: when
+  the repo is already registered, the dry-run now prints
+  `already registered in <path>` instead of the misleading
+  `would register …`.
+
 ### Fixed (Phase 4.B review pass)
 
 - **`wyk init` idempotency**: the "hook already installed" branch
