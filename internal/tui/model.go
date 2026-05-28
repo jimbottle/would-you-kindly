@@ -580,7 +580,7 @@ func (m Model) updateQuickAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "quick-add cancelled (empty title)"
 			return m, nil
 		}
-		return m, runQuickAdd(repo, title, func(ctx context.Context) (string, error) {
+		return m, runQuickAdd(func(ctx context.Context) (string, error) {
 			return mu.Create(ctx, repo, title)
 		})
 	}
@@ -592,7 +592,7 @@ func (m Model) updateQuickAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // runQuickAdd wraps Mutator.Create in a tea.Cmd that emits a writeMsg
 // with the new ID populated as id. handleWriteResult then displays
 // the "created <id>" banner and refetches.
-func runQuickAdd(repo, title string, fn func(ctx context.Context) (string, error)) tea.Cmd {
+func runQuickAdd(fn func(ctx context.Context) (string, error)) tea.Cmd {
 	return func() tea.Msg {
 		id, err := fn(context.Background())
 		return writeMsg{action: "create", id: id, err: err}
@@ -677,7 +677,13 @@ func runWrite(action, id string, fn func(ctx context.Context) error) tea.Cmd {
 // failure message; the existing data stays so the user can retry.
 func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.status = fmt.Sprintf("%s %s failed: %s", msg.action, msg.id, msg.err.Error())
+		// Create failure has no ID yet — render without the empty
+		// "id" slot to keep the message clean (no double-space).
+		if msg.id == "" {
+			m.status = fmt.Sprintf("%s failed: %s", msg.action, msg.err.Error())
+		} else {
+			m.status = fmt.Sprintf("%s %s failed: %s", msg.action, msg.id, msg.err.Error())
+		}
 		return m, nil
 	}
 	switch msg.action {
