@@ -61,6 +61,24 @@ func TestParseCloseRefs(t *testing.T) {
 			in:   "",
 			want: nil,
 		},
+		{
+			// One ID per line is the documented behaviour. A trailer
+			// listing multiple IDs is rejected wholesale rather than
+			// partially matched — see the closeRefRE comment for why.
+			name: "comma-separated IDs on one line are NOT matched (use separate lines)",
+			in:   "Subject\n\nCloses: bd-1, bd-2",
+			want: nil,
+		},
+		{
+			name: "two separate Closes lines both match",
+			in:   "Subject\n\nCloses: bd-1\nCloses: bd-2",
+			want: []string{"bd-1", "bd-2"},
+		},
+		{
+			name: "trailing text after ID rejects the line",
+			in:   "Closes: bd-1 (we'll handle bd-2 next week)",
+			want: nil,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

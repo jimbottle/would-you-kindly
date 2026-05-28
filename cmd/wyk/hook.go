@@ -23,8 +23,11 @@ import (
 //
 // Anchoring to line-start (multiline mode) keeps a stray "closes:"
 // inside a code block or sentence from triggering a real close. The
-// trailing whitespace tolerance accommodates conventional trailer
-// formatting.
+// trailing `\s*$` anchor is intentional: it enforces ONE ID PER LINE.
+// A trailer like "Closes: bd-1, bd-2" matches nothing — to close
+// both, use two separate Closes lines. This avoids false positives
+// from prose like "Closes: bd-1 (we'll handle bd-2 next week)" where
+// the second token isn't really a close target.
 var closeRefRE = regexp.MustCompile(`(?im)^[\s>]*(?:closes|fixes|resolves)[:\s#]+([a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*)\s*$`)
 
 // parseCloseRefs returns the issue IDs the commit message asks the
@@ -102,7 +105,11 @@ func runHookPostCommit(args []string) int {
 		return 64
 	}
 
-	msg, err := commitMessage(ref)
+	// -C steers both the bd workspace AND the git repo we read the
+	// commit message from. They must match — closing IDs from one
+	// repo's git log against another repo's bd workspace is exactly
+	// the kind of cross-talk the hook should never do.
+	msg, err := commitMessage(*dir, ref)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk hook post-commit: read commit message:", err)
 		return 1
@@ -142,9 +149,15 @@ func runHookPostCommit(args []string) int {
 
 // commitMessage reads the full message of the given git ref. Uses
 // `git show -s --format=%B` because it returns the body cleanly
-// without needing to parse other show output.
-func commitMessage(ref string) (string, error) {
-	cmd := exec.Command("git", "show", "-s", "--format=%B", ref)
+// without needing to parse other show output. If dir is non-empty,
+// git itself is invoked with -C <dir> so the read targets the same
+// repo the bd client will write against.
+func commitMessage(dir, ref string) (string, error) {
+	args := []string{"show", "-s", "--format=%B", ref}
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	cmd := exec.Command("git", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -479,7 +479,7 @@ func TestConfirmCloseCancelsIfTargetVanishes(t *testing.T) {
 	if len(s.closed) != 0 {
 		t.Errorf("Close should not have been called; got %+v", s.closed)
 	}
-	if !strings.Contains(m.status, "no longer") {
+	if !strings.Contains(m.status, "removed from the workspace") {
 		t.Errorf("status should explain the cancellation; got %q", m.status)
 	}
 	if m.mode != modeList {

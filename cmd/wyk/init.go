@@ -69,15 +69,32 @@ func runInit(args []string) int {
 	switch existing, err := os.ReadFile(hookPath); {
 	case err == nil:
 		if bytes.Contains(existing, []byte(hookMarker)) {
-			if !*force && !*dryRun {
+			if *dryRun {
+				fmt.Printf("wyk init: would reinstall %s (existing hook is from a previous `wyk init`)\n", hookPath)
+				return 0
+			}
+			if !*force {
 				fmt.Println("wyk init: post-commit hook already installed (use -force to reinstall)")
 				return 0
 			}
-		} else if !*force {
-			fmt.Fprintf(os.Stderr,
-				"wyk init: refusing to overwrite existing %s\n  (use -force to replace it)\n",
-				hookPath)
-			return 64
+		} else {
+			// Foreign hook. Dry-run is observation-only and must not
+			// return the usage exit code — describe what the real run
+			// would do (refuse, or overwrite with -force) and exit 0.
+			if *dryRun {
+				if *force {
+					fmt.Printf("wyk init: would overwrite foreign hook at %s (-force)\n", hookPath)
+				} else {
+					fmt.Printf("wyk init: would refuse to overwrite foreign hook at %s (re-run with -force to replace)\n", hookPath)
+				}
+				return 0
+			}
+			if !*force {
+				fmt.Fprintf(os.Stderr,
+					"wyk init: refusing to overwrite existing %s\n  (use -force to replace it)\n",
+					hookPath)
+				return 64
+			}
 		}
 	case !errors.Is(err, os.ErrNotExist):
 		fmt.Fprintln(os.Stderr, "wyk init: stat hook:", err)

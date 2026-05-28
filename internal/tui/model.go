@@ -217,11 +217,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Any keystroke processed in modeList — including the ones
 		// that open the filter or note prompts — clears the previous
-		// status banner. Once inside a prompt mode, subsequent
-		// keystrokes do NOT clear it (the prompt handlers leave
-		// m.status alone), so a banner set just before opening the
-		// prompt will be wiped here on entry but a banner set by a
-		// failed write during a prompt would persist for context.
+		// status banner. Once inside a prompt mode, the prompt
+		// handlers don't clear m.status on every keystroke; they only
+		// set or clear it when the prompt resolves (cancel, submit,
+		// vanished-target). So a banner set just before opening a
+		// prompt is wiped here on entry, but typing inside the prompt
+		// preserves a banner set by the resolution itself.
 		switch m.mode {
 		case modeFilter:
 			return m.updateFilter(msg)
@@ -346,7 +347,7 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "y" || msg.String() == "Y" {
 		if !m.issueExists(target) {
 			m.mode = modeList
-			m.status = "close cancelled: " + target + " is no longer in the list"
+			m.status = "close cancelled: " + target + " was removed from the workspace by a refresh"
 			return m, nil
 		}
 		mu := m.mutator()
@@ -362,8 +363,11 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // issueExists reports whether the given ID is still present in the
-// model's current full-fetch result. Used by the prompt handlers to
-// detect a refetch that removed the originally-targeted issue.
+// model's last fetched set (m.all, not the post-filter m.visible).
+// A fuzzy filter that hides an issue does NOT count as "gone" — the
+// user already confirmed the action against a known ID. Used by the
+// prompt handlers to detect a refetch that genuinely removed the
+// originally-targeted issue.
 func (m Model) issueExists(id string) bool {
 	for _, i := range m.all {
 		if i.ID == id {
@@ -439,7 +443,7 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if !m.issueExists(target) {
-			m.status = "note cancelled: " + target + " is no longer in the list"
+			m.status = "note cancelled: " + target + " was removed from the workspace by a refresh"
 			return m, nil
 		}
 		return m, runWrite("note", target, func(ctx context.Context) error {

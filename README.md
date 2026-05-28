@@ -100,6 +100,11 @@ Fixes #bd-42
 Resolves: my-project-abc
 ```
 
+**One ID per line.** A trailer listing multiple IDs (`Closes: bd-1,
+bd-2`) is rejected wholesale — use two separate `Closes:` lines.
+This is deliberate; it avoids closing extras from prose like
+`Closes: bd-1 (we'll handle bd-2 next week)`.
+
 If `.git/hooks/post-commit` already exists from another tool,
 `wyk init` refuses to overwrite without `-force`. Use
 `wyk init -dry-run` to preview, or `wyk init -force` to replace.

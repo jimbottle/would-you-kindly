@@ -138,6 +138,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pure parser (`parseCloseRefs`) is regex-driven and unit-tested
   across a broad range of trailer shapes.
 
+### Fixed (Phase 2.D review pass)
+
+- **`wyk init -dry-run` against a foreign hook** now exits 0 with a
+  preview message ("would refuse to overwrite …") instead of the
+  usage-error code 64. Scripts that gate on `wyk init -dry-run || …`
+  no longer have to special-case the refusal.
+- **`wyk hook post-commit -C <dir>`** now also passes `-C <dir>` to
+  the `git show` invocation that reads the commit message — without
+  it, the hook would have read messages from the process cwd while
+  writing to a different repo's bd workspace.
+- **One-ID-per-line parser behavior** is now both documented in the
+  README and pinned by tests (`Closes: bd-1, bd-2` → no matches;
+  `Closes: bd-1 (we'll handle bd-2 next week)` → no matches).
+- **Handoff TTY guard fails closed**: when `os.Stdin.Stat()` itself
+  errors, the empty-runbook safeguard now refuses rather than
+  falling through to `io.ReadAll`.
+- **TUI cancel-banner wording**: replaced "no longer in the list"
+  with "removed from the workspace by a refresh" so the message
+  matches what `issueExists` actually checks (`m.all`, not the
+  filtered `m.visible`).
+- **Comment cleanup**: tightened the status-banner comment in
+  `Update` to match the prompt handlers' actual behavior — they
+  only set or clear `m.status` on prompt resolution, not on every
+  keystroke.
+
 ### Out of scope (deferred to a later phase)
 
 - Composing with an existing post-commit hook from another tool

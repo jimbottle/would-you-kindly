@@ -109,6 +109,31 @@ func TestInit_DryRunDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestInit_DryRunAgainstForeignHookReturnsZero(t *testing.T) {
+	// -dry-run is observation-only. Even when a foreign hook would
+	// cause the real run to refuse (exit 64), the dry-run must
+	// preview and exit 0 so scripts like `wyk init -dry-run || …`
+	// don't have to special-case the refusal code.
+	dir := gitInit(t)
+	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []byte("#!/bin/sh\n# some other tool's hook\nexit 0\n")
+	if err := os.WriteFile(hookPath, foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runInitIn(t, dir, "-dry-run"); code != 0 {
+		t.Errorf("-dry-run against foreign hook should exit 0; got %d", code)
+	}
+	// And: it must not have written.
+	body, _ := os.ReadFile(hookPath)
+	if string(body) != string(foreign) {
+		t.Errorf("-dry-run modified the foreign hook; got:\n%s", body)
+	}
+}
+
 func TestInit_OutsideRepoFailsCleanly(t *testing.T) {
 	dir := t.TempDir() // not a git repo
 	if code := runInitIn(t, dir); code != 2 {
