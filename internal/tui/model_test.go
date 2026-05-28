@@ -320,6 +320,46 @@ func TestCtrlCQuitsFromFilterPrompt(t *testing.T) {
 	}
 }
 
+func TestTerminalErrorBannerAppendsRetryHint(t *testing.T) {
+	// Terminal errors (bd missing, no workspace) also suspend the
+	// auto-refresh tick, so the small banner can't rely on the next
+	// tick recovering. The recovery path is `r`, and the user needs
+	// an explicit cue in the banner.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
+	m = model.(Model)
+
+	out := m.View()
+	if !strings.Contains(out, "press r to retry") {
+		t.Errorf("terminal-error banner should append the retry hint; got:\n%s", out)
+	}
+	if !strings.Contains(out, sampleIssues()[0].Title) {
+		t.Errorf("terminal error should still leave the table visible; got:\n%s", out)
+	}
+}
+
+func TestTransientErrorBannerOmitsRetryHint(t *testing.T) {
+	// Transient errors recover on the next 10s tick on their own —
+	// the explicit "press r to retry" hint is only needed for
+	// terminal errors that suspend auto-refresh. Keep the banner
+	// terse for the common flaky-bd case.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(fetchedMsg{preset: m.preset, err: errors.New("bd: transient flake")})
+	m = model.(Model)
+
+	out := m.View()
+	if !strings.Contains(out, "refresh failed") {
+		t.Errorf("transient error should still surface as a banner; got:\n%s", out)
+	}
+	if strings.Contains(out, "press r to retry") {
+		t.Errorf("transient banner should NOT include the retry hint (next tick recovers); got:\n%s", out)
+	}
+}
+
 func TestTransientFetchErrorKeepsTableVisible(t *testing.T) {
 	// The "no-blank-on-refresh" invariant: once we have data on
 	// screen, a transient bd error during an auto-refresh tick

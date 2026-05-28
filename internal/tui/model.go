@@ -996,9 +996,19 @@ func (m Model) viewList() string {
 	// this, a flaky bd query during an auto-refresh tick would
 	// wipe the visible rows until the next tick recovered — the
 	// "screen blanks on refresh" symptom.
+	//
+	// Terminal errors (bd missing, no workspace) also suspend the
+	// auto-refresh tick, so the user needs an explicit cue to
+	// press r and re-arm — append the retry hint in that case so
+	// the recovery path stays discoverable. Transient errors
+	// don't need it: the next 10s tick will retry on its own.
 	if m.lastErr != nil && len(m.all) > 0 {
+		msg := "refresh failed: " + friendlyError(m.lastErr)
+		if isTerminalErr(m.lastErr) {
+			msg += " — press r to retry"
+		}
 		b.WriteString("\n")
-		b.WriteString(fetchErrorStyle.Render("refresh failed: " + friendlyError(m.lastErr)))
+		b.WriteString(fetchErrorStyle.Render(msg))
 	}
 
 	// fetch-error banner: per-sub Fetch failures from a multi-repo
