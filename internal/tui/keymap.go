@@ -1,0 +1,35 @@
+package tui
+
+import "github.com/charmbracelet/bubbles/key"
+
+// keyMap collects all bindings the TUI responds to. Kept on the
+// model so the help line in the status bar can render them.
+type keyMap struct {
+	Up      key.Binding
+	Down    key.Binding
+	Top     key.Binding
+	Bottom  key.Binding
+	Open    key.Binding
+	Back    key.Binding
+	Filter  key.Binding
+	Human   key.Binding
+	Cycle   key.Binding
+	Refresh key.Binding
+	Quit    key.Binding
+}
+
+func defaultKeyMap() keyMap {
+	return keyMap{
+		Up:      key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
+		Down:    key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j", "down")),
+		Top:     key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
+		Bottom:  key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
+		Open:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "open")),
+		Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+		Human:   key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "human")),
+		Cycle:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "preset")),
+		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	}
+}
