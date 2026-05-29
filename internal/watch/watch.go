@@ -82,29 +82,38 @@ func (w *Watcher) Events() <-chan struct{} {
 }
 
 // Close stops the watcher and closes Events. Safe to call
-// multiple times.
+// multiple times. Holds the mutex across close(w.events) so the
+// debounce callback (which acquires the same mutex before
+// attempting to send) can never race a send onto a closed
+// channel — every pending AfterFunc that wakes after Close
+// observes w.closed and returns without sending.
 func (w *Watcher) Close() error {
 	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.closed {
-		w.mu.Unlock()
 		return nil
 	}
 	w.closed = true
-	w.mu.Unlock()
+	close(w.events)
 	return w.fs.Close()
 }
 
 // run reads fsnotify events, debounces them, and emits to
-// w.events. Exits when ctx cancels or w.fs.Events closes.
+// w.events. Exits when ctx cancels or w.fs.Events closes. Stops
+// any pending debounce timer and routes the channel close
+// through w.Close so a Close() racing with a final write can't
+// produce a send-on-closed-channel panic.
 func (w *Watcher) run(ctx context.Context) {
-	defer func() {
-		close(w.events)
-	}()
 	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+		_ = w.Close()
+	}()
 	for {
 		select {
 		case <-ctx.Done():
-			_ = w.Close()
 			return
 		case _, ok := <-w.fs.Events:
 			if !ok {
@@ -117,10 +126,17 @@ func (w *Watcher) run(ctx context.Context) {
 				timer.Stop()
 			}
 			timer = time.AfterFunc(DebouncePeriod, func() {
-				// Non-blocking send: if the previous tick is
-				// still in the buffer, dropping the new one is
-				// fine — the consumer will read it and trigger
-				// a refresh that already covers both events.
+				// Hold the lock for the duration of the
+				// closed-check + send so Close (which closes
+				// w.events under the same lock) can never
+				// interleave with the send below. The send is
+				// non-blocking (buffer 1 + default arm) so we
+				// don't keep the lock for arbitrary time.
+				w.mu.Lock()
+				defer w.mu.Unlock()
+				if w.closed {
+					return
+				}
 				select {
 				case w.events <- struct{}{}:
 				default:

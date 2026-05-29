@@ -1,51 +1,61 @@
 package clipboard
 
 import (
+	"bytes"
 	"encoding/base64"
-	"os"
+	"errors"
 	"strings"
 	"testing"
 )
 
-// TestCopy_WritesOSC52 redirects /dev/tty to a pipe via symlink to
-// verify the escape sequence shape. Skipped when the test runner
-// can't fake /dev/tty (e.g., Linux CI containers without a
-// writable /dev). The core escape-sequence assertion is the
-// important part — the file descriptor is just plumbing.
-func TestCopy_WritesOSC52(t *testing.T) {
-	// Direct OSC 52 verification: replicate the same encoding the
-	// production path uses and assert the wire format. Avoids
-	// /dev/tty entirely so the test runs in any sandbox.
-	const want = "wyk-3sz"
-	encoded := base64.StdEncoding.EncodeToString([]byte(want))
-	expected := "\x1b]52;c;" + encoded + "\x07"
-	if !strings.HasPrefix(expected, "\x1b]52;c;") || !strings.HasSuffix(expected, "\x07") {
-		t.Fatalf("test premise: malformed expected OSC 52 sequence")
+func TestWriteOSC52_EmitsExpectedWireFormat(t *testing.T) {
+	// Pin the literal bytes Copy would emit so a regression in
+	// the escape sequence (BEL→ST, dropping the introducer,
+	// changing the clipboard target from `c`) breaks this test.
+	// Without this, the prior version of the file tested only
+	// base64.StdEncoding + the test's own concatenation — a
+	// tautology that left the production format unchecked.
+	var buf bytes.Buffer
+	if err := writeOSC52(&buf, "wyk-3sz"); err != nil {
+		t.Fatalf("writeOSC52: %v", err)
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte("wyk-3sz"))
+	want := "\x1b]52;c;" + encoded + "\x07"
+	if got := buf.String(); got != want {
+		t.Errorf("wire format = %q, want %q", got, want)
 	}
 }
 
-func TestCopy_EmptyStringStillEncodes(t *testing.T) {
-	// base64 of "" is "" — the wire payload is well-formed
-	// (OSC 52 with empty data clears the clipboard, which is a
-	// valid use case some terminals support).
-	if got := base64.StdEncoding.EncodeToString([]byte("")); got != "" {
-		t.Errorf("empty input should encode to empty string; got %q", got)
+func TestWriteOSC52_EmptyStringClearsClipboard(t *testing.T) {
+	// Empty text is still a well-formed OSC 52 — some terminals
+	// interpret an empty payload as "clear the clipboard". The
+	// wire format should be `\x1b]52;c;\x07` (no base64 body).
+	var buf bytes.Buffer
+	if err := writeOSC52(&buf, ""); err != nil {
+		t.Fatalf("writeOSC52(\"\"): %v", err)
+	}
+	if got, want := buf.String(), "\x1b]52;c;\x07"; got != want {
+		t.Errorf("empty-payload wire format = %q, want %q", got, want)
 	}
 }
 
-// TestCopy_TTYUnavailable confirms Copy returns a clear error
-// (not panic) when /dev/tty can't be opened. We can't reliably
-// fake /dev/tty being absent on every platform — but on systems
-// where it IS present, this test is satisfied by the production
-// path being exercised in the OSC-52 test above. So this is more
-// of a documentation test for the contract.
-func TestCopy_TTYUnavailable(t *testing.T) {
-	if _, err := os.Stat("/dev/tty"); err != nil {
-		// /dev/tty isn't present — Copy should surface the
-		// underlying open error.
-		err := Copy("anything")
-		if err == nil {
-			t.Errorf("expected an error when /dev/tty is unavailable")
-		}
+// failingWriter always returns the supplied error on Write so the
+// error-propagation contract can be tested without mocking
+// /dev/tty itself.
+type failingWriter struct{ err error }
+
+func (f failingWriter) Write(_ []byte) (int, error) { return 0, f.err }
+
+func TestWriteOSC52_PropagatesWriteError(t *testing.T) {
+	sentinel := errors.New("disk full")
+	err := writeOSC52(failingWriter{err: sentinel}, "anything")
+	if err == nil {
+		t.Fatalf("expected an error when the writer fails")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("returned error should wrap the writer's; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "write OSC 52") {
+		t.Errorf("error should name the OSC 52 context; got %q", err.Error())
 	}
 }

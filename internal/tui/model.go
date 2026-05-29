@@ -2300,6 +2300,14 @@ func keyHit(msg tea.KeyMsg, b key.Binding) bool {
 // blocker-aware semantics that a label count can't approximate,
 // and a wrong number in a stats line is worse than no number.
 // Empty when there's nothing to display (no human, no me set).
+//
+// IMPORTANT: counts are scoped to the *current preset*'s fetch.
+// m.all holds only the rows the active preset returned, so "N
+// human" under PresetReady counts human-flagged ready issues
+// (not workspace-wide). The `N/M` cell to the left of this
+// suffix already advertises the preset name, so the scoping is
+// implicit — but if a future preset is added where the count
+// could mislead, surface the scoping explicitly here.
 func (m Model) renderStatsLine() string {
 	human := 0
 	mine := 0

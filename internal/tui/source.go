@@ -579,7 +579,7 @@ func (m *MultiBDSource) Reopen(ctx context.Context, i beads.Issue) error {
 	if err != nil {
 		return err
 	}
-	return sub.(Mutator).Reopen(ctx, i)
+	return sub.Reopen(ctx, i)
 }
 
 func (m *MultiBDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {

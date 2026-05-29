@@ -92,7 +92,8 @@ func (f *fakeRepoSource) Create(_ context.Context, _, title, _ string) (string, 
 	// Stub returns a fake ID derived from the title so tests can
 	// assert which sub got routed to without wiring a real bd.
 	// The assignee arg is preserved in production but tests that
-	// care about it use the stubMutator's `created` slice.
+	// care about it use the stubMutator's `createdAssignees`
+	// slice (parallel to `created`).
 	return "new-" + title, nil
 }
 func (f *fakeRepoSource) Detail(_ context.Context, i beads.Issue) (beads.Issue, error) {
@@ -102,10 +103,8 @@ func (f *fakeRepoSource) Detail(_ context.Context, i beads.Issue) (beads.Issue, 
 	return i, nil
 }
 func (f *fakeRepoSource) Reopen(_ context.Context, i beads.Issue) error {
-	// Reopen routing is covered by the BDSource-level test; the
-	// multi-source tests just need the method to exist so the
-	// Mutator interface is satisfied. Recording the call lets the
-	// future routing test stay one symbol away.
+	// Record the call so TestMultiBDSource_ReopenRoutesAndErrors
+	// can assert routing landed on the right sub.
 	f.reopened = append(f.reopened, i.ID)
 	return nil
 }
@@ -632,6 +631,47 @@ func TestMultiBDSource_WriteRoutesToCorrectRepo(t *testing.T) {
 	}
 }
 
+func TestMultiBDSource_ReopenRoutesAndErrors(t *testing.T) {
+	// Reopen goes through the same repoForIssue path as Close;
+	// without a dedicated test, the routing was an untested
+	// surface even though it's the riskiest part (the panic was a
+	// gratuitous `.(Mutator)` assertion that has since been
+	// removed). Mirror the Close suite: assert routing to the
+	// matching sub, plus the ghost-repo error surface.
+	a := &fakeRepoSource{issues: []beads.Issue{{ID: "a-1", Title: "a"}}}
+	b := &fakeRepoSource{issues: []beads.Issue{{ID: "b-9", Title: "b"}}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"alpha", "main", a},
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"beta", "main", b},
+	)
+	if _, err := m.Fetch(context.Background(), filter.PresetAll); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+
+	if err := m.Reopen(context.Background(), beads.Issue{ID: "b-9", Repo: "beta"}); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	if len(a.reopened) != 0 {
+		t.Errorf("alpha got an unrelated reopen: %+v", a.reopened)
+	}
+	if len(b.reopened) != 1 || b.reopened[0] != "b-9" {
+		t.Errorf("beta should have received Reopen(b-9); got %+v", b.reopened)
+	}
+
+	// Ghost repo must error rather than silently route somewhere.
+	if err := m.Reopen(context.Background(), beads.Issue{ID: "z-99", Repo: "ghost"}); err == nil {
+		t.Error("Reopen on unknown Repo should error")
+	}
+}
+
 func TestMultiBDSource_WriteToUnknownRepoErrors(t *testing.T) {
 	a := &fakeRepoSource{issues: []beads.Issue{{ID: "a-1", Title: "a"}}}
 	m := newMultiForTest(t,
@@ -797,9 +837,9 @@ func TestMarkBlockedByHuman_FlagsRowsWithHumanLabeledBlocker(t *testing.T) {
 	//   - leave the candidate whose blockers are mixed flagged
 	//     (any human blocker triggers it, not all-must-be-human)
 	issues := []beads.Issue{
-		{ID: "would-you-kindly-aaa", Labels: []string{"src:agent"}, DependencyCount: 1},  // blocker = human → flag
-		{ID: "would-you-kindly-bbb", Labels: []string{"src:agent"}, DependencyCount: 1},  // blocker = non-human → no flag
-		{ID: "would-you-kindly-ccc", Labels: []string{"src:agent"}, DependencyCount: 2},  // mixed → flag
+		{ID: "would-you-kindly-aaa", Labels: []string{"src:agent"}, DependencyCount: 1}, // blocker = human → flag
+		{ID: "would-you-kindly-bbb", Labels: []string{"src:agent"}, DependencyCount: 1}, // blocker = non-human → no flag
+		{ID: "would-you-kindly-ccc", Labels: []string{"src:agent"}, DependencyCount: 2}, // mixed → flag
 	}
 	stub := &stubDepLister{
 		byID: map[string][]beads.Issue{

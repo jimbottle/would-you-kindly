@@ -3,12 +3,13 @@
 // docs/CONTRACT.md for the convention it follows.
 //
 // Modes:
-//   wyk                      TUI (default)
-//   wyk --version            print version and exit
-//   wyk --probe              non-TTY one-shot listing the human-flagged issues
-//   wyk handoff <id>         hand <id> back to a human; runbook read from stdin
-//   wyk init                 install the post-commit auto-close hook
-//   wyk hook post-commit     called by the installed hook; closes referenced issues
+//
+//	wyk                      TUI (default)
+//	wyk --version            print version and exit
+//	wyk --probe              non-TTY one-shot listing the human-flagged issues
+//	wyk handoff <id>         hand <id> back to a human; runbook read from stdin
+//	wyk init                 install the post-commit auto-close hook
+//	wyk hook post-commit     called by the installed hook; closes referenced issues
 package main
 
 import (
@@ -31,8 +32,8 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
-	"github.com/jimbottle/would-you-kindly/internal/watch"
 	"github.com/jimbottle/would-you-kindly/internal/updater"
+	"github.com/jimbottle/would-you-kindly/internal/watch"
 	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
 
@@ -229,19 +230,20 @@ func buildSource(dir, me string) (tui.Source, []string, string, error) {
 // (or --file), then call pkg/handoff.BounceToHuman against the bd
 // CLI client. Two modes:
 //
-//   wyk handoff <id>             hand off an EXISTING issue
-//   wyk handoff -create "title"  FILE a new issue and hand it off
-//                                in one step (the common agent case)
+//	wyk handoff <id>             hand off an EXISTING issue
+//	wyk handoff -create "title"  FILE a new issue and hand it off
+//	                             in one step (the common agent case)
 //
 // The -create mode is the more common agent-side path: the agent
 // has just decided this needs a human, so it both files the bd
 // issue and applies the human label in a single invocation.
 //
 // Exit codes:
-//   0   success (also returned for --help, which is a deliberate request)
-//   1   generic failure (bd error, IO error, …)
-//   2   bd missing or no workspace
-//   64  usage error (bad flags / missing args / TTY-stdin without --allow-empty)
+//
+//	0   success (also returned for --help, which is a deliberate request)
+//	1   generic failure (bd error, IO error, …)
+//	2   bd missing or no workspace
+//	64  usage error (bad flags / missing args / TTY-stdin without --allow-empty)
 func runHandoff(args []string) int {
 	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
 	dir := fs.String("C", "", "run as if bd had been started in this directory")

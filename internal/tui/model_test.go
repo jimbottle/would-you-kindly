@@ -36,13 +36,13 @@ func (s *stubSource) Fetch(_ context.Context, p filter.Preset) ([]beads.Issue, e
 // it through.
 type stubMutator struct {
 	stubSource
-	closed            []string
-	reopened          []string
-	added             []labelOp
-	removed           []labelOp
-	notes             []labelOp // reuse the {id,label} shape for {id, text}
-	created           []labelOp // {repo, title} for quick-add
-	createdAssignees  []string  // parallel slice to created, recording the assignee passed to Create
+	closed           []string
+	reopened         []string
+	added            []labelOp
+	removed          []labelOp
+	notes            []labelOp // reuse the {id,label} shape for {id, text}
+	created          []labelOp // {repo, title} for quick-add
+	createdAssignees []string  // parallel slice to created, recording the assignee passed to Create
 }
 
 type labelOp struct{ id, label string }
@@ -1839,20 +1839,41 @@ func TestFSEventMsg_SuspendedOnTerminalError(t *testing.T) {
 	// Terminal-error suspension (no bd / no workspace) still
 	// applies — refetching when there's no source to query just
 	// wastes work. The wait still re-arms so a later recovery
-	// (user fixes PATH) can come through.
-	src := &stubSource{err: errors.New("no bd binary on PATH")}
+	// (user fixes PATH) can come through. We distinguish the
+	// suspended branch from the active branch by the side effect
+	// the inner fetchCmd would produce: src.calls ticks if and
+	// only if a refetch was batched. The wait callback reads from
+	// a pre-loaded channel so neither branch blocks the test.
+	src := &stubSource{err: beads.ErrBDNotFound}
 	events := make(chan struct{}, 1)
+	events <- struct{}{} // pre-load so waitFSEvent returns immediately
 	m := applyFetched(New(src).WithFSEvents(events), src)
-	m.lastErr = errors.New("no bd binary on PATH") // simulate the terminal state
+	m.lastErr = beads.ErrBDNotFound // isTerminalErr definitely matches this
 
-	// Override the terminal-error detector via a no-bd-style
-	// error if it matches; rely on isTerminalErr's substring
-	// match. If isTerminalErr would return false for this string,
-	// the assertion below still holds — we just verify cmd
-	// isn't nil (re-arm should always happen).
+	callsBefore := src.calls
 	_, cmd := m.Update(fsEventMsg{})
 	if cmd == nil {
-		t.Errorf("even in terminal-error state, the wait should re-arm")
+		t.Fatalf("even in terminal-error state, the wait should re-arm")
+	}
+	drainCmd(cmd)
+	if src.calls != callsBefore {
+		t.Errorf("terminal-error suspension should NOT refetch; calls=%d before=%d", src.calls, callsBefore)
+	}
+}
+
+// drainCmd walks a tea.Cmd (and any nested tea.BatchMsg) so every
+// inner func() runs and produces its side effects. Used by the
+// fsEventMsg suspension test to detect whether a fetchCmd is
+// hiding inside a batch; a single non-batch cmd is just consumed.
+func drainCmd(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			drainCmd(c)
+		}
 	}
 }
 

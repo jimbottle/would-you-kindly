@@ -17,6 +17,7 @@ package clipboard
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -32,11 +33,20 @@ func Copy(text string) error {
 		return fmt.Errorf("open /dev/tty: %w", err)
 	}
 	defer f.Close()
+	return writeOSC52(f, text)
+}
+
+// writeOSC52 emits the OSC 52 escape sequence carrying text's
+// base64 payload to w. Extracted so the wire format can be pinned
+// in tests against a bytes.Buffer — Copy itself is just the tty
+// open + this write.
+//
+// OSC 52 ; c (clipboard target) ; <base64 payload> BEL.
+// Some terminals accept ST (\x1b\\) instead of BEL; BEL is the
+// more compatible choice and what xterm originally documented.
+func writeOSC52(w io.Writer, text string) error {
 	encoded := base64.StdEncoding.EncodeToString([]byte(text))
-	// OSC 52 ; c (clipboard target) ; <base64 payload> BEL.
-	// Some terminals accept ST (\x1b\\) instead of BEL; BEL is the
-	// more compatible choice and what xterm originally documented.
-	if _, err := fmt.Fprintf(f, "\x1b]52;c;%s\x07", encoded); err != nil {
+	if _, err := fmt.Fprintf(w, "\x1b]52;c;%s\x07", encoded); err != nil {
 		return fmt.Errorf("write OSC 52: %w", err)
 	}
 	return nil
