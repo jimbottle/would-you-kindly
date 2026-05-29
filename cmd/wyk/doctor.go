@@ -87,6 +87,8 @@ func (c check) MarshalJSON() ([]byte, error) {
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit checks as a structured JSON object for CI / dashboard consumption")
+	fix := fs.Bool("fix", false, "install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone)")
+	dryRun := fs.Bool("dry-run", false, "with -fix, print the plan without installing")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -95,8 +97,19 @@ func runDoctor(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk doctor [-json]")
+		fmt.Fprintln(os.Stderr, "usage: wyk doctor [-json] [-fix [-dry-run]]")
 		return 64
+	}
+	if *asJSON && *fix {
+		fmt.Fprintln(os.Stderr, "wyk doctor: -json and -fix are mutually exclusive")
+		return 64
+	}
+	if *dryRun && !*fix {
+		fmt.Fprintln(os.Stderr, "wyk doctor: -dry-run only applies with -fix")
+		return 64
+	}
+	if *fix {
+		return runDoctorFix(*dryRun)
 	}
 
 	checks := collectDoctorChecks()
@@ -137,6 +150,104 @@ func runDoctor(args []string) int {
 		fmt.Println("doctor: OK")
 		return 0
 	}
+}
+
+// runDoctorFix walks every registered repo and installs wyk's
+// post-commit hook in the ones missing it. Foreign hooks are
+// deliberately skipped — silently re-chaining would commit the
+// user to a wrapper they may not want; the doctor text output
+// already flags those WARN entries and tells the user to run
+// `wyk init -chain` or `-force` explicitly. Hooks already wyk's
+// (plain or chained) are also skipped — nothing to do.
+//
+// Exit codes:
+//
+//	0  all repos in good shape (or, with -dry-run, would be)
+//	1  registry / hook-install error for at least one repo (partial work still done)
+//	2  registry resolvable but unreadable, or no registered repos
+//	64 usage error (handled by caller)
+func runDoctorFix(dryRun bool) int {
+	regPath, err := registry.DefaultPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor:", err)
+		return 2
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor:", err)
+		return 2
+	}
+	if len(reg.Repos) == 0 {
+		fmt.Fprintln(os.Stderr, "wyk doctor: no repos registered — nothing to fix")
+		return 2
+	}
+
+	hadError := false
+	fixed, skipped := 0, 0
+	for _, r := range reg.Repos {
+		hookPath, herr := resolveGitHookPath(r.Path, "post-commit")
+		if herr != nil {
+			fmt.Fprintf(os.Stderr, "wyk doctor: %s: resolve hook path: %v\n", r.Name, herr)
+			hadError = true
+			continue
+		}
+		body, rerr := os.ReadFile(hookPath)
+		switch {
+		case errors.Is(rerr, os.ErrNotExist):
+			// The fixable case: no hook at all.
+			if dryRun {
+				fmt.Printf("wyk doctor: would install hook in %s (%s)\n", r.Name, r.Path)
+				fixed++
+				continue
+			}
+			if code := installHookIn(r.Path, "-skip-bd-init", "-skip-register"); code != 0 {
+				fmt.Fprintf(os.Stderr, "wyk doctor: %s: install failed (exit %d)\n", r.Name, code)
+				hadError = true
+				continue
+			}
+			fixed++
+		case rerr != nil:
+			fmt.Fprintf(os.Stderr, "wyk doctor: %s: read hook: %v\n", r.Name, rerr)
+			hadError = true
+		case bytes.Contains(body, []byte(hookMarker)):
+			// Already wyk's (plain or chained) — nothing to do.
+			skipped++
+		default:
+			// Foreign hook — silently re-chaining is the wrong call;
+			// the user should run `wyk init -C <path> -chain` (or
+			// -force) themselves.
+			fmt.Printf("wyk doctor: %s: foreign hook left alone (run `wyk init -C %q -chain` or `-force` to override)\n", r.Name, r.Path)
+			skipped++
+		}
+	}
+
+	prefix := "doctor -fix"
+	if dryRun {
+		prefix += " (dry-run)"
+	}
+	fmt.Printf("%s: %d to install, %d skipped (already-wyk or foreign)\n", prefix, fixed, skipped)
+	if hadError {
+		return 1
+	}
+	return 0
+}
+
+// installHookIn shells out to runInit in a child directory by
+// constructing an args slice and a goroutine-local cwd switch.
+// Implemented as a package-level var so the fix tests can stub
+// the install side effect without spawning real bd.
+var installHookIn = func(dir string, extraArgs ...string) int {
+	prev, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor: getwd:", err)
+		return 1
+	}
+	if err := os.Chdir(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor: chdir:", err)
+		return 1
+	}
+	defer func() { _ = os.Chdir(prev) }()
+	return runInit(extraArgs)
 }
 
 // collectDoctorChecks gathers every check into a single slice so

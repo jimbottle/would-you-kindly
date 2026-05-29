@@ -74,12 +74,14 @@ wyk stats [-C <dir>] [-json] [-repo name]
 Checks bd / wyk on PATH, $EDITOR, audit-trail actor, XDG paths, and per-repo .git / .beads / hook state.
 
 ```
-wyk doctor [-json]
+wyk doctor [-json] [-fix [-dry-run]]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-json` | `false` | emit checks as a structured JSON object for CI / dashboard consumption |
+| `-fix` | `false` | install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone) |
+| `-dry-run` | `false` | with -fix, print the plan without installing |
 
 ## `wyk registry`
 

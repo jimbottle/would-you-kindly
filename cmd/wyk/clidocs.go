@@ -83,9 +83,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "doctor",
 		Summary: "Checks bd / wyk on PATH, $EDITOR, audit-trail actor, XDG paths, and per-repo .git / .beads / hook state.",
-		Usage:   "wyk doctor [-json]",
+		Usage:   "wyk doctor [-json] [-fix [-dry-run]]",
 		Flags: []cliFlag{
 			{Name: "-json", Default: "false", Description: "emit checks as a structured JSON object for CI / dashboard consumption"},
+			{Name: "-fix", Default: "false", Description: "install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone)"},
+			{Name: "-dry-run", Default: "false", Description: "with -fix, print the plan without installing"},
 		},
 	},
 	{

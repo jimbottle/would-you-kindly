@@ -11,6 +11,109 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
+func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {
+	// Three registered repos in a tempdir-rooted registry: one with
+	// no hook (the fix target), one with wyk's hook (skip), one
+	// with a foreign hook (skip with notice).
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+
+	missing := gitInit(t)
+	wykd := gitInit(t)
+	foreign := gitInit(t)
+	// Plant a wyk-marked hook in wykd. hookMarker is the substring
+	// the doctor recognises as wyk's; the rest is arbitrary content.
+	wykHook := filepath.Join(wykd, ".git", "hooks", "post-commit")
+	if err := os.MkdirAll(filepath.Dir(wykHook), 0o755); err != nil {
+		t.Fatalf("mkdir hooks dir: %v", err)
+	}
+	if err := os.WriteFile(wykHook, []byte("#!/bin/sh\n# "+hookMarker+"\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write wyk hook: %v", err)
+	}
+	// Plant a foreign hook in foreign.
+	forHook := filepath.Join(foreign, ".git", "hooks", "post-commit")
+	if err := os.MkdirAll(filepath.Dir(forHook), 0o755); err != nil {
+		t.Fatalf("mkdir hooks dir: %v", err)
+	}
+	if err := os.WriteFile(forHook, []byte("#!/bin/sh\n# something else\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write foreign hook: %v", err)
+	}
+
+	regPath, _ := registry.DefaultPath()
+	reg := &registry.Registry{Repos: []registry.Repo{
+		{Name: "missing", Path: missing},
+		{Name: "wykd", Path: wykd},
+		{Name: "foreign", Path: foreign},
+	}}
+	if err := reg.Save(regPath); err != nil {
+		t.Fatalf("save registry: %v", err)
+	}
+
+	// Stub the install seam so this test doesn't actually shell
+	// out to runInit (which would chdir + try `bd init` + spawn
+	// the real `bd` binary). Record which dirs the fix attempted
+	// to install into.
+	var installed []string
+	prev := installHookIn
+	installHookIn = func(dir string, _ ...string) int {
+		installed = append(installed, dir)
+		return 0
+	}
+	defer func() { installHookIn = prev }()
+
+	if code := runDoctorFix(false); code != 0 {
+		t.Errorf("runDoctorFix exit %d, want 0", code)
+	}
+	if len(installed) != 1 || installed[0] != missing {
+		t.Errorf("installHookIn called for %v, want [%q] (missing only)", installed, missing)
+	}
+	// wyk-marked hook untouched.
+	if body, _ := os.ReadFile(wykHook); !strings.Contains(string(body), hookMarker) {
+		t.Errorf("wyk hook was modified; got:\n%s", body)
+	}
+	// Foreign hook untouched.
+	if body, _ := os.ReadFile(forHook); strings.Contains(string(body), hookMarker) {
+		t.Errorf("foreign hook was re-chained without consent; got:\n%s", body)
+	}
+}
+
+func TestRunDoctorFix_DryRunSkipsWrites(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	missing := gitInit(t)
+	regPath, _ := registry.DefaultPath()
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "missing", Path: missing}}}
+	if err := reg.Save(regPath); err != nil {
+		t.Fatalf("save registry: %v", err)
+	}
+
+	called := false
+	prev := installHookIn
+	installHookIn = func(_ string, _ ...string) int { called = true; return 0 }
+	defer func() { installHookIn = prev }()
+
+	if code := runDoctorFix(true); code != 0 {
+		t.Errorf("dry-run exit %d, want 0", code)
+	}
+	if called {
+		t.Error("dry-run must not call installHookIn")
+	}
+}
+
+func TestRunDoctorFix_NoRegistryReturns2(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	// No registry file at all.
+	stderr := captureStderr(t, func() {
+		if code := runDoctorFix(false); code != 2 {
+			t.Errorf("no-registry exit %d, want 2", code)
+		}
+	})
+	if !strings.Contains(stderr, "no repos registered") {
+		t.Errorf("expected 'no repos registered' message; got %q", stderr)
+	}
+}
+
 func TestCheckStatus_MarshalJSON(t *testing.T) {
 	cases := []struct {
 		s    checkStatus
