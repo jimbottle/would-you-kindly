@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
 // checkStatus is the verdict for a single doctor check.
@@ -64,6 +66,9 @@ func runDoctor(args []string) int {
 	var checks []check
 	checks = append(checks, checkBDOnPath())
 	checks = append(checks, checkWykOnPath())
+	checks = append(checks, checkEditor())
+	checks = append(checks, checkActor())
+	checks = append(checks, checkXDGPaths()...)
 	regChecks, repos := checkRegistry()
 	checks = append(checks, regChecks...)
 	for _, r := range repos {
@@ -157,6 +162,109 @@ func checkWykOnPath() check {
 	}
 	return check{name: "wyk binary on PATH", status: statusPass, detail: path}
 }
+
+// checkEditor reports the resolved $EDITOR and whether the binary
+// actually exists on PATH. WARN (not FAIL) when EDITOR is unset
+// because the TUI's `e` key falls back to `vi` — it still works,
+// just maybe not in the user's preferred editor. FAIL only when
+// the chosen binary doesn't resolve.
+func checkEditor() check {
+	editor := os.Getenv("EDITOR")
+	fallback := false
+	if editor == "" {
+		editor = "vi"
+		fallback = true
+	}
+	path, err := exec.LookPath(editor)
+	if err != nil {
+		return check{
+			name:   "$EDITOR resolves",
+			status: statusFail,
+			detail: fmt.Sprintf("the TUI's `e` key opens %q on the description; not on PATH. Set EDITOR to a binary you have installed (e.g. vim, nvim, nano, code -w).", editor),
+		}
+	}
+	st := statusPass
+	detail := fmt.Sprintf("%s — %s", editor, path)
+	if fallback {
+		st = statusWarn
+		detail = fmt.Sprintf("%s — %s (fallback; $EDITOR is unset)", editor, path)
+	}
+	return check{name: "$EDITOR resolves", status: st, detail: detail}
+}
+
+// checkActor reports the audit-trail identity bd uses when wyk
+// writes (close / note / etc.). Resolution order matches bd's:
+// $BEADS_ACTOR, then git user.name, then $USER. WARN when none
+// is set so a future `bd audit` walk won't show empty actors.
+func checkActor() check {
+	if v := os.Getenv("BEADS_ACTOR"); v != "" {
+		return check{name: "audit-trail actor", status: statusPass, detail: "$BEADS_ACTOR = " + v}
+	}
+	if out, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+		if name := strings.TrimSpace(string(out)); name != "" {
+			return check{name: "audit-trail actor", status: statusPass, detail: "git user.name = " + name}
+		}
+	}
+	if v := os.Getenv("USER"); v != "" {
+		return check{name: "audit-trail actor", status: statusPass, detail: "$USER = " + v}
+	}
+	return check{
+		name:   "audit-trail actor",
+		status: statusWarn,
+		detail: "set $BEADS_ACTOR (or git config user.name) so the bd audit trail records who acted",
+	}
+}
+
+// checkXDGPaths reports the resolved config-file locations for
+// wyk's three per-user state files (registry, ui prefs, filter
+// aliases). Each path gets its own PASS/WARN line so a user can
+// tell at a glance where wyk would read from. WARN when the file
+// is missing (not FAIL — first-run state is fine; the user just
+// hasn't seeded that file yet).
+func checkXDGPaths() []check {
+	var out []check
+	for _, e := range []struct {
+		name string
+		path func() (string, error)
+	}{
+		{"~/.config/wyk/repos.json", registry.DefaultPath},
+		{"~/.config/wyk/ui.json", uiconfigDefaultPath},
+		{"~/.config/wyk/filters.json", filtersDefaultPath},
+	} {
+		p, err := e.path()
+		if err != nil {
+			out = append(out, check{
+				name:   e.name,
+				status: statusWarn,
+				detail: "could not resolve path: " + err.Error(),
+			})
+			continue
+		}
+		if _, err := os.Stat(p); err != nil {
+			out = append(out, check{
+				name:   e.name,
+				status: statusWarn,
+				detail: p + " (not yet created — wyk seeds it on first write)",
+			})
+			continue
+		}
+		out = append(out, check{
+			name:   e.name,
+			status: statusPass,
+			detail: p,
+		})
+	}
+	return out
+}
+
+// uiconfigDefaultPath and filtersDefaultPath thin-wrap the
+// per-package DefaultPath helpers so checkXDGPaths can build its
+// table without importing both packages directly. Keeps the
+// import block tidy.
+var (
+	uiconfigDefaultPath = uiconfig.DefaultPath
+	filtersDefaultPath  = filters.DefaultPath
+)
 
 func checkRegistry() ([]check, []registry.Repo) {
 	regPath, err := registry.DefaultPath()

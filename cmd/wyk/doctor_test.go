@@ -60,6 +60,98 @@ func docRepo(t *testing.T, withGit, withBeads bool, hookBody string) registry.Re
 	return registry.Repo{Name: filepath.Base(dir), Path: resolved}
 }
 
+func TestCheckEditor_WarnsOnFallbackPassesOnSet(t *testing.T) {
+	// Unset → fallback "vi", WARN if it resolves (most systems
+	// have vi).
+	t.Run("fallback when EDITOR unset", func(t *testing.T) {
+		t.Setenv("EDITOR", "")
+		got := checkEditor()
+		// The status depends on whether vi is installed; we only
+		// pin the surfaced editor and the fallback note.
+		if !strings.Contains(got.detail, "vi") {
+			t.Errorf("expected vi in detail; got %+v", got)
+		}
+		if got.status == statusPass && !strings.Contains(got.detail, "fallback") {
+			t.Errorf("WARN-style detail should mention fallback; got %+v", got)
+		}
+	})
+
+	t.Run("pass when EDITOR set and resolves", func(t *testing.T) {
+		// Point EDITOR at a binary we know is on PATH on every
+		// reasonable test host.
+		t.Setenv("EDITOR", "true")
+		got := checkEditor()
+		if got.status != statusPass {
+			t.Errorf("EDITOR=true should PASS; got %+v", got)
+		}
+		if !strings.Contains(got.detail, "true") {
+			t.Errorf("detail should name the resolved binary; got %+v", got)
+		}
+	})
+
+	t.Run("fail when EDITOR set but missing", func(t *testing.T) {
+		t.Setenv("EDITOR", "this-binary-cannot-exist-12345")
+		got := checkEditor()
+		if got.status != statusFail {
+			t.Errorf("missing binary should FAIL; got %+v", got)
+		}
+	})
+}
+
+func TestCheckActor_PrefersBeadsActor(t *testing.T) {
+	t.Setenv("BEADS_ACTOR", "the-actor")
+	got := checkActor()
+	if got.status != statusPass || !strings.Contains(got.detail, "the-actor") {
+		t.Errorf("BEADS_ACTOR should win; got %+v", got)
+	}
+}
+
+func TestCheckActor_FallsBackToUser(t *testing.T) {
+	t.Setenv("BEADS_ACTOR", "")
+	// Force git config to fail / return empty by pointing HOME
+	// at a tempdir (git falls back to global config which won't
+	// exist for this user). This also makes the test independent
+	// of the developer's machine.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USER", "ev")
+	got := checkActor()
+	// May either land on git (if a system-wide config exists) or
+	// on $USER; the contract we pin is "not WARN".
+	if got.status == statusWarn {
+		t.Errorf("with $USER set, actor should resolve; got WARN: %+v", got)
+	}
+}
+
+func TestCheckXDGPaths_PassesWhenFilePresent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	wyk := filepath.Join(dir, "wyk")
+	if err := os.MkdirAll(wyk, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Seed only the registry file. The other two should still
+	// land as WARN (not yet created) — pin both branches at
+	// once.
+	if err := os.WriteFile(filepath.Join(wyk, "repos.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := checkXDGPaths()
+	if len(got) != 3 {
+		t.Fatalf("expected 3 path checks; got %d", len(got))
+	}
+	// First entry is repos.json → PASS.
+	if got[0].status != statusPass {
+		t.Errorf("repos.json should PASS when present; got %+v", got[0])
+	}
+	// ui.json / filters.json → WARN (not yet created).
+	for i := 1; i < 3; i++ {
+		if got[i].status != statusWarn {
+			t.Errorf("%s should WARN when absent; got %+v", got[i].name, got[i])
+		}
+	}
+}
+
 func TestCheckRepo_MissingGitFails(t *testing.T) {
 	r := docRepo(t, false, false, "") // no .git
 	checks := checkRepo(r)
