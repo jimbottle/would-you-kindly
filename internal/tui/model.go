@@ -26,6 +26,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
 // titleSource and descSource each expose ONE field of the issue
@@ -60,6 +61,7 @@ const (
 	modeNote                     // text input for a new note
 	modeHelp                     // modal listing every keybinding
 	modeQuickAdd                 // text input for a new issue title
+	modeColumns                  // column-visibility overlay (o)
 )
 
 // Source abstracts where issues come from so a test can plug in
@@ -226,6 +228,20 @@ type Model struct {
 	// reaching back through the Source. Toggled by C.
 	showClosed bool
 
+	// colsHidden is the per-column visibility map, keyed by the
+	// constants in columns.go. Populated from uiconfig at startup
+	// (via WithHiddenColumns) and mutated by the `o` overlay; on
+	// overlay close the new state is persisted back to disk.
+	// nil and empty maps both mean "everything visible" so a
+	// first-run user sees the default layout without ceremony.
+	colsHidden map[string]bool
+
+	// uiConfigPath is the resolved on-disk path to ui.json so the
+	// overlay can persist column-visibility changes without
+	// re-resolving XDG every time. Empty disables persistence
+	// (used by tests and read-only embeddings).
+	uiConfigPath string
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -289,6 +305,19 @@ func NewWithHint(src Source, hint string) Model {
 // model renders it as a one-line banner above the help bar.
 func (m Model) WithUpdateNudge(nudge string) Model {
 	m.updateNudge = nudge
+	return m
+}
+
+// WithHiddenColumns returns a copy of the model with the column-
+// visibility map and persistence path set. main wires this from
+// uiconfig.Load on startup; tests can pass an empty path to keep
+// toggles in-memory only.
+func (m Model) WithHiddenColumns(hidden map[string]bool, persistPath string) Model {
+	if hidden == nil {
+		hidden = map[string]bool{}
+	}
+	m.colsHidden = hidden
+	m.uiConfigPath = persistPath
 	return m
 }
 
@@ -558,6 +587,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateHelp(msg)
 		case modeQuickAdd:
 			return m.updateQuickAdd(msg)
+		case modeColumns:
+			return m.updateColumns(msg)
 		default:
 			m.status = ""
 			return m.updateList(msg)
@@ -640,6 +671,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setSortKey(m.sortBy.next())
 	case keyHit(msg, m.keys.ShowClosed):
 		return m.toggleShowClosed()
+	case keyHit(msg, m.keys.Columns):
+		m.mode = modeColumns
+		return m, nil
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
 		// suspended after a terminal error. Bumping tickGen retires
@@ -1113,6 +1147,69 @@ func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateColumns handles input in the column-visibility overlay.
+// Numbers 1-N toggle columns in the toggleableColumns registry
+// order; multi-only columns silently no-op while single-repo. esc
+// or `o` closes the overlay and persists the new state if a
+// uiConfigPath is set. Persistence failure is surfaced as a status
+// banner but doesn't block closing — the toggle is still in effect
+// for the current session, only the next launch loses it.
+func (m Model) updateColumns(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	switch msg.String() {
+	case "esc", "o", "q":
+		if err := m.persistColumns(); err != nil {
+			m.status = "ui.json save failed: " + err.Error()
+		}
+		m.mode = modeList
+		return m, nil
+	}
+	// Digit toggles. Build the index from the rune so non-digit
+	// keystrokes inside the overlay (typing junk by accident) are
+	// ignored rather than triggering an out-of-range slot.
+	if len(msg.Runes) == 1 {
+		r := msg.Runes[0]
+		if r >= '1' && r <= '9' {
+			idx := int(r - '1')
+			if idx < len(toggleableColumns) {
+				col := toggleableColumns[idx]
+				if col.MultiOnly && !m.isMultiRepo() {
+					return m, nil // overlay shows the note; treat as no-op
+				}
+				if m.colsHidden == nil {
+					m.colsHidden = map[string]bool{}
+				}
+				m.colsHidden[col.ID] = !m.colsHidden[col.ID]
+			}
+		}
+	}
+	return m, nil
+}
+
+// persistColumns serialises m.colsHidden back to ui.json via the
+// uiconfig package. Returns nil (best-effort) when no path is set
+// — tests and embedded uses can run without a real config file.
+func (m Model) persistColumns() error {
+	if m.uiConfigPath == "" {
+		return nil
+	}
+	hidden := make([]string, 0, len(m.colsHidden))
+	// Walk toggleableColumns rather than ranging the map so the
+	// on-disk list order matches the overlay order — easier to
+	// hand-edit when a user opens ui.json directly.
+	for _, c := range toggleableColumns {
+		if m.colsHidden[c.ID] {
+			hidden = append(hidden, c.ID)
+		}
+	}
+	return uiconfig.Save(m.uiConfigPath, uiconfig.Config{
+		Version:       uiconfig.CurrentVersion,
+		HiddenColumns: hidden,
+	})
+}
+
 func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ctrl+c quits unconditionally; the status bar advertises it and
 	// the textinput wouldn't otherwise intercept it.
@@ -1285,9 +1382,42 @@ func (m Model) View() string {
 		return m.viewDetail()
 	case modeHelp:
 		return m.viewHelp()
+	case modeColumns:
+		return m.viewColumns()
 	default:
 		return m.viewList()
 	}
+}
+
+// viewColumns renders the column-visibility overlay. Each
+// toggleable column appears as a numbered row with a [x]/[ ]
+// checkbox; the number is the toggle key. Multi-only columns
+// render greyed out in single-repo mode so a user toggling 4
+// (Branch) sees why nothing happens.
+func (m Model) viewColumns() string {
+	var b strings.Builder
+	b.WriteString(detailHeaderStyle.Render("Columns"))
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render("Press 1-7 to toggle. ID, P, and Title are always shown."))
+	b.WriteString("\n\n")
+	multi := m.isMultiRepo()
+	for i, col := range toggleableColumns {
+		check := "[ ]"
+		if !m.colsHidden[col.ID] {
+			check = "[x]"
+		}
+		line := fmt.Sprintf("  %d. %s  %s", i+1, check, col.Label)
+		if col.MultiOnly && !multi {
+			line += "  " + helpStyle.Render("(multi-repo only)")
+			b.WriteString(helpStyle.Render(line))
+		} else {
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("esc / o / q to close (saves to ~/.config/wyk/ui.json)"))
+	return b.String()
 }
 
 // viewHelp renders the keybinding overlay, grouped so the writes and
@@ -1307,7 +1437,7 @@ func (m Model) viewHelp() string {
 			m.keys.Open, m.keys.Back,
 			m.keys.JumpPrevHuman, m.keys.JumpNextHuman,
 		}},
-		{"Filters", []key.Binding{m.keys.Filter, m.keys.Human, m.keys.Cycle, m.keys.SortCycle, m.keys.ShowClosed}},
+		{"Filters", []key.Binding{m.keys.Filter, m.keys.Human, m.keys.Cycle, m.keys.SortCycle, m.keys.ShowClosed, m.keys.Columns}},
 		{"Writes", []key.Binding{m.keys.Close, m.keys.ToggleHuman, m.keys.AddNote, m.keys.QuickAdd}},
 		{"Meta", []key.Binding{m.keys.Refresh, m.keys.Help, m.keys.Quit}},
 	}
@@ -1602,38 +1732,35 @@ func lcp(a, b string) string {
 // spans multiple workspaces.
 func (m Model) renderHeader() string {
 	const cursor = "  "
-	// human column is always present so the badge has a stable
-	// home regardless of single/multi-repo mode. Header lower-
-	// cased to match `wyk` — both are indicator columns rather
-	// than data ones.
-	respCol := fmt.Sprintf("%-*s  ", colResp, "owner")
-	// Active sort decoration: append "↑" / "↓" to the active
-	// column's header so the user knows which axis is sorted
-	// without having to read the chip strip. Priority ascending
-	// (P0 first) gets ↑; updated descending (newest first) gets
-	// ↓; repo/id ascending get ↑.
-	idHdr := fmt.Sprintf("%-*s", colID, sortDecorate("ID", m.sortBy == sortID, "↑"))
-	prioHdr := fmt.Sprintf("%-*s", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑"))
-	updHdr := fmt.Sprintf("%-*s", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓"))
-	repoHdrText := fmt.Sprintf("%-*s", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑"))
-	var prefix string
-	if m.isMultiRepo() {
-		prefix = fmt.Sprintf("%-*s  %s  %-*s  ",
-			colWyk, "wyk",
-			repoHdrText,
-			colBranch, "Branch",
-		)
+	var b strings.Builder
+	b.WriteString(cursor)
+	if m.colVisible(colIDOwner) {
+		b.WriteString(fmt.Sprintf("%-*s  ", colResp, "owner"))
 	}
-	h := fmt.Sprintf("%s%s%s%s  %-*s  %-*s  %s  %s  %s",
-		cursor, respCol, prefix,
-		idHdr,
-		colType, "T",
-		colStatus, "Status",
-		prioHdr,
-		updHdr,
-		"Title",
-	)
-	return tableHeaderStyle.Render(h)
+	if m.isMultiRepo() {
+		if m.colVisible(colIDWyk) {
+			b.WriteString(fmt.Sprintf("%-*s  ", colWyk, "wyk"))
+		}
+		if m.colVisible(colIDRepo) {
+			b.WriteString(fmt.Sprintf("%-*s  ", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑")))
+		}
+		if m.colVisible(colIDBranch) {
+			b.WriteString(fmt.Sprintf("%-*s  ", colBranch, "Branch"))
+		}
+	}
+	b.WriteString(fmt.Sprintf("%-*s  ", colID, sortDecorate("ID", m.sortBy == sortID, "↑")))
+	if m.colVisible(colIDType) {
+		b.WriteString(fmt.Sprintf("%-*s  ", colType, "T"))
+	}
+	if m.colVisible(colIDStatus) {
+		b.WriteString(fmt.Sprintf("%-*s  ", colStatus, "Status"))
+	}
+	b.WriteString(fmt.Sprintf("%-*s  ", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑")))
+	if m.colVisible(colIDUpdated) {
+		b.WriteString(fmt.Sprintf("%-*s  ", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓")))
+	}
+	b.WriteString("Title")
+	return tableHeaderStyle.Render(b.String())
 }
 
 // sortDecorate appends an arrow to a column header when that
@@ -1652,29 +1779,46 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	if selected {
 		cursor = cursorStyle.Render("▶ ")
 	}
-
-	respCol := paddedResponsibilityBadge(i) + "  "
-
-	var prefix string
-	if m.isMultiRepo() {
-		// Center the ✓ under the "wyk" header (3 chars wide).
-		// blank for not-hooked stays the same width so the next
-		// column aligns regardless of state.
-		w := strings.Repeat(" ", colWyk)
-		if i.WykHooked {
-			w = " " + wykIndicatorStyle.Render("✓") + " "
-		}
-		repo := typeStyle.Render(fmt.Sprintf("%-*s", colRepo, trunc(i.Repo, colRepo)))
-		br := typeStyle.Render(fmt.Sprintf("%-*s", colBranch, trunc(i.Branch, colBranch)))
-		prefix = w + "  " + repo + "  " + br + "  "
+	var b strings.Builder
+	b.WriteString(cursor)
+	if m.colVisible(colIDOwner) {
+		b.WriteString(paddedResponsibilityBadge(i))
+		b.WriteString("  ")
 	}
-
-	id := idStyle.Render(fmt.Sprintf("%-*s", colID, trunc(m.displayID(i), colID)))
-	tp := typeStyle.Render(fmt.Sprintf("%-*s", colType, abbrevType(i.IssueType)))
-	st := statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status)))
-	pri := fmt.Sprintf("P%d", i.Priority)
-	upd := updatedStyle.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt)))
-
+	if m.isMultiRepo() {
+		if m.colVisible(colIDWyk) {
+			w := strings.Repeat(" ", colWyk)
+			if i.WykHooked {
+				w = " " + wykIndicatorStyle.Render("✓") + " "
+			}
+			b.WriteString(w)
+			b.WriteString("  ")
+		}
+		if m.colVisible(colIDRepo) {
+			b.WriteString(typeStyle.Render(fmt.Sprintf("%-*s", colRepo, trunc(i.Repo, colRepo))))
+			b.WriteString("  ")
+		}
+		if m.colVisible(colIDBranch) {
+			b.WriteString(typeStyle.Render(fmt.Sprintf("%-*s", colBranch, trunc(i.Branch, colBranch))))
+			b.WriteString("  ")
+		}
+	}
+	b.WriteString(idStyle.Render(fmt.Sprintf("%-*s", colID, trunc(m.displayID(i), colID))))
+	b.WriteString("  ")
+	if m.colVisible(colIDType) {
+		b.WriteString(typeStyle.Render(fmt.Sprintf("%-*s", colType, abbrevType(i.IssueType))))
+		b.WriteString("  ")
+	}
+	if m.colVisible(colIDStatus) {
+		b.WriteString(statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status))))
+		b.WriteString("  ")
+	}
+	b.WriteString(fmt.Sprintf("P%d", i.Priority))
+	b.WriteString("  ")
+	if m.colVisible(colIDUpdated) {
+		b.WriteString(updatedStyle.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt))))
+		b.WriteString("  ")
+	}
 	// Truncate the title to whatever space remains after every
 	// preceding column. Without this, long titles wrap or overflow
 	// the right edge — most existing rows in real use spill past
@@ -1683,7 +1827,8 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	if avail := m.titleBudget(); avail > 0 {
 		title = trunc(title, avail)
 	}
-	return fmt.Sprintf("%s%s%s%s  %s  %s  %s  %s  %s", cursor, respCol, prefix, id, tp, st, pri, upd, title)
+	b.WriteString(title)
+	return b.String()
 }
 
 // titleBudget returns how many runes are available for the title
@@ -1698,20 +1843,36 @@ func (m Model) titleBudget() int {
 		return 0
 	}
 	// Each "  " separator is 2 spaces; we count one after every
-	// non-final column to mirror what renderRow prints.
+	// non-final column to mirror what renderRow prints. Hidden
+	// columns contribute 0 — the saved width flows into the title
+	// cell, which is exactly what users hide columns for.
 	const sep = 2
 	used := 2 // cursor (▶ or 2 spaces is 2 visual cols either way)
-	used += colResp + sep
+	if m.colVisible(colIDOwner) {
+		used += colResp + sep
+	}
 	if m.isMultiRepo() {
-		used += colWyk + sep
-		used += colRepo + sep
-		used += colBranch + sep
+		if m.colVisible(colIDWyk) {
+			used += colWyk + sep
+		}
+		if m.colVisible(colIDRepo) {
+			used += colRepo + sep
+		}
+		if m.colVisible(colIDBranch) {
+			used += colBranch + sep
+		}
 	}
 	used += colID + sep
-	used += colType + sep
-	used += colStatus + sep
+	if m.colVisible(colIDType) {
+		used += colType + sep
+	}
+	if m.colVisible(colIDStatus) {
+		used += colStatus + sep
+	}
 	used += colPrio + sep // "Pn" is 2 chars
-	used += colUpdated + sep
+	if m.colVisible(colIDUpdated) {
+		used += colUpdated + sep
+	}
 	avail := m.width - used
 	if avail < 20 {
 		avail = 20 // floor so we don't render an empty title cell

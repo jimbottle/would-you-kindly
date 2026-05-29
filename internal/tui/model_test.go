@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
 // stubSource lets tests fix the Fetch result.
@@ -1703,6 +1705,74 @@ func TestShowClosed_TogglesStateAndRefetches(t *testing.T) {
 	m = model.(Model)
 	if m.showClosed || src.includeClosed {
 		t.Errorf("second C should toggle off; model=%v source=%v", m.showClosed, src.includeClosed)
+	}
+}
+
+func TestColumnsOverlay_TogglesHidesColumnFromHeader(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	// Force a known terminal width so titleBudget is non-zero and
+	// renderHeader has all columns laid out.
+	m.width = 200
+
+	// Sanity: type column is in the header by default.
+	if !strings.Contains(m.renderHeader(), " T ") {
+		t.Fatalf("baseline header should include the T column")
+	}
+
+	// Open overlay with `o`.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = model.(Model)
+	if m.mode != modeColumns {
+		t.Fatalf("expected modeColumns after pressing o; got %v", m.mode)
+	}
+
+	// Press 5 — toggleableColumns[4] is "type" (owner=1, wyk=2,
+	// repo=3, branch=4, type=5). Multi-only entries are inert in
+	// single-repo mode but still occupy a slot — so the test
+	// relies on the registry order, not on a runtime filter.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m = model.(Model)
+	if !m.colsHidden[colIDType] {
+		t.Errorf("expected colIDType hidden after pressing 5; got hidden=%v", m.colsHidden)
+	}
+
+	// Press esc to close the overlay.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("expected modeList after esc; got %v", m.mode)
+	}
+
+	// Header no longer renders the T column.
+	if strings.Contains(m.renderHeader(), " T ") {
+		t.Errorf("expected T column hidden from header; got %q", m.renderHeader())
+	}
+}
+
+func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ui.json")
+
+	src := &stubSource{issues: sampleIssues()}
+	m := New(src).WithHiddenColumns(map[string]bool{}, path)
+	m = applyFetched(m, src)
+
+	// Open, toggle the owner column (slot 1), close.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = model.(Model)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = model.(Model)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+
+	// Load straight from disk to confirm the save happened.
+	cfg, err := uiconfig.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.HiddenColumns) != 1 || cfg.HiddenColumns[0] != colIDOwner {
+		t.Errorf("HiddenColumns = %v, want [%q]", cfg.HiddenColumns, colIDOwner)
 	}
 }
 

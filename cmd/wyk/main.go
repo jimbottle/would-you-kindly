@@ -30,6 +30,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
+	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 	"github.com/jimbottle/would-you-kindly/internal/updater"
 	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
@@ -88,6 +89,15 @@ func main() {
 	}
 
 	model := tui.NewWithHint(src, hint)
+	// Hydrate column-visibility state from ~/.config/wyk/ui.json
+	// so the user's last layout choice survives a restart. A
+	// missing or unreadable file falls back to "all columns on"
+	// silently — we don't want a corrupt ui.json to block launch.
+	if uiPath, err := uiconfig.DefaultPath(); err == nil {
+		if cfg, err := uiconfig.Load(uiPath); err == nil {
+			model = model.WithHiddenColumns(cfg.HiddenSet(), uiPath)
+		}
+	}
 	// Read the cached update nudge once at startup so the banner
 	// can render immediately if there's already a snapshot on
 	// disk. The background goroutine below refreshes it for the

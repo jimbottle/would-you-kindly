@@ -62,6 +62,12 @@ type keyMap struct {
 	// clause from their query. A chip surfaces in the filter strip
 	// when active.
 	ShowClosed key.Binding // C — toggle show-closed
+
+	// Columns opens the column-visibility overlay so a user
+	// triaging on a narrow pane can hide secondary columns
+	// (owner badge, repo, branch, type, …). Selections persist to
+	// ~/.config/wyk/ui.json so the next launch keeps the layout.
+	Columns key.Binding // o — column overlay
 }
 
 func defaultKeyMap() keyMap {
@@ -96,6 +102,7 @@ func defaultKeyMap() keyMap {
 
 		SortCycle:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		ShowClosed: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "±closed")),
+		Columns:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "columns")),
 	}
 }
 
@@ -132,7 +139,7 @@ func (k keyMap) shortHelpReadOnly() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
-		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.ShowClosed},
+		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.ShowClosed, k.Columns},
 		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd},
 		{k.Refresh, k.Help, k.Quit},
 	}
