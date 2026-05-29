@@ -1474,7 +1474,7 @@ func (m Model) handleRepeat() (tea.Model, tea.Cmd) {
 	case "priority":
 		n, err := strconv.Atoi(arg)
 		if err != nil {
-			m.setStatus("repeat: stored priority %q is not a number")
+			m.setStatus(fmt.Sprintf("repeat: stored priority %q is not a number", arg))
 			return m, flashClearCmd(m.statusGen)
 		}
 		return m, runWrite(fmt.Sprintf("set P%d", n), target.ID, func(ctx context.Context) error {
