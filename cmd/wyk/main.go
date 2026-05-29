@@ -26,6 +26,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
@@ -38,7 +40,31 @@ import (
 	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
 
+// noColorRequested reports whether the user has asked to disable
+// color. NO_COLOR is the cross-tool convention (no-color.org — any
+// non-empty value); WYK_NO_COLOR is the wyk-specific escape hatch
+// for environments where the user wants colored output from
+// everything else but not from wyk. Either is sufficient.
+// Separated from applyNoColor so the env-detection logic is
+// unit-testable without touching lipgloss's global renderer state.
+func noColorRequested() bool {
+	return os.Getenv("NO_COLOR") != "" || os.Getenv("WYK_NO_COLOR") != ""
+}
+
+// applyNoColor forces lipgloss's default renderer into ASCII when
+// the user has opted out of color. Badges, chips, and status
+// styles then render plain text. Called once at startup; useful
+// for screen readers, log capture, SSH into dumb terminals, and
+// CI runs of `wyk --probe`.
+func applyNoColor() {
+	if !noColorRequested() {
+		return
+	}
+	lipgloss.SetColorProfile(termenv.Ascii)
+}
+
 func main() {
+	applyNoColor()
 	// Subcommand dispatch happens before flag.Parse so each subcommand
 	// can own its own FlagSet without interfering with the top-level
 	// flags. The TUI/probe path keeps the existing flat flag layout.
