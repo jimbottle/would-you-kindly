@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,73 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
+
+func TestCheckStatus_MarshalJSON(t *testing.T) {
+	cases := []struct {
+		s    checkStatus
+		want string
+	}{
+		{statusPass, `"pass"`},
+		{statusWarn, `"warn"`},
+		{statusFail, `"fail"`},
+	}
+	for _, tc := range cases {
+		b, err := tc.s.MarshalJSON()
+		if err != nil {
+			t.Fatalf("%v: %v", tc.s, err)
+		}
+		if string(b) != tc.want {
+			t.Errorf("status %v marshalled to %q, want %q", tc.s, b, tc.want)
+		}
+	}
+}
+
+func TestCheck_MarshalJSONShape(t *testing.T) {
+	c := check{name: "n", status: statusWarn, detail: "d"}
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["name"] != "n" || got["status"] != "warn" || got["detail"] != "d" {
+		t.Errorf("JSON shape drift: %s", b)
+	}
+}
+
+func TestEmitDoctorJSON_VerdictReflectsHasFail(t *testing.T) {
+	tmp, err := os.CreateTemp("", "doctor-json-*.json")
+	if err != nil {
+		t.Fatalf("tempfile: %v", err)
+	}
+	defer func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}()
+
+	checks := []check{
+		{name: "ok", status: statusPass},
+		{name: "broken", status: statusFail, detail: "details"},
+	}
+	emitDoctorJSON(tmp, checks, true)
+	_ = tmp.Sync()
+	b, err := os.ReadFile(tmp.Name())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var out doctorJSONOut
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Verdict != "fail" {
+		t.Errorf("verdict=%q, want fail", out.Verdict)
+	}
+	if len(out.Checks) != 2 {
+		t.Errorf("checks count=%d, want 2", len(out.Checks))
+	}
+}
 
 func TestCheckStatus_String(t *testing.T) {
 	cases := []struct {

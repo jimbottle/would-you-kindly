@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -39,6 +40,22 @@ func (s checkStatus) String() string {
 	return "?"
 }
 
+// MarshalJSON renders the status as a lowercase string ("pass" /
+// "warn" / "fail") for the -json output. Lowercase is the more
+// conventional JSON key value and stays clearly distinct from
+// the String() text-output form.
+func (s checkStatus) MarshalJSON() ([]byte, error) {
+	switch s {
+	case statusPass:
+		return []byte(`"pass"`), nil
+	case statusWarn:
+		return []byte(`"warn"`), nil
+	case statusFail:
+		return []byte(`"fail"`), nil
+	}
+	return []byte(`"unknown"`), nil
+}
+
 // check is one diagnostic with its outcome and optional detail line.
 type check struct {
 	name   string
@@ -46,11 +63,24 @@ type check struct {
 	detail string
 }
 
+// MarshalJSON exposes the unexported fields under stable JSON
+// keys without forcing a refactor to exported fields. The
+// indirection isolates "go struct hygiene" (lowercase locals)
+// from "JSON contract" (lowercase keys) — keep both clean.
+func (c check) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Name   string      `json:"name"`
+		Status checkStatus `json:"status"`
+		Detail string      `json:"detail,omitempty"`
+	}{c.name, c.status, c.detail})
+}
+
 // runDoctor implements `wyk doctor`: checks the common friction
 // points users hit when wyk doesn't appear to be working. Exits 0
 // if all checks PASS or only WARN; exits 1 if any FAIL.
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "emit checks as a structured JSON object for CI / dashboard consumption")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -59,10 +89,55 @@ func runDoctor(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk doctor")
+		fmt.Fprintln(os.Stderr, "usage: wyk doctor [-json]")
 		return 64
 	}
 
+	checks := collectDoctorChecks()
+	hasFail := false
+	for _, c := range checks {
+		if c.status == statusFail {
+			hasFail = true
+			break
+		}
+	}
+
+	if *asJSON {
+		emitDoctorJSON(os.Stdout, checks, hasFail)
+		if hasFail {
+			return 1
+		}
+		return 0
+	}
+
+	for _, c := range checks {
+		fmt.Printf("  [%s] %s\n", c.status, c.name)
+		if c.detail != "" {
+			for _, line := range strings.Split(c.detail, "\n") {
+				fmt.Printf("         %s\n", line)
+			}
+		}
+	}
+
+	fmt.Println()
+	switch {
+	case hasFail:
+		fmt.Println("doctor: FAIL — see the [FAIL] lines above")
+		return 1
+	default:
+		fmt.Println("doctor: OK")
+		return 0
+	}
+}
+
+// collectDoctorChecks gathers every check into a single slice so
+// both the text and JSON paths share the same source of truth.
+// The conventions and update-nudge stanzas are appended as
+// regular check entries — in the text path they render as
+// normal rows (which historically were multi-line free-text
+// blocks); a multi-line `detail` is how they survive the
+// uniformity.
+func collectDoctorChecks() []check {
 	var checks []check
 	checks = append(checks, checkBDOnPath())
 	checks = append(checks, checkWykOnPath())
@@ -75,52 +150,47 @@ func runDoctor(args []string) int {
 		checks = append(checks, checkRepo(r)...)
 	}
 
-	hasFail := false
-	for _, c := range checks {
-		fmt.Printf("  [%s] %s\n", c.status, c.name)
-		if c.detail != "" {
-			for _, line := range strings.Split(c.detail, "\n") {
-				fmt.Printf("         %s\n", line)
-			}
-		}
-		if c.status == statusFail {
-			hasFail = true
-		}
-	}
+	// Conventions stanza — informational, always pass. Terse on
+	// purpose; refers the reader to `wyk conventions` for the
+	// full text.
+	checks = append(checks, check{
+		name:   "handoff convention",
+		status: statusPass,
+		detail: "human-flagged tasks carry: label=human + label=src:agent\n" +
+			"agent inbox: label=src:agent AND NOT label=human AND status!=closed\n" +
+			"prefer `wyk handoff <id>` over hand-rolling labels; full text in `wyk conventions`",
+	})
 
-	// Conventions stanza. Agent feedback flagged that the handoff
-	// labels (human + src:agent) are undiscoverable at runtime —
-	// agents reach for doctor when something feels off, and doctor
-	// didn't mention the convention at all. Always [PASS], purely
-	// informational. Terse on purpose: directs the reader at
-	// `wyk conventions` for the full text.
-	fmt.Println()
-	fmt.Printf("  [%s] handoff convention\n", statusPass)
-	fmt.Println("         human-flagged tasks carry: label=human + label=src:agent")
-	fmt.Println("         agent inbox: label=src:agent AND NOT label=human AND status!=closed")
-	fmt.Println("         prefer `wyk handoff <id>` over hand-rolling labels; full text in `wyk conventions`")
-
-	// Update status. Reads the cached snapshot (no live fetch)
-	// so doctor stays fast and offline-friendly. PASS when up to
-	// date, WARN when an upgrade is available, no line if there's
-	// no cache yet (first run, before background check populated
-	// it).
+	// Update nudge from the cached release snapshot. Skipped when
+	// the cache is empty (first run, before the background check
+	// has populated it).
 	if nudge := readUpdateNudge(versionString()); nudge != "" {
-		fmt.Println()
-		fmt.Printf("  [%s] wyk update available\n", statusWarn)
-		fmt.Printf("         %s\n", nudge)
-		fmt.Println("         Run `wyk update` to install (or `wyk update -dry-run` to see the install command first).")
+		checks = append(checks, check{
+			name:   "wyk update available",
+			status: statusWarn,
+			detail: nudge + "\nRun `wyk update` to install (or `wyk update -dry-run` to see the install command first).",
+		})
 	}
+	return checks
+}
 
-	fmt.Println()
-	switch {
-	case hasFail:
-		fmt.Println("doctor: FAIL — see the [FAIL] lines above")
-		return 1
-	default:
-		fmt.Println("doctor: OK")
-		return 0
+// doctorJSONOut is the top-level shape emitted by -json. The
+// overall verdict mirrors the exit code so a consumer can drive
+// CI gating from JSON output alone without re-reading the worst
+// status itself.
+type doctorJSONOut struct {
+	Verdict string  `json:"verdict"` // "ok" or "fail"
+	Checks  []check `json:"checks"`
+}
+
+func emitDoctorJSON(w *os.File, checks []check, hasFail bool) {
+	out := doctorJSONOut{Verdict: "ok", Checks: checks}
+	if hasFail {
+		out.Verdict = "fail"
 	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(out)
 }
 
 // --- individual checks ---
