@@ -104,7 +104,10 @@ var defaultActivityClient = func(dir string) activityClient {
 // into the hadError flag but don't abort — the merged stream is
 // more useful with one missing repo than not at all.
 func collectActivity(reg *registry.Registry, cutoff time.Time, mk func(dir string) activityClient) ([]activityEvent, bool) {
-	var events []activityEvent
+	// Initialize as an empty (non-nil) slice so the JSON shape is
+	// always `[]` rather than `null` when the window is empty —
+	// downstream tools iterating events don't need a null guard.
+	events := make([]activityEvent, 0)
 	hadError := false
 	for _, r := range reg.Repos {
 		c := mk(r.Path)

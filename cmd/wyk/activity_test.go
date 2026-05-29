@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,71 @@ func TestEmitActivityTable_EmptyWindow(t *testing.T) {
 	emitActivityTable(&buf, nil, time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC))
 	if !strings.Contains(buf.String(), "(nothing touched in the window)") {
 		t.Errorf("empty window should print a placeholder; got %q", buf.String())
+	}
+}
+
+func TestEmitActivityJSON_EmptyEventsRendersArrayNotNull(t *testing.T) {
+	// Downstream tools iterating `events` shouldn't have to
+	// special-case `null` — pin the empty-window shape as [].
+	var buf bytes.Buffer
+	cutoff := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
+	emitActivityJSON(&buf, []activityEvent{}, cutoff)
+
+	if !strings.Contains(buf.String(), `"events": []`) {
+		t.Errorf("empty events should encode as []; got %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"cutoff"`) {
+		t.Errorf("output should include the cutoff field; got %q", buf.String())
+	}
+}
+
+func TestCollectActivity_SkipsZeroUpdatedAt(t *testing.T) {
+	cutoff := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "alpha", Path: "/tmp/a"}}}
+	stubs := map[string]*stubActivityClient{
+		"/tmp/a": {issues: []beads.Issue{
+			// zero UpdatedAt — must be skipped even though
+			// time.Time{}.After(cutoff) is false anyway, the
+			// !IsZero() guard pins the contract.
+			{ID: "a-1", Title: "no timestamp"},
+			{ID: "a-2", Title: "real", Status: "open",
+				UpdatedAt: cutoff.Add(time.Hour)},
+		}},
+	}
+	mk := func(dir string) activityClient { return stubs[dir] }
+
+	events, _ := collectActivity(reg, cutoff, mk)
+	if len(events) != 1 || events[0].ID != "a-2" {
+		t.Errorf("zero-UpdatedAt row should be skipped; got %+v", events)
+	}
+}
+
+func TestRunActivity_RejectsBadArgs(t *testing.T) {
+	// Send stderr to /dev/null so the validation messages don't
+	// leak into the test runner's output.
+	old := os.Stderr
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	os.Stderr = devnull
+	defer func() {
+		os.Stderr = old
+		_ = devnull.Close()
+	}()
+
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"non-zero since=0", []string{"-since", "0"}, 64},
+		{"positional argument", []string{"extra"}, 64},
+		{"unknown flag", []string{"-frobnicate"}, 64},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runActivity(tc.args); got != tc.want {
+				t.Errorf("exit = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 

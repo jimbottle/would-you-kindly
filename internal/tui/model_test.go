@@ -2258,6 +2258,86 @@ func editTempFile(t *testing.T, body string) string {
 	return f.Name()
 }
 
+func TestEditFinished_TrailingNewlineFromEditorIsNotAChange(t *testing.T) {
+	// Most editors (vi/vim included, the documented fallback)
+	// append a trailing '\n' when saving a body that lacked one.
+	// Open-and-quit-without-edit must NOT dispatch SetDescription
+	// or the stored body silently accumulates whitespace over
+	// repeated edits.
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Description: "no trailing newline"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	path := editTempFile(t, "no trailing newline\n") // editor added '\n'
+
+	model, _ := m.Update(editFinishedMsg{
+		target:       beads.Issue{ID: "a-1"},
+		path:         path,
+		originalBody: "no trailing newline",
+	})
+	m = model.(Model)
+	if len(s.descriptions) != 0 {
+		t.Errorf("editor-added trailing newline should NOT dispatch; got %+v", s.descriptions)
+	}
+	if !strings.Contains(m.status, "no change") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
+func TestEditFinished_DispatchSendsTrimmedBody(t *testing.T) {
+	// Real change with extra trailing newlines: we send the
+	// trimmed body so a downstream `bd update --description-file`
+	// doesn't store the editor's trailing whitespace.
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Description: "old body"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	path := editTempFile(t, "new body\n\n\n")
+
+	_, cmd := m.Update(editFinishedMsg{
+		target:       beads.Issue{ID: "a-1"},
+		path:         path,
+		originalBody: "old body",
+	})
+	if cmd == nil {
+		t.Fatal("real change should dispatch")
+	}
+	_ = cmd()
+	if len(s.descriptions) != 1 || s.descriptions[0].label != "new body" {
+		t.Errorf("dispatched body should be trimmed; got %+v", s.descriptions)
+	}
+}
+
+func TestBeginEdit_ReadOnlyShowsHint(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src) // not a Mutator
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = model.(Model)
+	if !strings.Contains(m.status, "read-only") {
+		t.Errorf("status should announce read-only; got %q", m.status)
+	}
+}
+
+func TestBeginEdit_EmptyListIsNoop(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	s := &stubMutator{stubSource: stubSource{issues: nil}}
+	m := applyMutatorFetched(New(s), s)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = model.(Model)
+	if !strings.Contains(m.status, "nothing to edit") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
 func TestEditFinished_DispatchesSetDescriptionOnChange(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
 		{ID: "a-1", Description: "old body"},

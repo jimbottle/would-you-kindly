@@ -2475,8 +2475,16 @@ func (m Model) handleEditFinished(msg editFinishedMsg) (tea.Model, tea.Cmd) {
 		m.setStatus("edit read failed: " + err.Error())
 		return m, flashClearCmd(m.statusGen)
 	}
-	newBody := string(b)
-	if newBody == msg.originalBody {
+	// Normalize trailing newlines on both sides before comparing:
+	// vi/vim and most editors append a final '\n' when saving a
+	// file that doesn't have one, so an open-and-quit on a body
+	// without a trailing newline would otherwise trip the
+	// "changed" branch and dispatch a spurious SetDescription. We
+	// also send the trimmed body so the stored description
+	// doesn't silently accumulate trailing whitespace over
+	// repeated edits.
+	newBody := strings.TrimRight(string(b), "\n")
+	if newBody == strings.TrimRight(msg.originalBody, "\n") {
 		m.setStatus("edit: no change")
 		return m, flashClearCmd(m.statusGen)
 	}
@@ -3719,10 +3727,16 @@ func (m Model) chromeExtra() int {
 		n++ // update-available nudge
 	}
 	switch m.mode {
-	case modeFilter, modeNote, modeQuickAdd:
+	// Every mode that renders a textinput prompt at the bottom of
+	// viewList (see line ~2972) costs 2 lines of chrome — a blank
+	// separator + the input itself. Keeping this list in sync with
+	// the viewList switch is the only way bodyHeight stays
+	// accurate; an under-count pushes the title/last rows past the
+	// terminal edge while a prompt is open.
+	case modeFilter, modeNote, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
 		n += 2 // blank + textinput
 	case modeConfirmClose:
-		if m.pendingTarget.ID != "" {
+		if m.pendingTarget.ID != "" || len(m.marked) > 0 {
 			n += 2 // blank + confirm prompt
 		}
 	}
