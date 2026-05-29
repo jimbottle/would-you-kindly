@@ -159,6 +159,17 @@ func (c *Client) Reopen(ctx context.Context, id string) error {
 	return err
 }
 
+// SetDefer hides an issue from `bd ready` until the given date.
+// when accepts the same formats `bd update --defer` does: relative
+// offsets (`+1d`, `+1w`, `+2mo`), natural-language anchors
+// (`tomorrow`, `next monday`), and absolute dates (`2026-06-15`).
+// Empty when clears the defer. wyk passes the value through
+// verbatim; bd is the source of truth on what parses.
+func (c *Client) SetDefer(ctx context.Context, id, when string) error {
+	_, err := c.run(ctx, nil, "update", id, "--defer", when, autoCommitFlag)
+	return err
+}
+
 // CreateOptions configures `bd create` invocations.
 type CreateOptions struct {
 	Title     string

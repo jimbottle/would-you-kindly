@@ -80,6 +80,13 @@ type keyMap struct {
 	// stack. Cleared once the reopen lands so a second press is a
 	// no-op rather than reopening some older row.
 	Undo key.Binding // u — undo last close
+
+	// Defer hides the cursor issue from bd ready until a date.
+	// Opens a textinput prompt for the offset (+1d, +1w, tomorrow,
+	// 2026-06-15 — bd parses); empty submission cancels. Backed by
+	// bd's `update --defer` flag so the persistence semantics
+	// match `bd ready` exactly.
+	Defer key.Binding // d — defer cursor issue
 }
 
 func defaultKeyMap() keyMap {
@@ -117,6 +124,7 @@ func defaultKeyMap() keyMap {
 		Columns:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "columns")),
 		Yank:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank ID")),
 		Undo:       key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo close")),
+		Defer:      key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
 	}
 }
 
@@ -154,7 +162,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer},
 		{k.Refresh, k.Help, k.Quit},
 	}
 }

@@ -38,6 +38,7 @@ type stubMutator struct {
 	stubSource
 	closed           []string
 	reopened         []string
+	deferred         []labelOp // {id, when} for SetDefer
 	added            []labelOp
 	removed          []labelOp
 	notes            []labelOp // reuse the {id,label} shape for {id, text}
@@ -70,6 +71,10 @@ func (s *stubMutator) Create(_ context.Context, repo, title, assignee string) (s
 }
 func (s *stubMutator) Reopen(_ context.Context, i beads.Issue) error {
 	s.reopened = append(s.reopened, i.ID)
+	return nil
+}
+func (s *stubMutator) SetDefer(_ context.Context, i beads.Issue, when string) error {
+	s.deferred = append(s.deferred, labelOp{i.ID, when})
 	return nil
 }
 
@@ -2013,6 +2018,60 @@ func TestRenderStatsLine_MineSlotShowsZeroWhenMeSet(t *testing.T) {
 	got := m.renderStatsLine()
 	if !strings.Contains(got, "0 mine") {
 		t.Errorf("expected '0 mine' when me set + zero owned; got %q", got)
+	}
+}
+
+func TestDefer_DispatchesSetDeferWithTypedValue(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = model.(Model)
+	if m.mode != modeDefer {
+		t.Fatalf("d should enter modeDefer; got %v", m.mode)
+	}
+	if m.pendingTarget.ID != s.issues[0].ID {
+		t.Errorf("defer should snapshot the cursor row; got %q", m.pendingTarget.ID)
+	}
+
+	for _, r := range "+1w" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("enter should return to modeList; got %v", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("enter with non-empty value should dispatch SetDefer")
+	}
+	wm := cmd().(writeMsg)
+	if wm.action != "defer" || wm.id != s.issues[0].ID {
+		t.Errorf("writeMsg action=%q id=%q, want defer/%q", wm.action, wm.id, s.issues[0].ID)
+	}
+	if len(s.deferred) != 1 || s.deferred[0] != (labelOp{s.issues[0].ID, "+1w"}) {
+		t.Errorf("SetDefer not dispatched correctly; got %+v", s.deferred)
+	}
+}
+
+func TestDefer_EmptyValueCancels(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = model.(Model)
+	// Press enter immediately → empty value cancels.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if len(s.deferred) != 0 {
+		t.Errorf("empty value should not dispatch; got %v", s.deferred)
+	}
+	if !strings.Contains(m.status, "defer cancelled") {
+		t.Errorf("status should explain cancellation; got %q", m.status)
 	}
 }
 

@@ -266,6 +266,10 @@ func (s *BDSource) Reopen(ctx context.Context, i beads.Issue) error {
 	return s.Client.Reopen(ctx, i.ID)
 }
 
+func (s *BDSource) SetDefer(ctx context.Context, i beads.Issue, when string) error {
+	return s.Client.SetDefer(ctx, i.ID, when)
+}
+
 func (s *BDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {
 	return s.Client.AddLabel(ctx, i.ID, label)
 }
@@ -580,6 +584,14 @@ func (m *MultiBDSource) Reopen(ctx context.Context, i beads.Issue) error {
 		return err
 	}
 	return sub.Reopen(ctx, i)
+}
+
+func (m *MultiBDSource) SetDefer(ctx context.Context, i beads.Issue, when string) error {
+	sub, err := m.repoForIssue(i)
+	if err != nil {
+		return err
+	}
+	return sub.SetDefer(ctx, i, when)
 }
 
 func (m *MultiBDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {

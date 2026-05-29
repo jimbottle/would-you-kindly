@@ -63,6 +63,7 @@ const (
 	modeHelp                     // modal listing every keybinding
 	modeQuickAdd                 // text input for a new issue title
 	modeColumns                  // column-visibility overlay (o)
+	modeDefer                    // text input for `bd update --defer` value
 )
 
 // Source abstracts where issues come from so a test can plug in
@@ -102,6 +103,11 @@ type Mutator interface {
 	// fields so the user gets a single-deep undo without the TUI
 	// having to fetch the closed list to find the row again.
 	Reopen(ctx context.Context, issue beads.Issue) error
+	// SetDefer hides an issue from `bd ready` until `when`. The
+	// when string is passed through verbatim to bd, which owns
+	// parsing (+1d / tomorrow / 2026-06-15 / etc.). Empty `when`
+	// clears any existing defer.
+	SetDefer(ctx context.Context, issue beads.Issue, when string) error
 }
 
 // Detailer is the "fetch the full issue for the detail view"
@@ -685,6 +691,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateQuickAdd(msg)
 		case modeColumns:
 			return m.updateColumns(msg)
+		case modeDefer:
+			return m.updateDefer(msg)
 		default:
 			m.status = ""
 			return m.updateList(msg)
@@ -774,6 +782,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleYank()
 	case keyHit(msg, m.keys.Undo):
 		return m.handleUndo()
+	case keyHit(msg, m.keys.Defer):
+		return m.beginDefer()
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
 		// suspended after a terminal error. Bumping tickGen retires
@@ -1209,6 +1219,8 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 	case "reopen":
 		m.setStatus("reopened " + msg.id)
 		m.lastClosed = beads.Issue{} // consumed
+	case "defer":
+		m.setStatus("deferred " + msg.id)
 	case "flag":
 		m.setStatus("flagged " + msg.id + " for human")
 	case "unflag":
@@ -1562,6 +1574,66 @@ func (m Model) handleUndo() (tea.Model, tea.Cmd) {
 	return m, runWriteWithIssue("reopen", target, func(ctx context.Context) error {
 		return mu.Reopen(ctx, target)
 	})
+}
+
+// beginDefer enters modeDefer with a textinput prompt for the
+// defer value (+1d, +1w, tomorrow, 2026-06-15 — bd owns parsing).
+// Snapshots the cursor row into pendingTarget so a concurrent
+// refetch can't shift the target out from under the user mid-
+// prompt. Read-only sources show the standard read-only hint.
+func (m Model) beginDefer() (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus("nothing to defer")
+		return m, flashClearCmd(m.statusGen)
+	}
+	m.pendingTarget = m.visible[m.cursor]
+	m.mode = modeDefer
+	m.input.SetValue("")
+	m.input.Prompt = "defer until ▸ "
+	m.input.Placeholder = "+1d, +1w, tomorrow, next monday, 2026-06-15…"
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// updateDefer drives the defer-until prompt. Submitting an empty
+// value cancels; submitting any other value passes through to bd
+// via Mutator.SetDefer (which sends it unparsed to bd update
+// --defer — bd is the source of truth on what parses).
+func (m Model) updateDefer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	switch msg.String() {
+	case "esc":
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		m.pendingTarget = beads.Issue{}
+		return m, nil
+	case "enter":
+		when := strings.TrimSpace(m.input.Value())
+		target := m.pendingTarget
+		m.pendingTarget = beads.Issue{}
+		mu := m.mutator()
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		if when == "" {
+			m.setStatus("defer cancelled (empty value)")
+			return m, flashClearCmd(m.statusGen)
+		}
+		return m, runWriteWithIssue("defer", target, func(ctx context.Context) error {
+			return mu.SetDefer(ctx, target, when)
+		})
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
 }
 
 // toggleShowClosed flips the include-closed flag on both the model

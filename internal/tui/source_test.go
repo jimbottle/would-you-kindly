@@ -61,6 +61,7 @@ type fakeRepoSource struct {
 	fetchErr error
 	closed   []string
 	reopened []string
+	deferred []labelOp // {id, when} parallels notes/added/removed
 	added    []labelOp
 	removed  []labelOp
 	notes    []labelOp
@@ -106,6 +107,10 @@ func (f *fakeRepoSource) Reopen(_ context.Context, i beads.Issue) error {
 	// Record the call so TestMultiBDSource_ReopenRoutesAndErrors
 	// can assert routing landed on the right sub.
 	f.reopened = append(f.reopened, i.ID)
+	return nil
+}
+func (f *fakeRepoSource) SetDefer(_ context.Context, i beads.Issue, when string) error {
+	f.deferred = append(f.deferred, labelOp{i.ID, when})
 	return nil
 }
 
