@@ -35,12 +35,13 @@ func runActivity(args []string) int {
 	// bd's convention. -1 (default) disables the cap. A user
 	// passing -priority 1 sees recent activity on P0 + P1 only.
 	maxPriority := fs.Int("priority", -1, "cap rows at priority N or higher (lower number = higher priority; -1 disables)")
+	repoName := fs.String("repo", "", "restrict the stream to the registered repo with this name (empty = every registered repo)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json] [-priority N]")
+		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json] [-priority N] [-repo name]")
 		return 64
 	}
 	if *since <= 0 {
@@ -61,6 +62,15 @@ func runActivity(args []string) int {
 	if len(reg.Repos) == 0 {
 		fmt.Fprintln(os.Stderr, "wyk activity: no repos registered. Run `wyk init` in a bd workspace first.")
 		return 1
+	}
+
+	if *repoName != "" {
+		filtered, err := filterRegistryByName(reg, *repoName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk activity:", err)
+			return 1
+		}
+		reg = filtered
 	}
 
 	cutoff := time.Now().Add(-*since)

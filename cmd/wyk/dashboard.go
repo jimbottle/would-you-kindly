@@ -31,12 +31,13 @@ func runDashboard(args []string) int {
 	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit a structured JSON object instead of the table")
 	days := fs.Int("days", 7, "window for the closed-recently column (default 7)")
+	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (empty = every registered repo)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk dashboard [-json] [-days N]")
+		fmt.Fprintln(os.Stderr, "usage: wyk dashboard [-json] [-days N] [-repo name]")
 		return 64
 	}
 	if *days <= 0 {
@@ -57,6 +58,15 @@ func runDashboard(args []string) int {
 	if len(reg.Repos) == 0 {
 		fmt.Fprintln(os.Stderr, "wyk dashboard: no repos registered. Run `wyk init` in a bd workspace first.")
 		return 1
+	}
+
+	if *repoName != "" {
+		filtered, err := filterRegistryByName(reg, *repoName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk dashboard:", err)
+			return 1
+		}
+		reg = filtered
 	}
 
 	cutoff := time.Now().Add(-time.Duration(*days) * 24 * time.Hour)
