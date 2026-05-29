@@ -204,6 +204,100 @@ func TestInit_ChainDryRunReflectsRuntimeRefusal(t *testing.T) {
 	}
 }
 
+func TestInit_UninstallRemovesPlainHook(t *testing.T) {
+	dir := gitInit(t)
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Fatalf("install exit %d", code)
+	}
+	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
+	if _, err := os.Stat(hookPath); err != nil {
+		t.Fatalf("hook should exist before uninstall: %v", err)
+	}
+
+	if code := runInitIn(t, dir, "-uninstall"); code != 0 {
+		t.Fatalf("uninstall exit %d, want 0", code)
+	}
+	if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+		t.Errorf("hook should be removed; stat err = %v", err)
+	}
+}
+
+func TestInit_UninstallRestoresPreWyk(t *testing.T) {
+	dir := gitInit(t)
+	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Foreign hook + -chain install: leaves the foreign script at .pre-wyk.
+	foreign := []byte("#!/bin/sh\n# foreign tool\nexit 0\n")
+	if err := os.WriteFile(hookPath, foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := runInitIn(t, dir, "-chain", "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Fatalf("chain install exit %d", code)
+	}
+
+	if code := runInitIn(t, dir, "-uninstall"); code != 0 {
+		t.Fatalf("uninstall exit %d, want 0", code)
+	}
+	body, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("post-commit missing after uninstall: %v", err)
+	}
+	if string(body) != string(foreign) {
+		t.Errorf("uninstall should restore the foreign hook verbatim; got:\n%s", body)
+	}
+	preWyk := hookPath + ".pre-wyk"
+	if _, err := os.Stat(preWyk); !os.IsNotExist(err) {
+		t.Errorf(".pre-wyk should be gone after restore; stat err = %v", err)
+	}
+}
+
+func TestInit_UninstallRefusesForeignHook(t *testing.T) {
+	dir := gitInit(t)
+	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []byte("#!/bin/sh\n# foreign\nexit 0\n")
+	if err := os.WriteFile(hookPath, foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := runInitIn(t, dir, "-uninstall"); code != 64 {
+		t.Errorf("uninstall on foreign hook exit %d, want 64", code)
+	}
+	body, _ := os.ReadFile(hookPath)
+	if string(body) != string(foreign) {
+		t.Errorf("foreign hook should be left intact; got:\n%s", body)
+	}
+}
+
+func TestInit_UninstallMissingHookIsNoop(t *testing.T) {
+	dir := gitInit(t)
+	if code := runInitIn(t, dir, "-uninstall"); code != 0 {
+		t.Errorf("uninstall on missing hook should exit 0; got %d", code)
+	}
+}
+
+func TestInit_UninstallDryRunDoesNotWrite(t *testing.T) {
+	dir := gitInit(t)
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Fatalf("install exit %d", code)
+	}
+	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
+	statBefore, _ := os.Stat(hookPath)
+	if code := runInitIn(t, dir, "-uninstall", "-dry-run"); code != 0 {
+		t.Fatalf("uninstall dry-run exit %d, want 0", code)
+	}
+	statAfter, err := os.Stat(hookPath)
+	if err != nil {
+		t.Errorf("dry-run should not remove the hook: %v", err)
+	}
+	if statBefore.ModTime() != statAfter.ModTime() {
+		t.Errorf("dry-run mutated the hook (mod time changed)")
+	}
+}
+
 func TestInit_DryRunDoesNotWrite(t *testing.T) {
 	dir := gitInit(t)
 	if code := runInitIn(t, dir, "-dry-run", "-skip-bd-init", "-skip-register"); code != 0 {

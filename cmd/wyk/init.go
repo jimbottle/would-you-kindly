@@ -85,6 +85,7 @@ func runInit(args []string) int {
 	skipBD := fs.Bool("skip-bd-init", false, "do not run `bd init` even if .beads is missing")
 	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
 	scanRoot := fs.String("scan", "", "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path")
+	uninstall := fs.Bool("uninstall", false, "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -95,11 +96,31 @@ func runInit(args []string) int {
 	if fs.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "usage: wyk init [-force | -chain] [-dry-run] [-skip-bd-init] [-skip-register]")
 		fmt.Fprintln(os.Stderr, "   or: wyk init -scan <root> [-dry-run]")
+		fmt.Fprintln(os.Stderr, "   or: wyk init -uninstall [-dry-run]")
 		return 64
 	}
 	if *force && *chain {
 		fmt.Fprintln(os.Stderr, "wyk init: -force and -chain are mutually exclusive")
 		return 64
+	}
+	if *uninstall {
+		// -uninstall is the inverse path; reject combinations that
+		// only make sense in the install direction so the user gets
+		// a clear "either X or Y, not both" instead of silent ignores.
+		var bad []string
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "force", "chain", "skip-bd-init", "skip-register", "scan":
+				bad = append(bad, "-"+f.Name)
+			}
+		})
+		if len(bad) > 0 {
+			fmt.Fprintf(os.Stderr,
+				"wyk init: -uninstall is incompatible with %s\n",
+				strings.Join(bad, ", "))
+			return 64
+		}
+		return runUninstall(*dryRun)
 	}
 
 	// -scan short-circuits the per-repo init path; it only registers.
@@ -516,6 +537,72 @@ func defaultProbeBD(ctx context.Context, dir string) error {
 // .beads/ directory, probes each unregistered candidate with bd to
 // confirm it's a usable workspace, then registers the survivors
 // into ~/.config/wyk/repos.json. Candidates that fail the probe
+// runUninstall is the inverse of the per-repo install path: remove
+// wyk's post-commit hook. If a post-commit.pre-wyk file exists
+// (chained install), restore it so the original tool's hook
+// resumes. If no .pre-wyk file is present (plain install), just
+// delete post-commit. Refuses outright when the installed hook
+// isn't wyk's, so a foreign hook isn't silently wiped — the
+// caller can inspect, then run `mv` manually or pass through
+// `wyk init -force` if they really want.
+//
+// Exit codes:
+//
+//	0  hook removed (or, with dryRun, would be) — or already absent
+//	1  filesystem error (read/write/rename)
+//	2  no git repo here (findGitPaths failed)
+//	64 hook present but not wyk's — refused
+func runUninstall(dryRun bool) int {
+	gitDir, _, err := findGitPaths()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init:", err)
+		return 2
+	}
+	hookPath := filepath.Join(gitDir, "hooks", "post-commit")
+	preWykPath := hookPath + ".pre-wyk"
+
+	existing, err := os.ReadFile(hookPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		fmt.Println("wyk init: no post-commit hook installed — nothing to uninstall")
+		return 0
+	case err != nil:
+		fmt.Fprintln(os.Stderr, "wyk init: read hook:", err)
+		return 1
+	}
+	if !bytes.Contains(existing, []byte(hookMarker)) {
+		fmt.Fprintln(os.Stderr,
+			"wyk init: post-commit hook at", hookPath, "is not wyk's — refusing to remove. Inspect it, delete manually if you're sure.")
+		return 64
+	}
+
+	// Chained install: restore the preserved hook.
+	if preWykExists(preWykPath) {
+		if dryRun {
+			fmt.Printf("wyk init: would restore %s → %s (chained install detected)\n", preWykPath, hookPath)
+			return 0
+		}
+		if err := os.Rename(preWykPath, hookPath); err != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: restore .pre-wyk:", err)
+			return 1
+		}
+		fmt.Printf("wyk init: restored %s → %s\n", preWykPath, hookPath)
+		return 0
+	}
+
+	// Plain install: delete.
+	if dryRun {
+		fmt.Printf("wyk init: would remove %s\n", hookPath)
+		return 0
+	}
+	if err := os.Remove(hookPath); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: remove hook:", err)
+		return 1
+	}
+	fmt.Printf("wyk init: removed %s\n", hookPath)
+	return 0
+}
+
 // (bd errors, jsonl-only export, abandoned shell) are SKIPPED with
 // a stderr line — the alternative was silently registering duds
 // that the user then has to clean up via `wyk registry remove`.

@@ -24,10 +24,10 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] <issue-id>
 
 ## `wyk init`
 
-Install the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.
+Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.
 
 ```
-wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>]
+wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>] [-uninstall]
 ```
 
 | Flag | Default | Description |
@@ -38,6 +38,7 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <r
 | `-skip-bd-init` | `false` | do not run `bd init` even if .beads is missing |
 | `-skip-register` | `false` | do not add this repo to ~/.config/wyk/repos.json |
 | `-scan` | `_(empty)_` | scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path |
+| `-uninstall` | `false` | remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks |
 
 ## `wyk inbox`
 

@@ -47,8 +47,8 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	},
 	{
 		Name:    "init",
-		Summary: "Install the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.",
-		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>]",
+		Summary: "Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.",
+		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>] [-uninstall]",
 		Flags: []cliFlag{
 			{Name: "-force", Default: "false", Description: "overwrite an existing post-commit hook (destructive — drops the existing hook entirely)"},
 			{Name: "-chain", Default: "false", Description: "preserve an existing post-commit hook and chain wyk's logic after it (preferred over -force when the existing hook is from another tool like roborev)"},
@@ -56,6 +56,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-skip-bd-init", Default: "false", Description: "do not run `bd init` even if .beads is missing"},
 			{Name: "-skip-register", Default: "false", Description: "do not add this repo to ~/.config/wyk/repos.json"},
 			{Name: "-scan", Default: "", Description: "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path"},
+			{Name: "-uninstall", Default: "false", Description: "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks"},
 		},
 	},
 	{
