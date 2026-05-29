@@ -283,6 +283,13 @@ type Model struct {
 	// dismiss so a future open doesn't show stale text.
 	outputText string
 
+	// outputVP is the scrollable viewport for the :bd output
+	// overlay. Long bd dumps (e.g. `bd list --all` on a busy
+	// repo) used to lose the header and footer to terminal
+	// scroll; the viewport handles overflow internally with
+	// j/k/PgUp/PgDn forwarded from updateOutput.
+	outputVP viewport.Model
+
 	// me is the current-user identity, used to count the "mine"
 	// slot in the status-bar stats line. Mirrors the Me field on
 	// every BDSource (which the filter package uses for PresetMine
@@ -364,6 +371,7 @@ func New(src Source) Model {
 		input:       ti,
 		loading:     true, // first paint shows "loading…" until Init's fetch returns
 		detailVP:    viewport.New(80, 20),
+		outputVP:    viewport.New(80, 20),
 		spinner:     sp,
 		help:        h,
 		priorityCap: -1,
@@ -593,6 +601,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detailVP.Width = msg.Width
 		m.detailVP.Height = bodyH
+		// The :bd output overlay uses the same chrome budget as
+		// the detail view (header + footer line); a separate
+		// chrome const would be over-engineering for a single
+		// extra row.
+		m.outputVP.Width = msg.Width
+		m.outputVP.Height = bodyH
 		return m, nil
 
 	case fetchedMsg:
@@ -697,6 +711,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// another mode, so be honest in the banner: the result is
 		// discarded and the user needs to re-run.
 		if m.mode == modeList || m.mode == modeCommand {
+			m.outputVP.SetContent(m.outputText)
+			m.outputVP.GotoTop()
 			m.mode = modeOutput
 			return m, nil
 		}
@@ -2164,24 +2180,33 @@ func (m Model) updateOutput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q", "enter":
 		m.mode = modeList
 		m.outputText = ""
+		m.outputVP.SetContent("")
 		return m, nil
 	}
-	return m, nil
+	// Anything else (j/k/PgUp/PgDn/g/G/d/u/ctrl+f/ctrl+b) flows
+	// to the viewport, which has its own KeyMap for vim-style +
+	// half-page scrolling.
+	var cmd tea.Cmd
+	m.outputVP, cmd = m.outputVP.Update(msg)
+	return m, cmd
 }
 
-// viewOutput renders the captured bd output. Keeps the format
-// tight: a header line naming what ran, then the body verbatim.
-// Long output is rendered in full and the terminal handles
-// scrolling — wyk doesn't try to be a pager.
+// viewOutput renders the captured bd output through the scrollable
+// viewport so a long `bd list --all` doesn't lose the header and
+// footer to terminal scroll. Footer shows ScrollPercent when the
+// body actually overflows — mirrors the detail view's pattern.
 func (m Model) viewOutput() string {
 	var b strings.Builder
 	b.WriteString(detailHeaderStyle.Render("bd output"))
 	b.WriteString("\n")
-	if m.outputText != "" {
-		b.WriteString(m.outputText)
-	}
+	b.WriteString(m.outputVP.View())
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("esc / q / enter to close"))
+	footer := "esc / q / enter to close   j/k ↑↓ scroll"
+	if m.outputVP.TotalLineCount() > m.outputVP.Height {
+		pct := int(m.outputVP.ScrollPercent() * 100)
+		footer = fmt.Sprintf("%d%%   %s", pct, footer)
+	}
+	b.WriteString(helpStyle.Render(footer))
 	return b.String()
 }
 

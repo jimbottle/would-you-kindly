@@ -2686,6 +2686,39 @@ func TestCommandPalette_BDEmptyArgsIsUsageError(t *testing.T) {
 	}
 }
 
+func TestCommandPalette_BDOutputUsesViewport(t *testing.T) {
+	// Long bd output should land in the viewport so the overlay
+	// scrolls instead of overflowing into terminal scroll
+	// (which loses the header + footer). Pin both that the
+	// viewport receives the captured body and that the rendered
+	// output contains it after a small WindowSizeMsg.
+	src := &stubRawBD{
+		stubSource: stubSource{issues: sampleIssues()},
+		out:        []byte("line1\nline2\nline3\n"),
+	}
+	m := New(src)
+	mod, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = mod.(Model)
+	mod, _ = m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	m = mod.(Model)
+
+	mod, _ = m.Update(rawBDMsg{args: "ready", out: src.out})
+	m = mod.(Model)
+	if m.mode != modeOutput {
+		t.Fatalf("expected modeOutput; got %v", m.mode)
+	}
+	if !strings.Contains(m.outputVP.View(), "line1") {
+		t.Errorf("viewport should contain the captured stdout; got %q", m.outputVP.View())
+	}
+	out := m.viewOutput()
+	if !strings.Contains(out, "bd output") {
+		t.Errorf("rendered overlay should contain header; got %q", out)
+	}
+	if !strings.Contains(out, "line1") {
+		t.Errorf("rendered overlay should contain body line; got %q", out)
+	}
+}
+
 func TestCommandPalette_BDErrorRendersBracketedErrorLine(t *testing.T) {
 	// The error branch of rawBDMsg appends "[error] <msg>" to
 	// the overlay body — uncovered before. Pin both halves
