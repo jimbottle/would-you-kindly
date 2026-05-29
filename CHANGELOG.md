@@ -8,6 +8,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (nothing yet)
 
+## [0.3.1] — 2026-05-28
+
+Owner column expansion: the per-row badge now identifies AGENT
+and HUMAN-BLOCK alongside the existing HUMAN variants, so the
+column tells the full "whose move is it" story rather than
+flagging only human-flagged rows.
+
+### Added
+
+- **AGENT badge** (green) — surfaces on rows that match the agent
+  inbox query (`src:agent` AND NOT `human`). Identifies tasks the
+  agent owns and can act on now.
+- **HUMAN-BLOCK badge** (amber) — surfaces on agent-owned rows
+  whose dependency set includes a human-labeled task. Detection
+  shells out to `bd dep list <id>` per candidate (parallel
+  goroutines, best-effort, same-workspace only). The agent
+  literally can't move these forward until the blocker closes;
+  the inbox imperative excludes them.
+
+### Changed
+
+- Responsibility column header renamed `human` → `owner` to
+  reflect the broader scope (was: only HUMAN; now: HUMAN /
+  AGENT / HUMAN-BLOCK / blank).
+- Column width widened 9 → 13 to fit `HUMAN-BLOCK`. Shorter
+  badges get trailing whitespace; alignment of subsequent
+  columns shifts right by 4.
+- Convention surfaces (`wyk conventions`, SKILL.md,
+  `docs/CONTRACT.md`, `bd remember` memory) call out
+  HUMAN-BLOCK as an explicit exception to "work inbox items now"
+  — agent can't unblock them, skip to the next.
+
+### Internals
+
+- New `beads.Issue.BlockedByHuman` field (`json:"-"`).
+- New `beads.Client.ListDeps(ctx, id)` wrapping
+  `bd dep list <id> --json`.
+- New `markBlockedByHuman` in `internal/tui/source.go` runs the
+  dep check in parallel inside `BDSource.Fetch` for every
+  agent-inbox candidate.
+
 ## [0.3.0] — 2026-05-28
 
 Supersedes the v0.3.0-alpha prerelease. Cuts as a non-prerelease
@@ -597,7 +638,8 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.1
 [0.3.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0
 [0.3.0-alpha]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0-alpha
 [0.2.3]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.3
