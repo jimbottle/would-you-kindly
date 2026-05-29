@@ -78,6 +78,13 @@ For a single repo (without going through the registry):
 wyk -C /path/to/repo
 ```
 
+Launch into a specific preset (so a shell alias can land on the human
+view, the agent inbox, etc.):
+
+```bash
+wyk -preset human    # all/ready/human/mine/blocked
+```
+
 ### Managing the registry
 
 ```bash
@@ -260,20 +267,43 @@ to restore the original.
 | `enter`   | Open the selected issue (read its instructions)   |
 | `esc`     | Back to the list                                  |
 | `/`       | Open the fuzzy filter input (matches title + body)|
+| `@name`   | Expand a saved fuzzy filter (manage via `:filter`)|
 | `h`       | Jump to the human-flagged view                    |
 | `tab`     | Cycle preset filters (all → ready → human → mine → blocked) |
+| `C`       | Toggle "show closed" across all presets           |
+| `s` / `S` | Cycle sort key / reverse the active direction     |
+| `o`       | Column-visibility overlay (persists to `ui.json`) |
 | `r`       | Refresh from bd now                               |
 | `?`       | Open the help overlay                             |
 | `q`       | Quit                                              |
 
 ### Writing
 
-| Key | Action                                                      |
-| --- | ----------------------------------------------------------- |
-| `c` | Close the cursor issue (asks `[y/N]` to confirm)            |
-| `H` | Toggle the `human` label on the cursor issue                |
-| `n` | Append a note to the cursor issue (opens a text prompt)     |
-| `N` | File a new issue in the cursor's repo (title-only prompt; labeled `src:human`) |
+| Key   | Action                                                      |
+| ----- | ----------------------------------------------------------- |
+| `c`   | Close the cursor issue (asks `[y/N]` to confirm)            |
+| `H`   | Toggle the `human` label on the cursor issue                |
+| `n`   | Append a note to the cursor issue (multi-line textarea)     |
+| `N`   | File a new issue in the cursor's repo (QuickAdd; refuses without an owner) |
+| `e`   | Edit the cursor issue's description in `$EDITOR`            |
+| `L`   | Toggle an arbitrary label on the cursor issue               |
+| `O`   | Change the cursor issue's owner                             |
+| `d`   | Defer the cursor issue (`bd update --defer`)                |
+| `+`/`-` | Bump the cursor issue's priority                          |
+| `v`   | Multi-select; bulk close / flag / defer the marked rows     |
+| `u`   | Undo the last close (reopens via `bd reopen`; one-deep)     |
+| `.`   | Repeat the last write action against the cursor row         |
+
+### Clipboard & command palette
+
+| Key   | Action                                                      |
+| ----- | ----------------------------------------------------------- |
+| `y`   | Yank the cursor row's ID                                    |
+| `Y`   | Yank `ID — title`                                           |
+| `*`   | Yank every visible row's ID, newline-separated              |
+| `M`   | Yank the cursor row as a markdown task line (`- [ ] ID — title`) |
+| `_`   | Yank every visible row as a markdown task list              |
+| `:`   | Command palette — `:assign`, `:priority`, `:label`, `:filter list`/`remove`, `:bd <args>` |
 
 After any write, the list refetches and a status banner appears
 above the help bar (e.g. `closed wyk-42`, or `close wyk-42 failed: …`).
@@ -283,7 +313,44 @@ description and any accumulated notes (added via `n` or `bd note`).
 Notes lazy-load via a `bd show` call on entry, so the section
 appears a beat after the rest of the detail view.
 
-The list also refreshes itself every 10 seconds.
+The list also refreshes itself every 10 seconds. On platforms with
+fsnotify support, external `bd` writes (a `git pull`, another `wyk`
+instance, the post-commit hook auto-closing) trigger an immediate
+refresh instead of waiting for the next tick.
+
+### Customizing colors
+
+Drop a `~/.config/wyk/theme.json` (or `$XDG_CONFIG_HOME/wyk/theme.json`)
+to override any subset of the built-in lipgloss styles:
+
+```json
+{
+  "human_badge_bg": "#ff66cc",
+  "agent_badge_bg": "78",
+  "status_open":    "39"
+}
+```
+
+Empty or missing keys fall through to the defaults. Colors accept ANSI
+256 codes (`"212"`) or hex literals (`"#ff66cc"`). Set `NO_COLOR=1` (or
+`WYK_NO_COLOR=1`) to disable styling entirely.
+
+### Other subcommands
+
+```bash
+wyk activity [-since 24h] [-priority N] [-repo name] [-status open|closed|all] [-json]
+wyk export   [-since 24h] [-compact] [-repo name]                        # JSON dump
+wyk import   [-file path] [-dry-run] [-repo name]                        # restore from a dump
+wyk dashboard [-json] [-days N] [-repo name]                             # per-repo rollup
+wyk completion <bash|zsh|fish>                                           # shell completion
+wyk help [--markdown]                                                    # keymap reference
+wyk version [--check]                                                    # 0 current / 1 newer / 2 net err
+```
+
+`wyk inbox -priority N -repo <name>` and `wyk handoff -note <text>`
+extend the existing inbox/handoff commands. Every subcommand that
+emits structured data accepts `-json`; the JSON shapes are stable
+across patch releases.
 
 ## A day in the life
 
@@ -310,12 +377,13 @@ open). Press `h` to jump to the human view:
 
 ```
 Repo               Branch     ID         T     Status  P   Updated  Title
-would-you-kindly   main       2oa        task  open    P1  3h ago   Rotate the staging DB password  ← HUMAN
-acme-pipeline      feat/x     mc-42      bug   open    P0  1h ago   Latest broken                   ← HUMAN
+would-you-kindly   main       2oa        task  open    P1  3h ago   Rotate the staging DB password  HUMAN
+acme-pipeline      feat/x     mc-42      bug   open    P0  1h ago   Latest broken                   HUMAN
 ```
 
-(The `← HUMAN` badge means an agent put it there. `· HUMAN` means
-you filed it for yourself.)
+(The `HUMAN` badge is rendered plain regardless of who filed the issue —
+`src:agent` vs `src:human` is still in the row's labels, but the badge
+itself stays uniform so the eye reads it as one thing.)
 
 Press `enter` to read the runbook, `c` to close when done, or `H` to
 bounce it back to the agent if the next step is theirs again. The
@@ -357,17 +425,17 @@ Drop screenshots of the TUI here. Good captures:
 
 ## Status
 
-**v0.3.0 shipped** — the binary now ships with `wyk update` so
-future upgrades are one command. Highlights: agent discoverability
-(`wyk conventions`, doctor Conventions stanza, `bd remember` on
-init, top-level help with subcommand list), registry CLI (`list /
-remove / prune`), `wyk --version`, `wyk update` with cached
-update-available nudge in TUI + doctor, sticky-header viewport,
-HUMAN column second-from-left, title truncation,
-no-blank-on-refresh, cross-workspace leak guard, gitlink-safe
-everything, CI on PR + main, and a tightened handoff runbook with
-required self-verification + unblocker sections + status
-lifecycle guidance + inbox imperative.
+**v0.4.0 shipped** — `wyk` graduates from "TUI over the inbox" to a
+CLI-driven toolkit around the same handoff contract. New subcommands:
+`activity`, `export`, `import`, `dashboard`, `doctor`, `help`,
+`completion`, `version --check`. TUI gains a much larger keymap —
+write actions (`e`/`L`/`O`/`d`/`v`/`+`/`-`/`u`/`.`), four clipboard
+yank variants (`y`/`Y`/`*`/`M`/`_`), view toggles (`o`/`C`/`s`/`S`),
+multi-line note textarea, `@name` saved-filter expansion, and a `:`
+command palette with `:bd <args>` for raw bd output. Customization:
+`theme.json` color overlay, `NO_COLOR` support, top-level `-preset`
+to launch into a specific view. See the [CHANGELOG](CHANGELOG.md)
+for the full list.
 
 ## License
 
