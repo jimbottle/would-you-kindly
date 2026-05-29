@@ -96,6 +96,8 @@ func main() {
 			os.Exit(runActivity(os.Args[2:]))
 		case "help":
 			os.Exit(runHelp(os.Args[2:]))
+		case "completion":
+			os.Exit(runCompletion(os.Args[2:]))
 		case "version", "--version", "-v":
 			fmt.Println(versionString())
 			os.Exit(0)
@@ -524,6 +526,7 @@ Subcommands:
   export       JSON dump of every registered repo's full issue list + ready IDs
   activity     recently-touched issues across registered repos (-since 24h, -json)
   help         pointer to the in-TUI overlay; --markdown emits a keymap reference
+  completion   emit bash/zsh/fish completion script (run: wyk completion <shell>)
   registry     list / remove / prune registered workspaces
   conventions  print the agent-facing label convention (–json for structured)
   update       check for and install a newer wyk release
