@@ -719,7 +719,7 @@ func TestMarkBlockedByHuman_NilClientNoOps(t *testing.T) {
 	issues := []beads.Issue{
 		{ID: "a-1", Labels: []string{"src:agent"}, DependencyCount: 1},
 	}
-	markBlockedByHuman(t.Context(), nil, issues)
+	markBlockedByHuman(t.Context(), nil, issues, nil)
 	if issues[0].BlockedByHuman {
 		t.Error("nil client should leave BlockedByHuman = false")
 	}
@@ -766,7 +766,7 @@ func TestMarkBlockedByHuman_FlagsRowsWithHumanLabeledBlocker(t *testing.T) {
 			},
 		},
 	}
-	markBlockedByHuman(context.Background(), stub, issues)
+	markBlockedByHuman(context.Background(), stub, issues, nil)
 	if !issues[0].BlockedByHuman {
 		t.Errorf("aaa: blocker has `human` label → should be flagged")
 	}
@@ -793,7 +793,7 @@ func TestMarkBlockedByHuman_SkipsNonCandidates(t *testing.T) {
 		t.Errorf("ListDeps called for non-candidate %q", id)
 		return nil, nil
 	})
-	markBlockedByHuman(context.Background(), stub, issues)
+	markBlockedByHuman(context.Background(), stub, issues, nil)
 	if calls != 0 {
 		t.Errorf("expected zero ListDeps calls; got %d", calls)
 	}
@@ -803,4 +803,41 @@ type stubDepListerFunc func(ctx context.Context, id string) ([]beads.Issue, erro
 
 func (f stubDepListerFunc) ListDeps(ctx context.Context, id string) ([]beads.Issue, error) {
 	return f(ctx, id)
+}
+
+func TestNewMultiBDSource_SharesOneDepSemAcrossSubs(t *testing.T) {
+	// Regression for the per-workspace-vs-global concurrency cap.
+	// NewMultiBDSource must allocate ONE semaphore and thread it
+	// into every sub's BDSource.DepSem — otherwise the global
+	// bd-subprocess count scales with registry size instead of
+	// staying bounded by markBlockedByHumanConcurrency.
+	c1 := &beads.Client{}
+	c2 := &beads.Client{}
+	c3 := &beads.Client{}
+	m, err := NewMultiBDSource([]*beads.Client{c1, c2, c3}, []string{"alpha", "beta", "gamma"}, "me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.subs) != 3 {
+		t.Fatalf("expected 3 subs; got %d", len(m.subs))
+	}
+	var firstSem chan struct{}
+	for i, sub := range m.subs {
+		bds, ok := sub.src.(*BDSource)
+		if !ok {
+			t.Fatalf("sub %d: expected *BDSource, got %T", i, sub.src)
+		}
+		if bds.DepSem == nil {
+			t.Errorf("sub %d: DepSem is nil; multi-source should always populate it", i)
+			continue
+		}
+		if i == 0 {
+			firstSem = bds.DepSem
+			if cap(firstSem) != markBlockedByHumanConcurrency {
+				t.Errorf("DepSem capacity = %d, want %d", cap(firstSem), markBlockedByHumanConcurrency)
+			}
+		} else if bds.DepSem != firstSem {
+			t.Errorf("sub %d: DepSem is a different channel from sub 0; semaphore must be shared so the global concurrent-subprocess cap is enforced", i)
+		}
+	}
 }

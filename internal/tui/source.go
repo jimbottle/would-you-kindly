@@ -33,6 +33,12 @@ type BDSource struct {
 	// Name is the display label for the Repo column. Empty leaves
 	// Repo blank on each issue (legacy behaviour).
 	Name string
+	// DepSem is an optional shared semaphore for the HUMAN-BLOCK
+	// dep-scan. nil means "allocate a local channel" (the
+	// single-repo path). MultiBDSource sets this to a single
+	// shared channel across every sub so the global bd-subprocess
+	// concurrency is bounded regardless of registry size.
+	DepSem chan struct{}
 }
 
 // Compile-time check that BDSource satisfies the three interfaces.
@@ -72,36 +78,40 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 	}
 	hooked := wykHookInstalled(s.Client.Dir)
 	decorateIssues(issues, s.Name, func() string { return gitBranch(ctx, s.Client.Dir) }, hooked)
-	markBlockedByHuman(ctx, s.Client, issues)
+	markBlockedByHuman(ctx, s.Client, issues, s.DepSem)
 	return issues, nil
 }
 
-// markBlockedByHumanConcurrency caps the number of in-flight
-// `bd dep list` subprocesses markBlockedByHuman will spawn at a
-// time. The cap matters because Fetch runs on every refresh tick
-// AND inside MultiBDSource's per-sub goroutine pool — without a
-// cap, a registry with M repos × N agent-inbox candidates per
-// repo could fork M*N bd subprocesses per tick. 8 keeps the spawn
-// burst predictable while still finishing quickly for a typical
-// 5-20 candidate count.
+// markBlockedByHumanConcurrency is the default cap on in-flight
+// `bd dep list` subprocesses when markBlockedByHuman runs on its
+// own (single-repo Source). Multi-repo callers (MultiBDSource)
+// inject a shared semaphore sized to this same value, so the
+// GLOBAL bd-subprocess count per refresh is bounded by this
+// constant regardless of how many workspaces are registered —
+// rather than scaling as M*8 with a per-workspace cap.
 const markBlockedByHumanConcurrency = 8
 
 // markBlockedByHuman runs `bd dep list <id>` for every candidate
 // issue (src:agent + NOT human + DependencyCount > 0) and stamps
 // Issue.BlockedByHuman=true on any whose blocker set includes a
-// human-labeled task. Concurrency is bounded by
-// markBlockedByHumanConcurrency — see that const's comment for the
-// rationale. Best-effort: ListDeps errors are swallowed so a flaky
+// human-labeled task. Concurrency is bounded by sem; passing nil
+// allocates a local channel of size markBlockedByHumanConcurrency
+// (the single-repo path). MultiBDSource constructs one shared
+// channel and threads it into every sub's BDSource so the global
+// concurrent-subprocess count stays bounded across the whole
+// fetch. Best-effort: ListDeps errors are swallowed so a flaky
 // bd call only loses the badge for that row, not the whole fetch.
 //
 // Same-workspace only — the blocker has to be reachable via the
 // same bd Client. Cross-workspace deps (rare in practice) fall
 // through and the row keeps the plain AGENT badge.
-func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue) {
+func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, sem chan struct{}) {
 	if c == nil {
 		return
 	}
-	sem := make(chan struct{}, markBlockedByHumanConcurrency)
+	if sem == nil {
+		sem = make(chan struct{}, markBlockedByHumanConcurrency)
+	}
 	var wg sync.WaitGroup
 	for i := range issues {
 		if !isAgentInboxCandidate(issues[i]) {
@@ -308,12 +318,18 @@ func NewMultiBDSource(clients []*beads.Client, names []string, me string) (*Mult
 		return nil, fmt.Errorf("clients/names length mismatch: %d clients, %d names",
 			len(clients), len(names))
 	}
+	// One shared semaphore across every sub so the GLOBAL count
+	// of in-flight `bd dep list` subprocesses per refresh stays
+	// bounded by markBlockedByHumanConcurrency, not M * that.
+	// Without sharing, a 10-repo registry could fan out 80
+	// concurrent subprocesses on each refresh tick.
+	depSem := make(chan struct{}, markBlockedByHumanConcurrency)
 	subs := make([]subRepo, len(clients))
 	for i, c := range clients {
 		dir := c.Dir
 		subs[i] = subRepo{
 			name:     names[i],
-			src:      &BDSource{Client: c, Me: me},
+			src:      &BDSource{Client: c, Me: me, DepSem: depSem},
 			branchFn: func(ctx context.Context) string { return gitBranch(ctx, dir) },
 		}
 	}
