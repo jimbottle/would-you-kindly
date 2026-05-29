@@ -1664,3 +1664,98 @@ func mustParse(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
 }
+
+func TestSetPriorityCap_ResetsCursorAndReclampsScroll(t *testing.T) {
+	// With a long list and the cursor parked deep in it, applying
+	// a priority cap should pull the cursor back to row 0 and
+	// re-clamp scroll. Without these, a regression could leave
+	// the cursor pointing past the now-shorter visible slice.
+	issues := make([]beads.Issue, 40)
+	for i := range issues {
+		issues[i] = beads.Issue{
+			ID:       fmt.Sprintf("a-%d", i+1),
+			Title:    fmt.Sprintf("row %d", i+1),
+			Priority: 3, // all P3 so the cap to P1 will yield zero rows
+		}
+	}
+	// Add one P0 so the cap=1 path has something to show.
+	issues[0].Priority = 0
+	src := &stubSource{issues: issues}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 14})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	// Drive cursor down so it's scrolled into the middle.
+	for i := 0; i < 20; i++ {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		m = model.(Model)
+	}
+	if m.cursor == 0 {
+		t.Fatal("setup: cursor should be > 0 before applying the cap")
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = model.(Model)
+	if m.cursor != 0 {
+		t.Errorf("setPriorityCap should reset cursor to 0; got %d", m.cursor)
+	}
+	if m.scroll > 0 && m.scroll >= len(m.visible) {
+		t.Errorf("scroll left past the now-shorter visible slice; scroll=%d visible=%d",
+			m.scroll, len(m.visible))
+	}
+}
+
+func TestSetSortKey_ResetsCursorAndReclampsScroll(t *testing.T) {
+	// Same shape as the priority test but for the sort cycle:
+	// pressing s while the cursor is parked deep must pull it
+	// back to 0 and re-clamp scroll.
+	issues := make([]beads.Issue, 40)
+	for i := range issues {
+		issues[i] = beads.Issue{
+			ID:       fmt.Sprintf("a-%d", i+1),
+			Title:    fmt.Sprintf("row %d", i+1),
+			Priority: i % 4,
+		}
+	}
+	src := &stubSource{issues: issues}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 14})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	for i := 0; i < 20; i++ {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		m = model.(Model)
+	}
+	if m.cursor == 0 {
+		t.Fatal("setup: cursor should be > 0 before pressing s")
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = model.(Model)
+	if m.cursor != 0 {
+		t.Errorf("setSortKey should reset cursor to 0; got %d", m.cursor)
+	}
+	if m.scroll > 0 && m.scroll >= len(m.visible) {
+		t.Errorf("scroll left past the visible slice; scroll=%d visible=%d",
+			m.scroll, len(m.visible))
+	}
+}
+
+func TestRenderHeader_DecoratesActiveSortColumn(t *testing.T) {
+	// Sort by priority should put ↑ next to P; sort by updated
+	// should put ↓ next to Updated. sortNone leaves the header
+	// arrow-free.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	if got := m.renderHeader(); strings.ContainsAny(got, "↑↓") {
+		t.Errorf("sortNone should not decorate any column; got:\n%s", got)
+	}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = model.(Model)
+	if got := m.renderHeader(); !strings.Contains(got, "P↑") {
+		t.Errorf("sortPriority should decorate the P column with ↑; got:\n%s", got)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = model.(Model)
+	if got := m.renderHeader(); !strings.Contains(got, "Updated↓") {
+		t.Errorf("sortUpdated should decorate the Updated column with ↓; got:\n%s", got)
+	}
+}

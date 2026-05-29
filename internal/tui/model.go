@@ -352,8 +352,9 @@ func (k sortKey) next() sortKey {
 	return k + 1
 }
 
-// label returns the human-readable name for the chip strip and
-// the header arrow.
+// label returns the human-readable name used as the chip strip
+// text (the header arrow is applied separately by sortDecorate
+// against the column's own caption).
 func (k sortKey) label() string {
 	switch k {
 	case sortPriority:
@@ -1159,9 +1160,11 @@ func applySort(issues []beads.Issue, k sortKey) {
 // visible-row pipeline. Cursor resets to 0 since the previous
 // position is meaningless against a different filter; scroll
 // re-clamps so the (now smaller or larger) list doesn't leave the
-// cursor offscreen.
-func (m Model) setPriorityCap(cap int) (tea.Model, tea.Cmd) {
-	m.priorityCap = cap
+// cursor offscreen. Param named capLevel to avoid shadowing Go's
+// builtin cap() — protects future edits that might add a
+// slice-capacity check inside the function.
+func (m Model) setPriorityCap(capLevel int) (tea.Model, tea.Cmd) {
+	m.priorityCap = capLevel
 	m.cursor = 0
 	m.recomputeVisible()
 	m.ensureCursorVisible()
@@ -1515,16 +1518,43 @@ func (m Model) renderHeader() string {
 			colBranch, "Branch",
 		)
 	}
-	h := fmt.Sprintf("%s%s%s%-*s  %-*s  %-*s  %-*s  %-*s  %s",
+	// Active sort decoration: append "↑" / "↓" to the active
+	// column's header so the user knows which axis is sorted
+	// without having to read the chip strip. Priority ascending
+	// (P0 first) gets ↑; updated descending (newest first) gets
+	// ↓; repo/id ascending get ↑.
+	idHdr := fmt.Sprintf("%-*s", colID, sortDecorate("ID", m.sortBy == sortID, "↑"))
+	prioHdr := fmt.Sprintf("%-*s", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑"))
+	updHdr := fmt.Sprintf("%-*s", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓"))
+	repoHdrText := fmt.Sprintf("%-*s", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑"))
+	if m.isMultiRepo() {
+		prefix = fmt.Sprintf("%-*s  %s  %-*s  ",
+			colWyk, "wyk",
+			repoHdrText,
+			colBranch, "Branch",
+		)
+	}
+	h := fmt.Sprintf("%s%s%s%s  %-*s  %-*s  %s  %s  %s",
 		cursor, respCol, prefix,
-		colID, "ID",
+		idHdr,
 		colType, "T",
 		colStatus, "Status",
-		colPrio, "P",
-		colUpdated, "Updated",
+		prioHdr,
+		updHdr,
 		"Title",
 	)
 	return tableHeaderStyle.Render(h)
+}
+
+// sortDecorate appends an arrow to a column header when that
+// column is the active sort axis. Lets renderHeader stay a flat
+// fmt.Sprintf rather than carrying a separate "active?" branch
+// per column.
+func sortDecorate(label string, active bool, arrow string) string {
+	if active {
+		return label + arrow
+	}
+	return label
 }
 
 func (m Model) renderRow(i beads.Issue, selected bool) string {

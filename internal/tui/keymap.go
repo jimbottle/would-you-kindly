@@ -50,16 +50,17 @@ type keyMap struct {
 	FilterPAll key.Binding // 0 — clear the priority cap
 
 	// Sort cycling. Cycles through {none, priority, updated, repo,
-	// id} with an ↑/↓ arrow in the relevant column header. Lets
-	// the user pivot the table for different triage moves without
-	// leaving the TUI.
+	// id} and surfaces the active axis BOTH as a chip in the
+	// filter strip ('↕ priority') AND as an arrow on the active
+	// column header (↑ for asc, ↓ for desc). Lets the user pivot
+	// the table for different triage moves without leaving the TUI.
 	SortCycle key.Binding // s — advance sort key
 }
 
 func defaultKeyMap() keyMap {
 	return keyMap{
-		Up:      key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
-		Down:    key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j", "down")),
+		Up:   key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
+		Down: key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j/k", "nav")), // ShortHelp uses Down's help string for the combined j/k hint; Up's "k up" still surfaces in the FullHelp overlay.
 		Top:     key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
 		Bottom:  key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
 		Open:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "open")),
