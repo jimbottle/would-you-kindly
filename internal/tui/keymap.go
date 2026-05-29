@@ -68,6 +68,12 @@ type keyMap struct {
 	// (owner badge, repo, branch, type, …). Selections persist to
 	// ~/.config/wyk/ui.json so the next launch keeps the layout.
 	Columns key.Binding // o — column overlay
+
+	// Yank copies the cursor issue's full ID to the system
+	// clipboard via OSC 52 (works over SSH and in tmux). Status
+	// banner confirms; failures surface as an error so the user
+	// doesn't think the copy worked and paste stale content.
+	Yank key.Binding // y — copy ID to clipboard
 }
 
 func defaultKeyMap() keyMap {
@@ -103,6 +109,7 @@ func defaultKeyMap() keyMap {
 		SortCycle:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		ShowClosed: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "±closed")),
 		Columns:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "columns")),
+		Yank:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank ID")),
 	}
 }
 
@@ -140,7 +147,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank},
 		{k.Refresh, k.Help, k.Quit},
 	}
 }

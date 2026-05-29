@@ -25,6 +25,7 @@ import (
 	"github.com/sahilm/fuzzy"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/clipboard"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
@@ -674,6 +675,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyHit(msg, m.keys.Columns):
 		m.mode = modeColumns
 		return m, nil
+	case keyHit(msg, m.keys.Yank):
+		return m.handleYank()
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
 		// suspended after a terminal error. Bumping tickGen retires
@@ -1378,6 +1381,31 @@ func (m Model) setSortKey(k sortKey) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleYank copies the cursor issue's full ID to the system
+// clipboard via OSC 52 and surfaces a status banner. The full ID
+// (not the display-prefix-trimmed version) is what's useful for
+// pasting into bd commands or chat — partial IDs would just
+// silently fail elsewhere. Empty-list / past-end cursor states
+// produce no-ops with a clear status, never a silent failure.
+func (m Model) handleYank() (tea.Model, tea.Cmd) {
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus("nothing to yank")
+		return m, flashClearCmd(m.statusGen)
+	}
+	id := m.visible[m.cursor].ID
+	if err := clipboardCopy(id); err != nil {
+		m.setStatus("yank failed: " + err.Error())
+		// No auto-clear on failure — the user needs to see why.
+		return m, nil
+	}
+	m.setStatus("copied " + id)
+	return m, flashClearCmd(m.statusGen)
+}
+
+// clipboardCopy is the seam tests can swap to skip /dev/tty I/O.
+// Production points at the real OSC 52 emitter.
+var clipboardCopy = clipboard.Copy
+
 // toggleShowClosed flips the include-closed flag on both the model
 // (for chip rendering) and the underlying Source (for the next
 // fetch query / bd subcommand choice), then triggers a refetch so
@@ -1474,6 +1502,8 @@ func (m Model) viewHelp() string {
 	b.WriteString(helpStyle.Render("  (e.g. \"ma5.2.1\" stands for \"" + exampleFullID(m) + "ma5.2.1\").\n"))
 	b.WriteString(helpStyle.Render("  Press ⏎ to expand a row and see the full ID in the detail view.\n"))
 	b.WriteString(helpStyle.Render("  Mouse: click a row to set the cursor; wheel scrolls up/down.\n"))
+	b.WriteString(helpStyle.Render("  Yank (y) uses OSC 52 so the copy reaches your local clipboard\n"))
+	b.WriteString(helpStyle.Render("  even over SSH; in tmux, enable `set -g allow-passthrough on`.\n"))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("esc / ? / q to close"))
 	return b.String()

@@ -1776,6 +1776,66 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 }
 
+func TestYank_CopiesCursorIssueID(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	// Swap the clipboard seam so the test doesn't touch /dev/tty.
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if copied == "" {
+		t.Fatalf("expected clipboardCopy to be called")
+	}
+	if copied != m.visible[0].ID {
+		t.Errorf("copied = %q, want cursor ID %q", copied, m.visible[0].ID)
+	}
+	if !strings.Contains(m.status, "copied") || !strings.Contains(m.status, copied) {
+		t.Errorf("status banner should announce the copy; got %q", m.status)
+	}
+}
+
+func TestYank_EmptyListSetsStatusInstead(t *testing.T) {
+	src := &stubSource{issues: nil}
+	m := applyFetched(New(src), src)
+
+	called := false
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { called = true; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if called {
+		t.Errorf("clipboardCopy should NOT be called on empty list")
+	}
+	if !strings.Contains(m.status, "nothing to yank") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
+func TestYank_FailureSurfacesError(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { return errors.New("/dev/tty: permission denied") }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if !strings.Contains(m.status, "yank failed") {
+		t.Errorf("status should announce failure; got %q", m.status)
+	}
+	if !strings.Contains(m.status, "permission denied") {
+		t.Errorf("status should include the underlying error; got %q", m.status)
+	}
+}
+
 func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
 	// In single-repo mode the wyk/repo/branch slots (2-4) are
 	// inert — pressing them shouldn't toggle anything. The slot
