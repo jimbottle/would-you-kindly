@@ -36,6 +36,11 @@ func runInbox(args []string) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
 	asJSON := fs.Bool("json", false, "emit a JSON array of issues for LLM consumption")
+	// -priority caps the inbox at priority N or higher (lower N
+	// = higher priority in bd's convention). -1 (the default)
+	// disables the cap. A user passing -priority 1 gets P0 + P1
+	// only — exactly the "what should I attack first" set.
+	maxPriority := fs.Int("priority", -1, "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -44,7 +49,7 @@ func runInbox(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json]")
+		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N]")
 		return 64
 	}
 
@@ -69,6 +74,10 @@ func runInbox(args []string) int {
 			fmt.Fprintln(os.Stderr, "wyk inbox:", firstErr)
 			return 1
 		}
+	}
+
+	if *maxPriority >= 0 {
+		all = filterByMaxPriority(all, *maxPriority)
 	}
 
 	if *asJSON {
@@ -167,6 +176,20 @@ func fetchInbox(subs []inboxSub) ([]beads.Issue, error) {
 		all = append(all, r.issues...)
 	}
 	return all, firstErr
+}
+
+// filterByMaxPriority keeps only issues at priority <= max. bd
+// uses lower numbers for higher priority (P0 most urgent), so
+// "cap at N" means "drop anything with priority > N." Splitting
+// the filter out keeps the call site flat and tests trivial.
+func filterByMaxPriority(issues []beads.Issue, max int) []beads.Issue {
+	out := issues[:0]
+	for _, i := range issues {
+		if i.Priority <= max {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // renderInboxText prints the inbox as a compact list — one line per
