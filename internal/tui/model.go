@@ -288,6 +288,13 @@ type Model struct {
 	// title field).
 	titleMatches map[string][]int
 
+	// marked is the multi-select set, keyed by Issue.ID. Toggled
+	// by `v`. When non-empty, bulk-capable write keys (c/H/d)
+	// operate on every marked row instead of the cursor row. The
+	// row prefix in renderRow surfaces a ✓ for marked entries so
+	// the selection is visible. esc in modeList clears the set.
+	marked map[string]bool
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -622,6 +629,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case writeMsg:
 		return m.handleWriteResult(msg)
 
+	case bulkWriteMsg:
+		return m.handleBulkWriteResult(msg)
+
 	case spinner.TickMsg:
 		// Animate the loading indicator. Only re-tick while we're
 		// actually showing it (the first paint, before data lands)
@@ -714,6 +724,17 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case keyHit(msg, m.keys.Quit):
 		return m, tea.Quit
+	case keyHit(msg, m.keys.Back):
+		// esc in modeList clears the multi-select. Without a
+		// dedicated escape, the only way to drop a botched mark
+		// set would be `v` on each row — too punishing. Other esc
+		// uses (cancel prompt, return from detail) live in their
+		// own mode handlers and don't reach here.
+		if len(m.marked) > 0 {
+			m.marked = nil
+			m.setStatus("cleared marks")
+			return m, flashClearCmd(m.statusGen)
+		}
 	case keyHit(msg, m.keys.Down):
 		if m.cursor < len(m.visible)-1 {
 			m.cursor++
@@ -784,6 +805,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleUndo()
 	case keyHit(msg, m.keys.Defer):
 		return m.beginDefer()
+	case keyHit(msg, m.keys.Mark):
+		return m.toggleMark()
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
 		// suspended after a terminal error. Bumping tickGen retires
@@ -959,7 +982,12 @@ func (m Model) beginClose() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode = modeConfirmClose
-	m.pendingTarget = m.visible[m.cursor]
+	// Bulk path: marks are the targets and the confirm prompt
+	// counts them. Single path: snapshot the cursor row into
+	// pendingTarget as before.
+	if len(m.marked) == 0 {
+		m.pendingTarget = m.visible[m.cursor]
+	}
 	// Modal entry adds 2 lines of chrome — re-clamp scroll so the
 	// cursor stays in the now-smaller viewport.
 	m.ensureCursorVisible()
@@ -970,16 +998,23 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
+	bulk := len(m.marked) > 0
 	target := m.pendingTarget
 	m.pendingTarget = beads.Issue{}
 	if msg.String() == "y" || msg.String() == "Y" {
+		mu := m.mutator()
+		m.mode = modeList
+		if bulk {
+			targets := m.markedIssues()
+			m.marked = nil
+			return m, runBulkWrite("close", targets, func(ctx context.Context, i beads.Issue) error {
+				return mu.Close(ctx, i)
+			})
+		}
 		if !m.issueExists(target.ID) {
-			m.mode = modeList
 			m.status = "close cancelled: " + target.ID + " was removed from the workspace by a refresh"
 			return m, nil
 		}
-		mu := m.mutator()
-		m.mode = modeList
 		return m, runWriteWithIssue("close", target, func(ctx context.Context) error {
 			return mu.Close(ctx, target)
 		})
@@ -1007,6 +1042,10 @@ func (m Model) issueExists(id string) bool {
 
 // toggleHuman flips the `human` label on the cursor issue. No
 // confirmation — the operation is reversible by toggling again.
+// Bulk path: when marks are present, ADDS the human label to every
+// marked row that doesn't already have it (the most common triage
+// flow — "flag these five for review"). Toggle-per-row would be
+// inconsistent across mixed-state selections.
 func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
 		m.status = "read-only mode (no Mutator wired up)"
@@ -1015,8 +1054,18 @@ func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 	if len(m.visible) == 0 {
 		return m, nil
 	}
-	i := m.visible[m.cursor]
 	mu := m.mutator()
+	if len(m.marked) > 0 {
+		targets := m.markedIssues()
+		m.marked = nil
+		return m, runBulkWrite("flag", targets, func(ctx context.Context, i beads.Issue) error {
+			if i.IsHuman() {
+				return nil // already flagged; bulk is add-only
+			}
+			return mu.AddLabel(ctx, i, "human")
+		})
+	}
+	i := m.visible[m.cursor]
 	if i.IsHuman() {
 		return m, runWrite("unflag", i.ID, func(ctx context.Context) error {
 			return mu.RemoveLabel(ctx, i, "human")
@@ -1170,6 +1219,30 @@ func (m *Model) restoreFilterPrompt() {
 	m.input.Placeholder = "fuzzy filter…"
 }
 
+// handleBulkWriteResult formats a status banner from a bulk
+// dispatch. Total success → "<action>ed N rows"; partial failure
+// → "<action>ed K of N (M failed: <first failure>)"; total
+// failure → "<action> failed for all N rows (<first failure>)".
+// The list refetches after the bulk so the new state is visible
+// immediately, same as the single-write path.
+func (m Model) handleBulkWriteResult(msg bulkWriteMsg) (tea.Model, tea.Cmd) {
+	succeeded := msg.total - len(msg.failures)
+	verb := msg.action + "ed"
+	if msg.action == "flag" {
+		verb = "flagged"
+	}
+	switch {
+	case len(msg.failures) == 0:
+		m.setStatus(fmt.Sprintf("%s %d rows", verb, succeeded))
+	case succeeded == 0:
+		m.setStatus(fmt.Sprintf("%s failed for all %d rows (%s)", msg.action, msg.total, msg.failures[0]))
+		return m, nil // sticky banner on total failure
+	default:
+		m.setStatus(fmt.Sprintf("%s %d of %d (%d failed: %s)", verb, succeeded, msg.total, len(msg.failures), msg.failures[0]))
+	}
+	return m, tea.Batch(m.fetchCmd(), flashClearCmd(m.statusGen))
+}
+
 // runWrite wraps a Mutator call in a tea.Cmd that emits a writeMsg.
 // All mutators in the Client carry their own per-call timeout, so a
 // fresh background context is fine here.
@@ -1189,6 +1262,38 @@ func runWriteWithIssue(action string, issue beads.Issue, fn func(ctx context.Con
 		err := fn(context.Background())
 		return writeMsg{action: action, id: issue.ID, issue: issue, err: err}
 	}
+}
+
+// runBulkWrite fires fn against each target sequentially and
+// reports a single bulkWriteMsg with success/failure counts. We
+// run sequentially (not in parallel) so the bd subprocess load
+// stays the same as the single-target path — the multi-repo
+// HUMAN-BLOCK semaphore already caps fanout, but parallel bulk
+// closes would still spike subprocess count and risk reordering
+// audit events. The dispatch is O(N) requests but N is the size
+// of a user's triage selection (rarely >20), so the latency is
+// acceptable.
+func runBulkWrite(action string, targets []beads.Issue, fn func(ctx context.Context, i beads.Issue) error) tea.Cmd {
+	return func() tea.Msg {
+		var failures []string
+		for _, t := range targets {
+			if err := fn(context.Background(), t); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", t.ID, err))
+			}
+		}
+		return bulkWriteMsg{action: action, total: len(targets), failures: failures}
+	}
+}
+
+// bulkWriteMsg carries the result of a runBulkWrite back to the
+// model. action describes what was attempted (close/flag/defer);
+// total is the number of targets in this batch; failures lists the
+// per-target error strings for those that didn't succeed (empty on
+// total success).
+type bulkWriteMsg struct {
+	action   string
+	total    int
+	failures []string
 }
 
 // handleWriteResult sets the status banner and triggers a refetch so
@@ -1576,6 +1681,50 @@ func (m Model) handleUndo() (tea.Model, tea.Cmd) {
 	})
 }
 
+// toggleMark flips the multi-select state on the cursor row.
+// First mark allocates m.marked lazily; removing the last mark
+// drops the map back to nil so len(m.marked)>0 stays the
+// single source of truth for "selection active". Status banner
+// surfaces the current count so the user always knows what
+// bulk-c/H/d would act on.
+func (m Model) toggleMark() (tea.Model, tea.Cmd) {
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		return m, nil
+	}
+	id := m.visible[m.cursor].ID
+	if m.marked == nil {
+		m.marked = map[string]bool{}
+	}
+	if m.marked[id] {
+		delete(m.marked, id)
+	} else {
+		m.marked[id] = true
+	}
+	if len(m.marked) == 0 {
+		m.marked = nil
+		m.setStatus("no marks")
+	} else {
+		m.setStatus(fmt.Sprintf("%d marked", len(m.marked)))
+	}
+	return m, flashClearCmd(m.statusGen)
+}
+
+// markedIssues returns the snapshot subset of m.visible whose IDs
+// are in m.marked. Stable ordering (visible order) so a bulk
+// dispatch fires writes in the same order the user sees them.
+func (m Model) markedIssues() []beads.Issue {
+	if len(m.marked) == 0 {
+		return nil
+	}
+	out := make([]beads.Issue, 0, len(m.marked))
+	for _, i := range m.visible {
+		if m.marked[i.ID] {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 // beginDefer enters modeDefer with a textinput prompt for the
 // defer value (+1d, +1w, tomorrow, 2026-06-15 — bd owns parsing).
 // Snapshots the cursor row into pendingTarget so a concurrent
@@ -1587,14 +1736,23 @@ func (m Model) beginDefer() (tea.Model, tea.Cmd) {
 		m.setStatus("read-only mode (no Mutator wired up)")
 		return m, flashClearCmd(m.statusGen)
 	}
-	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
-		m.setStatus("nothing to defer")
-		return m, flashClearCmd(m.statusGen)
+	// Bulk path: marks are the targets. Single path: snapshot the
+	// cursor row into pendingTarget. Either way we need at least
+	// one target to proceed.
+	if len(m.marked) == 0 {
+		if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+			m.setStatus("nothing to defer")
+			return m, flashClearCmd(m.statusGen)
+		}
+		m.pendingTarget = m.visible[m.cursor]
 	}
-	m.pendingTarget = m.visible[m.cursor]
 	m.mode = modeDefer
 	m.input.SetValue("")
-	m.input.Prompt = "defer until ▸ "
+	if len(m.marked) > 0 {
+		m.input.Prompt = fmt.Sprintf("defer %d rows until ▸ ", len(m.marked))
+	} else {
+		m.input.Prompt = "defer until ▸ "
+	}
 	m.input.Placeholder = "+1d, +1w, tomorrow, next monday, 2026-06-15…"
 	m.input.Focus()
 	return m, textinput.Blink
@@ -1626,6 +1784,14 @@ func (m Model) updateDefer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if when == "" {
 			m.setStatus("defer cancelled (empty value)")
 			return m, flashClearCmd(m.statusGen)
+		}
+		// Bulk path: dispatch SetDefer across every marked row.
+		if len(m.marked) > 0 {
+			targets := m.markedIssues()
+			m.marked = nil
+			return m, runBulkWrite("defer", targets, func(ctx context.Context, i beads.Issue) error {
+				return mu.SetDefer(ctx, i, when)
+			})
 		}
 		return m, runWriteWithIssue("defer", target, func(ctx context.Context) error {
 			return mu.SetDefer(ctx, target, when)
@@ -1842,14 +2008,19 @@ func (m Model) viewList() string {
 
 	// modal prompts live just above the status bar
 	switch m.mode {
-	case modeFilter, modeNote, modeQuickAdd:
+	case modeFilter, modeNote, modeQuickAdd, modeDefer:
 		b.WriteString("\n")
 		b.WriteString(m.input.View())
 	case modeConfirmClose:
 		// Render the captured ID, not the cursor's current target —
 		// a refetch may have shifted things since the prompt opened.
-		if m.pendingTarget.ID != "" {
-			b.WriteString("\n")
+		// Bulk path: pendingTarget.ID is "" and the prompt counts
+		// the marked rows; single path: prompt shows the ID.
+		b.WriteString("\n")
+		if n := len(m.marked); n > 0 {
+			b.WriteString(confirmStyle.Render(
+				fmt.Sprintf("close %d marked rows? [y/N]", n)))
+		} else if m.pendingTarget.ID != "" {
 			b.WriteString(confirmStyle.Render(
 				fmt.Sprintf("close %s? [y/N]", m.pendingTarget.ID)))
 		}
@@ -2055,6 +2226,13 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	cursor := "  "
 	if selected {
 		cursor = cursorStyle.Render("▶ ")
+	}
+	// Marked rows get a ✓ in the cursor cell (replacing the
+	// leading space) so the multi-select is visible at a glance.
+	// Selected-and-marked shows ▶ (cursor wins; the user knows
+	// they're on a marked row from the context).
+	if !selected && m.marked[i.ID] {
+		cursor = cursorStyle.Render("✓ ")
 	}
 	var b strings.Builder
 	b.WriteString(cursor)

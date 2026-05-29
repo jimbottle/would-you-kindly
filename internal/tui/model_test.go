@@ -2021,6 +2021,104 @@ func TestRenderStatsLine_MineSlotShowsZeroWhenMeSet(t *testing.T) {
 	}
 }
 
+func TestMark_TogglesAndClearsOnEsc(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	// Mark cursor row.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = model.(Model)
+	if !m.marked[m.visible[0].ID] {
+		t.Errorf("v should mark cursor row; got %v", m.marked)
+	}
+
+	// Move down + mark a second row.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = model.(Model)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = model.(Model)
+	if len(m.marked) != 2 {
+		t.Errorf("expected 2 marks; got %d", len(m.marked))
+	}
+
+	// Toggle off the second row.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = model.(Model)
+	if len(m.marked) != 1 {
+		t.Errorf("v should unmark; got %d", len(m.marked))
+	}
+
+	// esc clears all marks.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.marked != nil {
+		t.Errorf("esc should clear marks; got %v", m.marked)
+	}
+}
+
+func TestBulkClose_DispatchesAcrossAllMarked(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	// Mark first two rows.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = model.(Model)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = model.(Model)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = model.(Model)
+	if len(m.marked) != 2 {
+		t.Fatalf("setup: expected 2 marks; got %d", len(m.marked))
+	}
+
+	// 'c' should enter confirm with the bulk prompt.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = model.(Model)
+	if m.mode != modeConfirmClose {
+		t.Fatalf("c should enter modeConfirmClose; got %v", m.mode)
+	}
+
+	// 'y' dispatches bulkWriteMsg-producing cmd.
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("y should dispatch a bulk close")
+	}
+	if m.marked != nil {
+		t.Errorf("marks should be consumed by the dispatch; got %v", m.marked)
+	}
+	msg := cmd().(bulkWriteMsg)
+	if msg.action != "close" || msg.total != 2 {
+		t.Errorf("bulkWriteMsg action=%q total=%d, want close/2", msg.action, msg.total)
+	}
+	if len(s.closed) != 2 || s.closed[0] != "a-1" || s.closed[1] != "a-2" {
+		t.Errorf("expected both rows closed in visible order; got %v", s.closed)
+	}
+}
+
+func TestBulkFlag_AddsHumanToMarked(t *testing.T) {
+	// Mix: a-1 already human, a-2 not. Bulk flag should ADD only
+	// to a-2 (idempotent on the already-flagged row).
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	// Mark first two rows (a-1 human, a-2 not).
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("H with marks should dispatch a bulk flag")
+	}
+	_ = cmd()
+	if len(s.added) != 1 || s.added[0] != (labelOp{"a-2", "human"}) {
+		t.Errorf("bulk flag should add human only to a-2 (a-1 already flagged); got %+v", s.added)
+	}
+}
+
 func TestDefer_DispatchesSetDeferWithTypedValue(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)

@@ -87,6 +87,13 @@ type keyMap struct {
 	// bd's `update --defer` flag so the persistence semantics
 	// match `bd ready` exactly.
 	Defer key.Binding // d — defer cursor issue
+
+	// Mark toggles the multi-select state on the cursor row. When
+	// at least one row is marked, the bulk-capable write keys
+	// (c/H/d) operate on every marked row instead of the cursor —
+	// matches vim's visual-mode mental model. esc clears all
+	// marks.
+	Mark key.Binding // v — toggle mark on cursor row
 }
 
 func defaultKeyMap() keyMap {
@@ -125,6 +132,7 @@ func defaultKeyMap() keyMap {
 		Yank:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank ID")),
 		Undo:       key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo close")),
 		Defer:      key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
+		Mark:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
 	}
 }
 
@@ -162,7 +170,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark},
 		{k.Refresh, k.Help, k.Quit},
 	}
 }
