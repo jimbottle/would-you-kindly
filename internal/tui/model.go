@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -203,6 +204,12 @@ type Model struct {
 	// actually doing something during the initial bd fetch.
 	spinner spinner.Model
 
+	// help renders the one-line footer from the keymap so the
+	// status bar's hint can't drift from the actual bindings.
+	// Configured to show writes only when the source is a Mutator
+	// via the source-of-truth swap in statusBar.
+	help help.Model
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -228,6 +235,15 @@ func New(src Source) Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = setupHintStyle
 
+	h := help.New()
+	// The status-bar palette already supplies its own bg/fg; the
+	// help component shouldn't inject a separate background colour
+	// or the bindings render in a different shade than the line
+	// they're embedded in.
+	h.Styles.ShortKey = helpStyle
+	h.Styles.ShortDesc = helpStyle
+	h.Styles.ShortSeparator = helpStyle.Copy()
+
 	return Model{
 		src:      src,
 		keys:     defaultKeyMap(),
@@ -237,6 +253,7 @@ func New(src Source) Model {
 		loading:  true, // first paint shows "loading…" until Init's fetch returns
 		detailVP: viewport.New(80, 20),
 		spinner:  sp,
+		help:     h,
 	}
 }
 
@@ -1647,18 +1664,25 @@ func (m Model) statusBar() string {
 	if m.refreshing {
 		left += "  ↻ refreshing"
 	}
-	help := "j/k  ⏎ open  / filter  h human  tab  r refresh  c close  H ±human  n note  q quit"
+	// Render the right-side help inline from the keymap so the
+	// status bar's bindings can't drift from the actual handlers.
+	// Read-only mode swaps in shortHelpReadOnly so the footer
+	// doesn't advertise write keys that just produce a banner.
+	bindings := m.keys.ShortHelp()
+	suffix := ""
 	if m.mutator() == nil {
-		help = "j/k  ⏎ open  / filter  h human  tab  r refresh  q quit  (read-only)"
+		bindings = m.keys.shortHelpReadOnly()
+		suffix = "  (read-only)"
 	}
+	helpLine := m.help.ShortHelpView(bindings) + suffix
 	gap := " "
 	if m.width > 0 {
-		need := lipgloss.Width(left) + lipgloss.Width(help) + 2
+		need := lipgloss.Width(left) + lipgloss.Width(helpLine) + 2
 		if need < m.width {
 			gap = strings.Repeat(" ", m.width-need)
 		}
 	}
-	return statusBarStyle.Render(left + gap + help)
+	return statusBarStyle.Render(left + gap + helpLine)
 }
 
 func keyHit(msg tea.KeyMsg, b key.Binding) bool {

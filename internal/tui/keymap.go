@@ -1,6 +1,13 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/key"
+import (
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+)
+
+// Compile-time check that keyMap satisfies bubbles/help's key.Map
+// interface so it can drive the help footer + overlay.
+var _ help.KeyMap = keyMap{}
 
 // keyMap collects all bindings the TUI responds to. Kept on the
 // model so the help line in the status bar can render them.
@@ -56,5 +63,44 @@ func defaultKeyMap() keyMap {
 		JumpPrevHuman: key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev human")),
 
 		Help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	}
+}
+
+// ShortHelp is the one-line "what can I press right now" hint the
+// help footer renders. Order matters: the bubbles/help package
+// renders them left-to-right with a separator, and clips on the
+// right when width is tight — so the most important bindings come
+// first. Writes appear here too; if the source is read-only the
+// model swaps in shortHelpReadOnly when rendering.
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{
+		k.Down, k.Open, k.Filter, k.Human, k.Cycle, k.Refresh,
+		k.Close, k.ToggleHuman, k.AddNote, k.Help, k.Quit,
+	}
+}
+
+// shortHelpReadOnly is ShortHelp without the write bindings, used
+// when no Mutator is wired up so the footer doesn't advertise
+// keys that won't do anything (or worse, surface a "read-only
+// mode" banner on press).
+func (k keyMap) shortHelpReadOnly() []key.Binding {
+	return []key.Binding{
+		k.Down, k.Open, k.Filter, k.Human, k.Cycle, k.Refresh,
+		k.Help, k.Quit,
+	}
+}
+
+// FullHelp drives the help overlay's grouped view. The model also
+// renders its own grouped overlay (viewHelp) for nicer copy
+// (section headings, notes), so this is primarily here to satisfy
+// the help.KeyMap interface contract — keeping the data source
+// unified so a binding change in defaultKeyMap propagates
+// automatically.
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
+		{k.Filter, k.Human, k.Cycle},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd},
+		{k.Refresh, k.Help, k.Quit},
 	}
 }
