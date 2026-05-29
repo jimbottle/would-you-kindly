@@ -1848,3 +1848,112 @@ func stripANSI(s string) string {
 	}
 	return b.String()
 }
+
+func TestMouseWheel_ScrollsCursorUpAndDown(t *testing.T) {
+	src := &stubSource{issues: manyIssues(20)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	if m.cursor != 0 {
+		t.Fatalf("setup: cursor should start at 0; got %d", m.cursor)
+	}
+
+	// Wheel down → cursor++.
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	m = model.(Model)
+	if m.cursor != 1 {
+		t.Errorf("wheel down should advance cursor; got %d, want 1", m.cursor)
+	}
+
+	// Wheel up → cursor--.
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress})
+	m = model.(Model)
+	if m.cursor != 0 {
+		t.Errorf("wheel up should retreat cursor; got %d, want 0", m.cursor)
+	}
+
+	// Wheel up at row 0 is a no-op (clamps).
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress})
+	m = model.(Model)
+	if m.cursor != 0 {
+		t.Errorf("wheel up at row 0 should clamp; got %d", m.cursor)
+	}
+}
+
+func TestMouseLeftClick_LandsCursorOnTargetRow(t *testing.T) {
+	src := &stubSource{issues: manyIssues(20)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+
+	// rowsStartY for default state: 1 (title) + 1 (blank) + 1 (header) = 3
+	// Click on Y=5 → target row = 0 + (5 - 3) = 2.
+	rowY := m.rowsStartY() + 2
+	model, _ = m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: rowY,
+	})
+	m = model.(Model)
+	if m.cursor != 2 {
+		t.Errorf("left-click at row offset 2 should land cursor on row 2; got %d", m.cursor)
+	}
+}
+
+func TestMouseLeftClick_OutsideTableIsNoOp(t *testing.T) {
+	src := &stubSource{issues: manyIssues(20)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+
+	// Click on Y=0 (the title line). Should NOT change cursor.
+	model, _ = m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 0,
+	})
+	m = model.(Model)
+	if m.cursor != 0 {
+		t.Errorf("click in header area should be a no-op; cursor moved to %d", m.cursor)
+	}
+
+	// Click far below the last row → clamped (target out of range, no-op).
+	model, _ = m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 999,
+	})
+	m = model.(Model)
+	if m.cursor != 0 {
+		t.Errorf("click past end of list should be a no-op; cursor moved to %d", m.cursor)
+	}
+}
+
+func TestMouse_IgnoredOutsideListMode(t *testing.T) {
+	// Detail / help / modal modes own the canvas; mouse should
+	// not steal focus and reset the list cursor.
+	src := &stubSource{issues: manyIssues(20)}
+	m := applyFetched(New(src), src)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m = model.(Model)
+	if m.mode != modeHelp {
+		t.Fatalf("setup: expected modeHelp; got %v", m.mode)
+	}
+	preCursor := m.cursor
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	m = model.(Model)
+	if m.cursor != preCursor {
+		t.Errorf("mouse should be ignored in modeHelp; cursor changed from %d to %d", preCursor, m.cursor)
+	}
+}
+
+func TestRowsStartY_AccountsForChipStrip(t *testing.T) {
+	src := &stubSource{issues: manyIssues(20)}
+	m := applyFetched(New(src), src)
+	baseY := m.rowsStartY()
+
+	// Activate a priority cap → chip strip appears, rowsStartY
+	// shifts down by one.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = model.(Model)
+	if m.rowsStartY() != baseY+1 {
+		t.Errorf("chip strip should bump rowsStartY by 1; was %d, now %d", baseY, m.rowsStartY())
+	}
+}

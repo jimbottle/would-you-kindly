@@ -95,7 +95,11 @@ func main() {
 	if nudge := readUpdateNudge(versionString()); nudge != "" {
 		model = model.WithUpdateNudge(nudge)
 	}
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	// WithMouseCellMotion lets the model receive tea.MouseMsg with
+	// cell-level coordinates so a click on a row sets the cursor
+	// and the scroll wheel moves up/down. Cell motion (not all
+	// motion) is enough — we don't track drags or hovers.
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	// Kick a best-effort live check in the background. We don't
 	// post the result back into the running TUI — the snapshot
 	// lands on disk and the NEXT wyk invocation reads it. This

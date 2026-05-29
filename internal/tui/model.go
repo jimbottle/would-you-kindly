@@ -521,6 +521,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		// Mouse is only handled in the list view (modes that own
+		// the canvas — detail / help / modals — keep keyboard
+		// focus and ignore mouse). Wheel scrolls the cursor;
+		// left-click sets the cursor to the targeted row.
+		if m.mode != modeList {
+			return m, nil
+		}
+		return m.handleMouse(msg)
+
 	case tea.KeyMsg:
 		// Any keystroke processed in modeList — including the ones
 		// that open the filter or note prompts — clears the previous
@@ -658,6 +668,71 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openHelp()
 	}
 	return m, nil
+}
+
+// handleMouse interprets a tea.MouseMsg against the list view:
+// wheel up/down moves the cursor (like k/j); left-click lands the
+// cursor on the targeted row. Out-of-bounds clicks (header, chip
+// strip, banners) are silently ignored.
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// MouseAction is only meaningful for press/release on a button.
+	// We only act on the press; releasing a button or a wheel-tick
+	// is enough motion to know what the user wanted.
+	if msg.Action == tea.MouseActionRelease {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if m.cursor > 0 {
+			m.cursor--
+			m.ensureCursorVisible()
+		}
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		if m.cursor < len(m.visible)-1 {
+			m.cursor++
+			m.ensureCursorVisible()
+		}
+		return m, nil
+	case tea.MouseButtonLeft:
+		// Compute the cell-row offset from the top of the table
+		// body, then translate to a m.visible index via the
+		// current scroll offset. Clicks above the body
+		// (title/setupHint/chip/header) or past the last rendered
+		// row produce target out-of-range → no-op.
+		rowY := msg.Y - m.rowsStartY()
+		if rowY < 0 {
+			return m, nil
+		}
+		target := m.scroll + rowY
+		if target < 0 || target >= len(m.visible) {
+			return m, nil
+		}
+		m.cursor = target
+		m.ensureCursorVisible()
+		return m, nil
+	}
+	return m, nil
+}
+
+// rowsStartY returns the Y-coordinate (zero-indexed from the top
+// of the rendered output) at which the first table row lands.
+// Mirrors the viewList chrome ordering — bumping any conditional
+// chrome there means bumping it here too. We use this to map a
+// click's msg.Y back to a row index.
+func (m Model) rowsStartY() int {
+	y := 1 // title line
+	if m.setupHint != "" {
+		// setupHint can wrap; count newlines + 1 to match the
+		// vertical real estate it actually consumes.
+		y += 1 + strings.Count(m.setupHint, "\n")
+	}
+	if m.preset != filter.PresetAll || m.priorityCap >= 0 || m.sortBy != sortNone {
+		y++ // chip strip
+	}
+	y++ // blank line between header chrome and table header
+	y++ // table header
+	return y
 }
 
 // jumpToHuman moves the cursor to the next (dir=+1) or previous
@@ -1230,6 +1305,7 @@ func (m Model) viewHelp() string {
 	b.WriteString(helpStyle.Render("  IDs in the table are shown without the repeated workspace prefix\n"))
 	b.WriteString(helpStyle.Render("  (e.g. \"ma5.2.1\" stands for \"" + exampleFullID(m) + "ma5.2.1\").\n"))
 	b.WriteString(helpStyle.Render("  Press ⏎ to expand a row and see the full ID in the detail view.\n"))
+	b.WriteString(helpStyle.Render("  Mouse: click a row to set the cursor; wheel scrolls up/down.\n"))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("esc / ? / q to close"))
 	return b.String()
