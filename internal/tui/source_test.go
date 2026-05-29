@@ -63,6 +63,7 @@ type fakeRepoSource struct {
 	reopened   []string
 	deferred   []labelOp    // {id, when} parallels notes/added/removed
 	priorities []priorityOp // {id, priority} for SetPriority
+	assignees  []labelOp    // {id, owner} for SetAssignee
 	added      []labelOp
 	removed    []labelOp
 	notes      []labelOp
@@ -123,6 +124,10 @@ func (f *fakeRepoSource) SetDefer(_ context.Context, i beads.Issue, when string)
 }
 func (f *fakeRepoSource) SetPriority(_ context.Context, i beads.Issue, p int) error {
 	f.priorities = append(f.priorities, priorityOp{i.ID, p})
+	return nil
+}
+func (f *fakeRepoSource) SetAssignee(_ context.Context, i beads.Issue, assignee string) error {
+	f.assignees = append(f.assignees, labelOp{i.ID, assignee})
 	return nil
 }
 

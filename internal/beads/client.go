@@ -178,6 +178,15 @@ func (c *Client) SetPriority(ctx context.Context, id string, priority int) error
 	return err
 }
 
+// SetAssignee changes the issue's owner via `bd update --assignee`.
+// Empty assignee clears the owner — bd accepts this when the user
+// wants to mark a row as un-owned (the inverse of wyk's
+// QuickAdd-requires-owner rule, which only governs creation).
+func (c *Client) SetAssignee(ctx context.Context, id, assignee string) error {
+	_, err := c.run(ctx, nil, "update", id, "--assignee", assignee, autoCommitFlag)
+	return err
+}
+
 // RawRun invokes bd with the supplied args verbatim and returns
 // stdout. Used by the TUI's `:bd <args>` command palette entry so
 // the user can run arbitrary bd subcommands without leaving the

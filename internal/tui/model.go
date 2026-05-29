@@ -67,6 +67,7 @@ const (
 	modeDefer                    // text input for `bd update --defer` value
 	modeCommand                  // vim-style `:` command palette
 	modeOutput                   // read-only overlay showing captured bd output
+	modeAssign                   // text input for `bd update --assignee` value
 )
 
 // Source abstracts where issues come from so a test can plug in
@@ -115,6 +116,12 @@ type Mutator interface {
 	// caller MUST clamp into range; bd rejects out-of-range
 	// values with an error.
 	SetPriority(ctx context.Context, issue beads.Issue, priority int) error
+	// SetAssignee changes the issue's owner. Empty assignee
+	// clears the owner — wyk's create-time owner-required rule
+	// is intentionally narrower (only QuickAdd enforces it; a
+	// pre-existing issue can be hand-edited back to un-owned via
+	// `bd update` and we respect that).
+	SetAssignee(ctx context.Context, issue beads.Issue, assignee string) error
 }
 
 // Detailer is the "fetch the full issue for the detail view"
@@ -803,6 +810,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCommand(msg)
 		case modeOutput:
 			return m.updateOutput(msg)
+		case modeAssign:
+			return m.updateAssign(msg)
 		default:
 			m.status = ""
 			return m.updateList(msg)
@@ -902,6 +911,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.bumpPriority(-1)
 	case keyHit(msg, m.keys.PriorityDown):
 		return m.bumpPriority(+1)
+	case keyHit(msg, m.keys.AssignOwner):
+		return m.beginAssign()
 	case keyHit(msg, m.keys.ShowClosed):
 		return m.toggleShowClosed()
 	case keyHit(msg, m.keys.Columns):
@@ -1411,6 +1422,7 @@ var bulkVerbs = map[string]string{
 	"flag":     "flagged",
 	"defer":    "deferred",
 	"priority": "reprioritized",
+	"assign":   "reassigned",
 }
 
 // handleWriteResult sets the status banner and triggers a refetch so
@@ -1443,6 +1455,8 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 		m.lastClosed = beads.Issue{} // consumed
 	case "defer":
 		m.setStatus("deferred " + msg.id)
+	case "assign":
+		m.setStatus("reassigned " + msg.id)
 	case "flag":
 		m.setStatus("flagged " + msg.id + " for human")
 	case "unflag":
@@ -2273,6 +2287,81 @@ func parseSortKey(s string) (sortKey, bool) {
 	return sortNone, false
 }
 
+// beginAssign opens the owner-change prompt. Seeded with the
+// current owner so the common "fix a typo" or "keep me, just
+// confirm" cases are one keystroke instead of a re-type.
+// Bulk-aware via the marks set; single path snapshots the cursor
+// row into pendingTarget so a concurrent refetch can't shift the
+// target out from under the prompt.
+func (m Model) beginAssign() (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.marked) == 0 {
+		if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+			m.setStatus("nothing to reassign")
+			return m, flashClearCmd(m.statusGen)
+		}
+		m.pendingTarget = m.visible[m.cursor]
+	}
+	m.mode = modeAssign
+	if len(m.marked) > 0 {
+		m.input.SetValue("")
+		m.input.Prompt = fmt.Sprintf("owner for %d rows ▸ ", len(m.marked))
+	} else {
+		m.input.SetValue(m.pendingTarget.Owner)
+		m.input.Prompt = "owner ▸ "
+	}
+	m.input.Placeholder = "ev@example.com (empty = clear)"
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// updateAssign drives the owner-change prompt. enter dispatches
+// SetAssignee with the typed value; esc cancels. Empty value is
+// honored as a deliberate clear (matches bd's behaviour for
+// `--assignee ""`).
+func (m Model) updateAssign(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	switch msg.String() {
+	case "esc":
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		m.pendingTarget = beads.Issue{}
+		return m, nil
+	case "enter":
+		owner := strings.TrimSpace(m.input.Value())
+		target := m.pendingTarget
+		m.pendingTarget = beads.Issue{}
+		mu := m.mutator()
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		if len(m.marked) > 0 {
+			targets := m.markedIssues()
+			m.marked = nil
+			return m, runBulkWrite("assign", targets, func(ctx context.Context, i beads.Issue) error {
+				return mu.SetAssignee(ctx, i, owner)
+			})
+		}
+		if !m.issueExists(target.ID) {
+			m.setStatus("owner change cancelled: " + target.ID + " was removed from the workspace by a refresh")
+			return m, flashClearCmd(m.statusGen)
+		}
+		return m, runWriteWithIssue("assign", target, func(ctx context.Context) error {
+			return mu.SetAssignee(ctx, target, owner)
+		})
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
 // beginDefer enters modeDefer with a textinput prompt for the
 // defer value (+1d, +1w, tomorrow, 2026-06-15 — bd owns parsing).
 // Snapshots the cursor row into pendingTarget so a concurrent
@@ -2566,7 +2655,7 @@ func (m Model) viewList() string {
 
 	// modal prompts live just above the status bar
 	switch m.mode {
-	case modeFilter, modeNote, modeQuickAdd, modeDefer, modeCommand:
+	case modeFilter, modeNote, modeQuickAdd, modeDefer, modeCommand, modeAssign:
 		b.WriteString("\n")
 		b.WriteString(m.input.View())
 	case modeConfirmClose:

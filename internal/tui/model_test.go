@@ -41,6 +41,7 @@ type stubMutator struct {
 	reopened         []string
 	deferred         []labelOp    // {id, when} for SetDefer
 	priorities       []priorityOp // {id, priority} for SetPriority
+	assignees        []labelOp    // {id, owner} for SetAssignee
 	added            []labelOp
 	removed          []labelOp
 	notes            []labelOp // reuse the {id,label} shape for {id, text}
@@ -81,6 +82,10 @@ func (s *stubMutator) SetDefer(_ context.Context, i beads.Issue, when string) er
 }
 func (s *stubMutator) SetPriority(_ context.Context, i beads.Issue, p int) error {
 	s.priorities = append(s.priorities, priorityOp{i.ID, p})
+	return nil
+}
+func (s *stubMutator) SetAssignee(_ context.Context, i beads.Issue, assignee string) error {
+	s.assignees = append(s.assignees, labelOp{i.ID, assignee})
 	return nil
 }
 
@@ -2204,6 +2209,97 @@ func TestBulkFlag_AddsHumanToMarked(t *testing.T) {
 	_ = cmd()
 	if len(s.added) != 1 || s.added[0] != (labelOp{"a-2", "human"}) {
 		t.Errorf("bulk flag should add human only to a-2 (a-1 already flagged); got %+v", s.added)
+	}
+}
+
+func TestAssign_DispatchesSetAssigneeWithTypedValue(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Owner: "alice", Title: "rotate"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}})
+	m = model.(Model)
+	if m.mode != modeAssign {
+		t.Fatalf("O should enter modeAssign; got %v", m.mode)
+	}
+	// Prompt should be pre-seeded with the current owner so the
+	// common "confirm/typo-fix" cases are one keystroke.
+	if m.input.Value() != "alice" {
+		t.Errorf("prompt should seed with current owner; got %q", m.input.Value())
+	}
+	// Clear and retype bob.
+	for range "alice" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		m = model.(Model)
+	}
+	for _, r := range "bob" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("enter should dispatch SetAssignee")
+	}
+	if msg := cmd().(writeMsg); msg.action != "assign" || msg.id != "a-1" {
+		t.Errorf("writeMsg action=%q id=%q; want assign/a-1", msg.action, msg.id)
+	}
+	if len(s.assignees) != 1 || s.assignees[0] != (labelOp{"a-1", "bob"}) {
+		t.Errorf("SetAssignee should land with the typed value; got %+v", s.assignees)
+	}
+}
+
+func TestAssign_EmptyValueClearsOwner(t *testing.T) {
+	// Empty value is honored as a deliberate clear (bd accepts
+	// --assignee ""). The QuickAdd require-owner rule only
+	// governs creation; a pre-existing row CAN be unassigned.
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Owner: "alice"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}})
+	m = model.(Model)
+	for range "alice" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("empty value is a deliberate clear and should still dispatch")
+	}
+	_ = cmd()
+	if len(s.assignees) != 1 || s.assignees[0].label != "" {
+		t.Errorf("empty submission should clear owner; got %+v", s.assignees)
+	}
+}
+
+func TestAssign_BulkAppliesToAllMarked(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Owner: "alice"},
+		{ID: "a-2", Owner: "bob"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	// Mark both rows.
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	// O → assign carol to both.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}})
+	m = model.(Model)
+	for _, r := range "carol" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter should dispatch bulk SetAssignee")
+	}
+	_ = cmd()
+	if len(s.assignees) != 2 || s.assignees[0].label != "carol" || s.assignees[1].label != "carol" {
+		t.Errorf("bulk owner change should land 'carol' on both rows; got %+v", s.assignees)
 	}
 }
 

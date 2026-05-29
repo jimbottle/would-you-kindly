@@ -116,6 +116,12 @@ type keyMap struct {
 	// mixed priorities stay distinguishable).
 	PriorityUp   key.Binding // + — more urgent
 	PriorityDown key.Binding // - — less urgent
+
+	// AssignOwner opens a textinput prompt for a new assignee
+	// (bd's --assignee). Empty submission clears the owner. Bulk-
+	// aware: with marks present, the value applies to every
+	// marked row.
+	AssignOwner key.Binding // O — change owner
 }
 
 func defaultKeyMap() keyMap {
@@ -159,6 +165,7 @@ func defaultKeyMap() keyMap {
 		Command:      key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command")),
 		PriorityUp:   key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "↑prio")),
 		PriorityDown: key.NewBinding(key.WithKeys("-"), key.WithHelp("-", "↓prio")),
+		AssignOwner:  key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "owner")),
 	}
 }
 
@@ -196,7 +203,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner},
 		{k.Refresh, k.Help, k.Quit, k.Command},
 	}
 }

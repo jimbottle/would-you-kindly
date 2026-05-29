@@ -278,6 +278,10 @@ func (s *BDSource) RawBD(ctx context.Context, _ /* repo */ string, args []string
 	return s.Client.RawRun(ctx, args)
 }
 
+func (s *BDSource) SetAssignee(ctx context.Context, i beads.Issue, assignee string) error {
+	return s.Client.SetAssignee(ctx, i.ID, assignee)
+}
+
 func (s *BDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {
 	return s.Client.AddLabel(ctx, i.ID, label)
 }
@@ -608,6 +612,14 @@ func (m *MultiBDSource) SetPriority(ctx context.Context, i beads.Issue, p int) e
 		return err
 	}
 	return sub.SetPriority(ctx, i, p)
+}
+
+func (m *MultiBDSource) SetAssignee(ctx context.Context, i beads.Issue, assignee string) error {
+	sub, err := m.repoForIssue(i)
+	if err != nil {
+		return err
+	}
+	return sub.SetAssignee(ctx, i, assignee)
 }
 
 // RawBD routes a raw bd invocation to the named workspace. Empty
