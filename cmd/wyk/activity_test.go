@@ -47,7 +47,7 @@ func TestCollectActivity_FiltersAndSorts(t *testing.T) {
 	}
 	mk := func(dir string) activityClient { return stubs[dir] }
 
-	events, hadError := collectActivity(reg, cutoff, -1, mk)
+	events, hadError := collectActivity(reg, cutoff, -1, "all", mk)
 	if !hadError {
 		t.Errorf("hadError should be true when any sub failed")
 	}
@@ -98,7 +98,7 @@ func TestCollectActivity_SkipsZeroUpdatedAt(t *testing.T) {
 	}
 	mk := func(dir string) activityClient { return stubs[dir] }
 
-	events, _ := collectActivity(reg, cutoff, -1, mk)
+	events, _ := collectActivity(reg, cutoff, -1, "all", mk)
 	if len(events) != 1 || events[0].ID != "a-2" {
 		t.Errorf("zero-UpdatedAt row should be skipped; got %+v", events)
 	}
@@ -119,7 +119,7 @@ func TestCollectActivity_PriorityCap(t *testing.T) {
 	mk := func(dir string) activityClient { return stubs[dir] }
 
 	// max=1 keeps P0 + P1 only.
-	events, _ := collectActivity(reg, cutoff, 1, mk)
+	events, _ := collectActivity(reg, cutoff, 1, "all", mk)
 	if len(events) != 2 {
 		t.Fatalf("max=1 should yield 2 events; got %d", len(events))
 	}
@@ -132,9 +132,43 @@ func TestCollectActivity_PriorityCap(t *testing.T) {
 	}
 
 	// max=-1 disables the cap — all 4 should land.
-	events, _ = collectActivity(reg, cutoff, -1, mk)
+	events, _ = collectActivity(reg, cutoff, -1, "all", mk)
 	if len(events) != 4 {
 		t.Errorf("max=-1 should yield 4 events (cap off); got %d", len(events))
+	}
+}
+
+func TestCollectActivity_StatusFilter(t *testing.T) {
+	cutoff := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
+	now := cutoff.Add(time.Hour)
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "alpha", Path: "/tmp/a"}}}
+	stubs := map[string]*stubActivityClient{
+		"/tmp/a": {issues: []beads.Issue{
+			{ID: "open-1", Status: "open", UpdatedAt: now},
+			{ID: "closed-1", Status: "closed", UpdatedAt: now},
+			{ID: "ip-1", Status: "in_progress", UpdatedAt: now},
+		}},
+	}
+	mk := func(dir string) activityClient { return stubs[dir] }
+
+	type tc struct {
+		filter string
+		wantN  int
+		wantID string // expected solo ID, or "" if multiple expected
+	}
+	for _, c := range []tc{
+		{"all", 3, ""},
+		{"open", 2, ""},        // open-1 + ip-1
+		{"closed", 1, "closed-1"},
+	} {
+		events, _ := collectActivity(reg, cutoff, -1, c.filter, mk)
+		if len(events) != c.wantN {
+			t.Errorf("filter=%q: %d events, want %d", c.filter, len(events), c.wantN)
+			continue
+		}
+		if c.wantID != "" && events[0].ID != c.wantID {
+			t.Errorf("filter=%q: solo ID=%q, want %q", c.filter, events[0].ID, c.wantID)
+		}
 	}
 }
 

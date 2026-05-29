@@ -36,12 +36,19 @@ func runActivity(args []string) int {
 	// passing -priority 1 sees recent activity on P0 + P1 only.
 	maxPriority := fs.Int("priority", -1, "cap rows at priority N or higher (lower number = higher priority; -1 disables)")
 	repoName := fs.String("repo", "", "restrict the stream to the registered repo with this name (empty = every registered repo)")
+	status := fs.String("status", "all", "filter rows by status: open / closed / all")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json] [-priority N] [-repo name]")
+		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all]")
+		return 64
+	}
+	switch *status {
+	case "all", "open", "closed":
+	default:
+		fmt.Fprintln(os.Stderr, "wyk activity: -status must be open, closed, or all")
 		return 64
 	}
 	if *since <= 0 {
@@ -74,7 +81,7 @@ func runActivity(args []string) int {
 	}
 
 	cutoff := time.Now().Add(-*since)
-	events, hadError := collectActivity(reg, cutoff, *maxPriority, defaultActivityClient)
+	events, hadError := collectActivity(reg, cutoff, *maxPriority, *status, defaultActivityClient)
 	if *asJSON {
 		emitActivityJSON(os.Stdout, events, cutoff)
 	} else {
@@ -119,7 +126,10 @@ var defaultActivityClient = func(dir string) activityClient {
 // more useful with one missing repo than not at all.
 // maxPriority of -1 disables the cap (preserves prior behavior);
 // any non-negative value drops issues whose Priority exceeds it.
-func collectActivity(reg *registry.Registry, cutoff time.Time, maxPriority int, mk func(dir string) activityClient) ([]activityEvent, bool) {
+// statusFilter is "all" (no filter), "open" (drop closed), or
+// "closed" (drop everything except closed). The caller is
+// expected to have validated the string.
+func collectActivity(reg *registry.Registry, cutoff time.Time, maxPriority int, statusFilter string, mk func(dir string) activityClient) ([]activityEvent, bool) {
 	// Initialize as an empty (non-nil) slice so the JSON shape is
 	// always `[]` rather than `null` when the window is empty —
 	// downstream tools iterating events don't need a null guard.
@@ -139,6 +149,12 @@ func collectActivity(reg *registry.Registry, cutoff time.Time, maxPriority int, 
 				continue
 			}
 			if maxPriority >= 0 && i.Priority > maxPriority {
+				continue
+			}
+			if statusFilter == "open" && i.Status == "closed" {
+				continue
+			}
+			if statusFilter == "closed" && i.Status != "closed" {
 				continue
 			}
 			events = append(events, activityEvent{
