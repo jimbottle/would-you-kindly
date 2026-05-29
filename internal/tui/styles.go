@@ -146,6 +146,15 @@ var (
 	fuzzyMatchStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("214")).
 			Bold(true)
+
+	// closedRowStyle dims a row in the list when its Status is
+	// "closed". Mid-grey so the row is still legible (search,
+	// yank, detail-view all still work) but doesn't compete with
+	// open rows for the eye. The inner per-column styles
+	// (statusClosed strikethrough, badges, fuzzy-match highlight)
+	// already set their own foregrounds and stay vivid — this
+	// envelope only paints the unstyled runs.
+	closedRowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
 // ApplyTheme overlays a user theme.json onto the built-in styles.
@@ -240,6 +249,9 @@ func ApplyTheme(t theme.Theme) {
 	}
 	if t.FuzzyMatch != "" {
 		fuzzyMatchStyle = fuzzyMatchStyle.Foreground(lipgloss.Color(t.FuzzyMatch))
+	}
+	if t.ClosedRow != "" {
+		closedRowStyle = closedRowStyle.Foreground(lipgloss.Color(t.ClosedRow))
 	}
 }
 

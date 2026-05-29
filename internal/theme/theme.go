@@ -63,6 +63,7 @@ type Theme struct {
 	ChipActiveFG     string `json:"chip_active_fg,omitempty"`
 	FetchError       string `json:"fetch_error,omitempty"`
 	FuzzyMatch       string `json:"fuzzy_match,omitempty"`
+	ClosedRow        string `json:"closed_row,omitempty"`
 }
 
 // DefaultPath returns the canonical theme-file location, honoring

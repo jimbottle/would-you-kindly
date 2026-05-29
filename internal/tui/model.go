@@ -3661,6 +3661,15 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		title = highlightRunes(title, idxs, fuzzyMatchStyle)
 	}
 	b.WriteString(title)
+	// Closed rows render with a muted envelope so the eye still
+	// tracks open work first when 'C' (show-closed) is on. The
+	// inner styles (status color, badges, fuzzy-match highlight,
+	// strikethrough on Status) keep their colors — lipgloss
+	// foreground only applies to runes the inner styles didn't
+	// already paint — so the cue is "metadata stays, body dims."
+	if i.Status == "closed" {
+		return closedRowStyle.Render(b.String())
+	}
 	return b.String()
 }
 

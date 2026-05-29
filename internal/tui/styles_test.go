@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/theme"
 )
 
@@ -82,6 +83,30 @@ func TestApplyTheme_EmptyThemeIsNoOp(t *testing.T) {
 // path lipgloss supports natively. The exact SGR varies with
 // the color profile so we settle for "render is non-empty and
 // changed" rather than naming a specific ANSI sequence.
+func TestClosedRowStyle_RendersWhenStatusClosed(t *testing.T) {
+	forceColor(t)
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "still going", Status: "open"},
+		{ID: "a-2", Title: "wrapped up", Status: "closed"},
+	}}
+	m := applyFetched(New(src), src)
+	m.width = 200 // wide enough for the title not to truncate
+	openRow := m.renderRow(m.visible[0], false)
+	closedRow := m.renderRow(m.visible[1], false)
+	// closedRowStyle wraps with a foreground SGR escape; assert the
+	// closed row carries it and the open row does not. The exact
+	// color code (240 → 38;5;240) is the smoking gun — pinning it
+	// is more robust than checking "any escape," which would also
+	// match the per-column styles already in both rows.
+	closedSGR := "\x1b[38;5;240m"
+	if !strings.Contains(closedRow, closedSGR) {
+		t.Errorf("closed row should carry the closedRowStyle SGR %q; got:\n%q", closedSGR, closedRow)
+	}
+	if strings.Contains(openRow, closedSGR) {
+		t.Errorf("open row should NOT carry closedRowStyle; got:\n%q", openRow)
+	}
+}
+
 func TestApplyTheme_HexColorAccepted(t *testing.T) {
 	forceColor(t)
 	ApplyTheme(theme.Theme{Cursor: "#ff00aa"})
