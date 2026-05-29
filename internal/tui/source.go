@@ -270,6 +270,10 @@ func (s *BDSource) SetDefer(ctx context.Context, i beads.Issue, when string) err
 	return s.Client.SetDefer(ctx, i.ID, when)
 }
 
+func (s *BDSource) SetPriority(ctx context.Context, i beads.Issue, p int) error {
+	return s.Client.SetPriority(ctx, i.ID, p)
+}
+
 func (s *BDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {
 	return s.Client.AddLabel(ctx, i.ID, label)
 }
@@ -592,6 +596,14 @@ func (m *MultiBDSource) SetDefer(ctx context.Context, i beads.Issue, when string
 		return err
 	}
 	return sub.SetDefer(ctx, i, when)
+}
+
+func (m *MultiBDSource) SetPriority(ctx context.Context, i beads.Issue, p int) error {
+	sub, err := m.repoForIssue(i)
+	if err != nil {
+		return err
+	}
+	return sub.SetPriority(ctx, i, p)
 }
 
 func (m *MultiBDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {

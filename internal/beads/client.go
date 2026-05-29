@@ -170,6 +170,14 @@ func (c *Client) SetDefer(ctx context.Context, id, when string) error {
 	return err
 }
 
+// SetPriority sets the issue's priority (0–4, 0 = highest). The
+// caller is responsible for clamping into range; an out-of-range
+// value is rejected by bd.
+func (c *Client) SetPriority(ctx context.Context, id string, priority int) error {
+	_, err := c.run(ctx, nil, "update", id, "--priority", fmt.Sprintf("%d", priority), autoCommitFlag)
+	return err
+}
+
 // CreateOptions configures `bd create` invocations.
 type CreateOptions struct {
 	Title     string

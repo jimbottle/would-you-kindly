@@ -110,6 +110,10 @@ type Mutator interface {
 	// parsing (+1d / tomorrow / 2026-06-15 / etc.). Empty `when`
 	// clears any existing defer.
 	SetDefer(ctx context.Context, issue beads.Issue, when string) error
+	// SetPriority writes a new priority (0–4, 0 = highest). The
+	// caller MUST clamp into range; bd rejects out-of-range
+	// values with an error.
+	SetPriority(ctx context.Context, issue beads.Issue, priority int) error
 }
 
 // Detailer is the "fetch the full issue for the detail view"
@@ -825,6 +829,10 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.reverseSort()
 	case keyHit(msg, m.keys.Command):
 		return m.beginCommand()
+	case keyHit(msg, m.keys.PriorityUp):
+		return m.bumpPriority(-1)
+	case keyHit(msg, m.keys.PriorityDown):
+		return m.bumpPriority(+1)
 	case keyHit(msg, m.keys.ShowClosed):
 		return m.toggleShowClosed()
 	case keyHit(msg, m.keys.Columns):
@@ -1827,6 +1835,54 @@ func (m Model) markedIssues() []beads.Issue {
 		}
 	}
 	return out
+}
+
+// bumpPriority nudges the cursor row's (or every marked row's)
+// priority by `delta` steps and dispatches the writes. delta == -1
+// means "more urgent" (priority--), +1 means "less urgent"
+// (priority++). bd's range is 0–4; results are clamped, and a
+// no-op (already at the edge) silently passes — bd's update
+// command is idempotent on a no-change so re-writing the same
+// priority is harmless.
+func (m Model) bumpPriority(delta int) (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.marked) > 0 {
+		targets := m.markedIssues()
+		m.marked = nil
+		return m, runBulkWrite("flag", targets, func(ctx context.Context, i beads.Issue) error {
+			return mu.SetPriority(ctx, i, clampPriority(i.Priority+delta))
+		})
+	}
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		return m, nil
+	}
+	i := m.visible[m.cursor]
+	newP := clampPriority(i.Priority + delta)
+	if newP == i.Priority {
+		m.setStatus(fmt.Sprintf("%s already at P%d", i.ID, i.Priority))
+		return m, flashClearCmd(m.statusGen)
+	}
+	return m, runWrite(fmt.Sprintf("set P%d", newP), i.ID, func(ctx context.Context) error {
+		return mu.SetPriority(ctx, i, newP)
+	})
+}
+
+// clampPriority keeps priority inside bd's 0–4 range. Values
+// outside that range get rejected by bd; clamping silently turns
+// the no-op edge case (press + on a P0 row) into a tolerable
+// "stay put" instead of a spurious error banner.
+func clampPriority(p int) int {
+	if p < 0 {
+		return 0
+	}
+	if p > 4 {
+		return 4
+	}
+	return p
 }
 
 // manualRefresh is the shared body of the `r` key and the

@@ -57,14 +57,22 @@ func TestBDSource_PickFetchCall(t *testing.T) {
 // records the writes routed to it so the multi-source test can
 // assert routing.
 type fakeRepoSource struct {
-	issues   []beads.Issue
-	fetchErr error
-	closed   []string
-	reopened []string
-	deferred []labelOp // {id, when} parallels notes/added/removed
-	added    []labelOp
-	removed  []labelOp
-	notes    []labelOp
+	issues     []beads.Issue
+	fetchErr   error
+	closed     []string
+	reopened   []string
+	deferred   []labelOp    // {id, when} parallels notes/added/removed
+	priorities []priorityOp // {id, priority} for SetPriority
+	added      []labelOp
+	removed    []labelOp
+	notes      []labelOp
+}
+
+// priorityOp records a SetPriority call so multi-source tests can
+// assert routing landed on the right sub with the right value.
+type priorityOp struct {
+	id string
+	p  int
 }
 
 func (f *fakeRepoSource) Fetch(_ context.Context, _ filter.Preset) ([]beads.Issue, error) {
@@ -111,6 +119,10 @@ func (f *fakeRepoSource) Reopen(_ context.Context, i beads.Issue) error {
 }
 func (f *fakeRepoSource) SetDefer(_ context.Context, i beads.Issue, when string) error {
 	f.deferred = append(f.deferred, labelOp{i.ID, when})
+	return nil
+}
+func (f *fakeRepoSource) SetPriority(_ context.Context, i beads.Issue, p int) error {
+	f.priorities = append(f.priorities, priorityOp{i.ID, p})
 	return nil
 }
 

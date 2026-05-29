@@ -39,7 +39,8 @@ type stubMutator struct {
 	stubSource
 	closed           []string
 	reopened         []string
-	deferred         []labelOp // {id, when} for SetDefer
+	deferred         []labelOp    // {id, when} for SetDefer
+	priorities       []priorityOp // {id, priority} for SetPriority
 	added            []labelOp
 	removed          []labelOp
 	notes            []labelOp // reuse the {id,label} shape for {id, text}
@@ -76,6 +77,10 @@ func (s *stubMutator) Reopen(_ context.Context, i beads.Issue) error {
 }
 func (s *stubMutator) SetDefer(_ context.Context, i beads.Issue, when string) error {
 	s.deferred = append(s.deferred, labelOp{i.ID, when})
+	return nil
+}
+func (s *stubMutator) SetPriority(_ context.Context, i beads.Issue, p int) error {
+	s.priorities = append(s.priorities, priorityOp{i.ID, p})
 	return nil
 }
 
@@ -2401,6 +2406,104 @@ func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
 	// keeps it in the other.
 	if toggleableColumns[1].ID != colIDWyk {
 		t.Errorf("slot 2 should be wyk (multi-only); got %q", toggleableColumns[1].ID)
+	}
+}
+
+func TestBumpPriority_PlusBumpsMoreUrgent(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 2},
+		{ID: "a-2", Priority: 1},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+	if cmd == nil {
+		t.Fatal("+ should dispatch a SetPriority write")
+	}
+	_ = cmd()
+	if len(s.priorities) != 1 || s.priorities[0] != (priorityOp{"a-1", 1}) {
+		t.Errorf("+ on P2 should write P1; got %+v", s.priorities)
+	}
+}
+
+func TestBumpPriority_MinusBumpsLessUrgent(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 2},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'-'}})
+	if cmd == nil {
+		t.Fatal("- should dispatch a SetPriority write")
+	}
+	_ = cmd()
+	if len(s.priorities) != 1 || s.priorities[0] != (priorityOp{"a-1", 3}) {
+		t.Errorf("- on P2 should write P3; got %+v", s.priorities)
+	}
+}
+
+func TestBumpPriority_ClampsAtEdges(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	t.Run("plus at P0 is a no-op", func(t *testing.T) {
+		s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+			{ID: "a-1", Priority: 0},
+		}}}
+		m := applyMutatorFetched(New(s), s)
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+		m = model.(Model)
+		if len(s.priorities) != 0 {
+			t.Errorf("+ on P0 should be a no-op; got %+v", s.priorities)
+		}
+		if !strings.Contains(m.status, "already at P0") {
+			t.Errorf("status should explain the no-op; got %q", m.status)
+		}
+	})
+
+	t.Run("minus at P4 is a no-op", func(t *testing.T) {
+		s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+			{ID: "a-1", Priority: 4},
+		}}}
+		m := applyMutatorFetched(New(s), s)
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'-'}})
+		m = model.(Model)
+		if len(s.priorities) != 0 {
+			t.Errorf("- on P4 should be a no-op; got %+v", s.priorities)
+		}
+		if !strings.Contains(m.status, "already at P4") {
+			t.Errorf("status should explain the no-op; got %q", m.status)
+		}
+	})
+}
+
+func TestBumpPriority_BulkAppliesToAllMarked(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 2},
+		{ID: "a-2", Priority: 3},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	// Mark both rows.
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	if len(m.marked) != 2 {
+		t.Fatalf("setup: expected 2 marks; got %d", len(m.marked))
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+	if cmd == nil {
+		t.Fatal("+ with marks should dispatch bulk SetPriority")
+	}
+	_ = cmd()
+	if len(s.priorities) != 2 {
+		t.Fatalf("expected both rows bumped; got %+v", s.priorities)
+	}
+	// a-1 P2→P1, a-2 P3→P2 (each nudged by -1).
+	if s.priorities[0] != (priorityOp{"a-1", 1}) || s.priorities[1] != (priorityOp{"a-2", 2}) {
+		t.Errorf("bulk + should nudge each row by -1; got %+v", s.priorities)
 	}
 }
 
