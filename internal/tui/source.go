@@ -274,6 +274,10 @@ func (s *BDSource) SetPriority(ctx context.Context, i beads.Issue, p int) error 
 	return s.Client.SetPriority(ctx, i.ID, p)
 }
 
+func (s *BDSource) RawBD(ctx context.Context, _ /* repo */ string, args []string) ([]byte, error) {
+	return s.Client.RawRun(ctx, args)
+}
+
 func (s *BDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {
 	return s.Client.AddLabel(ctx, i.ID, label)
 }
@@ -604,6 +608,35 @@ func (m *MultiBDSource) SetPriority(ctx context.Context, i beads.Issue, p int) e
 		return err
 	}
 	return sub.SetPriority(ctx, i, p)
+}
+
+// RawBD routes a raw bd invocation to the named workspace. Empty
+// repo falls back to the first sub — matches Create's behaviour
+// for "I'm not on any row, just run it somewhere". Returns the
+// stdout bytes; bd's stderr is folded into the error.
+func (m *MultiBDSource) RawBD(ctx context.Context, repo string, args []string) ([]byte, error) {
+	if repo == "" {
+		if len(m.subs) == 0 {
+			return nil, fmt.Errorf("no registered workspaces to run bd in")
+		}
+		if raw, ok := m.subs[0].src.(interface {
+			RawBD(context.Context, string, []string) ([]byte, error)
+		}); ok {
+			return raw.RawBD(ctx, "", args)
+		}
+		return nil, fmt.Errorf("sub %q does not support raw bd invocation", m.subs[0].name)
+	}
+	for _, sub := range m.subs {
+		if sub.name == repo {
+			if raw, ok := sub.src.(interface {
+				RawBD(context.Context, string, []string) ([]byte, error)
+			}); ok {
+				return raw.RawBD(ctx, "", args)
+			}
+			return nil, fmt.Errorf("sub %q does not support raw bd invocation", repo)
+		}
+	}
+	return nil, fmt.Errorf("repo %q not in subs", repo)
 }
 
 func (m *MultiBDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {

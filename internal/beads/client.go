@@ -178,6 +178,18 @@ func (c *Client) SetPriority(ctx context.Context, id string, priority int) error
 	return err
 }
 
+// RawRun invokes bd with the supplied args verbatim and returns
+// stdout. Used by the TUI's `:bd <args>` command palette entry so
+// the user can run arbitrary bd subcommands without leaving the
+// TUI. No --dolt-auto-commit injection — the user owns the args.
+// The stderr stream is folded into the returned error on failure,
+// matching how every other Client write-method surfaces bd's own
+// diagnostics to the user.
+func (c *Client) RawRun(ctx context.Context, args []string) ([]byte, error) {
+	out, err := c.run(ctx, nil, args...)
+	return out, err
+}
+
 // CreateOptions configures `bd create` invocations.
 type CreateOptions struct {
 	Title     string

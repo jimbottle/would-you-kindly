@@ -2550,6 +2550,99 @@ func TestCommandPalette_UnknownCommandSurfacesStatus(t *testing.T) {
 	}
 }
 
+// stubRawBD wraps stubSource with a recorder so :bd dispatch can
+// be asserted without standing up a real bd binary.
+type stubRawBD struct {
+	stubSource
+	calls  []string // each formatted as "repo|arg arg arg"
+	out    []byte
+	rawErr error
+}
+
+func (s *stubRawBD) RawBD(_ context.Context, repo string, args []string) ([]byte, error) {
+	s.calls = append(s.calls, repo+"|"+strings.Join(args, " "))
+	return s.out, s.rawErr
+}
+
+func TestCommandPalette_BDDispatchesAndOpensOutputOverlay(t *testing.T) {
+	src := &stubRawBD{
+		stubSource: stubSource{issues: sampleIssues()},
+		out:        []byte("ready: 2 issues\n"),
+	}
+	m := New(src)
+	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	m = mod.(Model)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "bd ready" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("enter should dispatch the bd invocation")
+	}
+	msg := cmd()
+	model, _ = m.Update(msg)
+	m = model.(Model)
+	if m.mode != modeOutput {
+		t.Errorf("expected modeOutput; got %v", m.mode)
+	}
+	if !strings.Contains(m.outputText, "ready: 2 issues") {
+		t.Errorf("overlay body should contain stdout; got %q", m.outputText)
+	}
+	if len(src.calls) != 1 || src.calls[0] != "|ready" {
+		t.Errorf(":bd ready should call RawBD([], ['ready']); got %v", src.calls)
+	}
+}
+
+func TestCommandPalette_BDEmptyArgsIsUsageError(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubRawBD{stubSource: stubSource{issues: sampleIssues()}}
+	m := New(src)
+	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	m = mod.(Model)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "bd" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if len(src.calls) != 0 {
+		t.Errorf("bare :bd should NOT dispatch; got %v", src.calls)
+	}
+	if !strings.Contains(m.status, "args required") {
+		t.Errorf("status should explain the usage; got %q", m.status)
+	}
+}
+
+func TestCommandPalette_OutputOverlayClosesOnEsc(t *testing.T) {
+	src := &stubRawBD{stubSource: stubSource{issues: sampleIssues()}, out: []byte("hi\n")}
+	m := New(src)
+	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	m = mod.(Model)
+	model, _ := m.Update(rawBDMsg{args: "ready", out: src.out})
+	m = model.(Model)
+	if m.mode != modeOutput {
+		t.Fatalf("setup: expected modeOutput; got %v", m.mode)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("esc should return to modeList; got %v", m.mode)
+	}
+	if m.outputText != "" {
+		t.Errorf("outputText should be cleared; got %q", m.outputText)
+	}
+}
+
 func TestCommandPalette_EscRestoresFilterPrompt(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

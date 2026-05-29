@@ -66,6 +66,7 @@ const (
 	modeColumns                  // column-visibility overlay (o)
 	modeDefer                    // text input for `bd update --defer` value
 	modeCommand                  // vim-style `:` command palette
+	modeOutput                   // read-only overlay showing captured bd output
 )
 
 // Source abstracts where issues come from so a test can plug in
@@ -276,6 +277,11 @@ type Model struct {
 	// a reopen lands. Single-deep — vim-style "u" undoes the last
 	// move, not a stack.
 	lastClosed beads.Issue
+
+	// outputText is the body of the modeOutput overlay (captured
+	// stdout/stderr from a `:bd <args>` invocation). Cleared on
+	// dismiss so a future open doesn't show stale text.
+	outputText string
 
 	// me is the current-user identity, used to count the "mine"
 	// slot in the status-bar stats line. Mirrors the Me field on
@@ -661,6 +667,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bulkWriteMsg:
 		return m.handleBulkWriteResult(msg)
 
+	case rawBDMsg:
+		// Compose the overlay body: a header naming the command,
+		// then stdout, then the error string if bd exited non-
+		// zero. We don't try to separate stdout/stderr — bd's own
+		// stderr is folded into the returned error.
+		var b strings.Builder
+		b.WriteString("$ bd ")
+		b.WriteString(msg.args)
+		b.WriteString("\n\n")
+		if len(msg.out) > 0 {
+			b.Write(msg.out)
+			if msg.out[len(msg.out)-1] != '\n' {
+				b.WriteByte('\n')
+			}
+		}
+		if msg.err != nil {
+			b.WriteString("\n[error] ")
+			b.WriteString(msg.err.Error())
+			b.WriteByte('\n')
+		}
+		m.outputText = b.String()
+		m.mode = modeOutput
+		return m, nil
+
 	case spinner.TickMsg:
 		// Animate the loading indicator. Only re-tick while we're
 		// actually showing it (the first paint, before data lands)
@@ -742,6 +772,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDefer(msg)
 		case modeCommand:
 			return m.updateCommand(msg)
+		case modeOutput:
+			return m.updateOutput(msg)
 		default:
 			m.status = ""
 			return m.updateList(msg)
@@ -2003,12 +2035,94 @@ func (m Model) dispatchCommand(raw string) (tea.Model, tea.Cmd) {
 		return m.reverseSort()
 	case "filter":
 		return m.dispatchFilterCommand(rest)
+	case "bd":
+		return m.runRawBD(rest)
 	case "help":
 		return m.openHelp()
 	default:
-		m.setStatus(":" + name + ": unknown command. Known: refresh, preset, sort, reverse, filter save <name>, help")
+		m.setStatus(":" + name + ": unknown command. Known: refresh, preset, sort, reverse, filter save <name>, bd <args>, help")
 		return m, flashClearCmd(m.statusGen)
 	}
+}
+
+// runRawBD shells out a `bd <args>` invocation in the cursor
+// row's workspace and switches to modeOutput to show stdout. If
+// the source doesn't implement rawBDInvoker (e.g. a test stub),
+// surface a status banner so the user knows the command isn't
+// available. Empty args is a usage error — bare `:bd` would
+// surface bd's own usage anyway, but we save the round-trip.
+func (m Model) runRawBD(rest string) (tea.Model, tea.Cmd) {
+	if rest == "" {
+		m.setStatus(":bd: args required (try :bd ready, :bd show <id>, …)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	raw, ok := m.src.(rawBDInvoker)
+	if !ok {
+		m.setStatus(":bd: this source doesn't support raw invocations")
+		return m, flashClearCmd(m.statusGen)
+	}
+	// Pick the cursor row's repo so the bd subprocess lands in the
+	// right workspace; empty (no rows / out-of-range cursor)
+	// falls back to whatever the source picks (first sub in
+	// multi, the single client in single).
+	repo := ""
+	if len(m.visible) > 0 && m.cursor >= 0 && m.cursor < len(m.visible) {
+		repo = m.visible[m.cursor].Repo
+	}
+	args := strings.Fields(rest)
+	return m, func() tea.Msg {
+		out, err := raw.RawBD(context.Background(), repo, args)
+		return rawBDMsg{args: rest, out: out, err: err}
+	}
+}
+
+// rawBDInvoker is the optional capability the `:bd <args>`
+// command needs — wired by BDSource and MultiBDSource. The model
+// type-asserts at the call site so a read-only or test source
+// can still load.
+type rawBDInvoker interface {
+	RawBD(ctx context.Context, repo string, args []string) ([]byte, error)
+}
+
+// rawBDMsg carries the result of a `:bd <args>` invocation back
+// to the model. err non-nil means bd exited non-zero (or the
+// subprocess failed entirely); in either case we still want to
+// show whatever stdout we captured plus the error.
+type rawBDMsg struct {
+	args string
+	out  []byte
+	err  error
+}
+
+// updateOutput drives the read-only modeOutput overlay. q / esc /
+// enter all close it; any other key is dropped.
+func (m Model) updateOutput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	switch msg.String() {
+	case "esc", "q", "enter":
+		m.mode = modeList
+		m.outputText = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// viewOutput renders the captured bd output. Keeps the format
+// tight: a header line naming what ran, then the body verbatim.
+// Long output is rendered in full and the terminal handles
+// scrolling — wyk doesn't try to be a pager.
+func (m Model) viewOutput() string {
+	var b strings.Builder
+	b.WriteString(detailHeaderStyle.Render("bd output"))
+	b.WriteString("\n")
+	if m.outputText != "" {
+		b.WriteString(m.outputText)
+	}
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("esc / q / enter to close"))
+	return b.String()
 }
 
 // dispatchFilterCommand handles the `:filter <sub> <args>` family.
@@ -2182,6 +2296,8 @@ func (m Model) View() string {
 		return m.viewHelp()
 	case modeColumns:
 		return m.viewColumns()
+	case modeOutput:
+		return m.viewOutput()
 	default:
 		return m.viewList()
 	}
