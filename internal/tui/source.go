@@ -39,6 +39,10 @@ type BDSource struct {
 	// shared channel across every sub so the global bd-subprocess
 	// concurrency is bounded regardless of registry size.
 	DepSem chan struct{}
+	// IncludeClosed routes PresetAll through Client.ListAll
+	// (bd list --all) and drops the status!=closed clause from
+	// other presets' queries. Toggled by the C key.
+	IncludeClosed bool
 }
 
 // Compile-time check that BDSource satisfies the three interfaces.
@@ -64,14 +68,21 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 	switch p {
 	case filter.PresetReady:
 		// bd ready has blocker-aware semantics that bd query cannot
-		// reproduce; defer to it.
+		// reproduce; defer to it. IncludeClosed has no effect — bd
+		// ready is open-only by definition.
 		issues, err = s.Client.Ready(ctx)
 	case filter.PresetAll:
-		// "all" in the TUI means "all non-closed" — opening wyk
-		// should show actionable work, not the full history.
-		issues, err = s.Client.List(ctx)
+		// "all" in the TUI means "all non-closed" by default —
+		// opening wyk should show actionable work, not the full
+		// history. C toggles IncludeClosed and switches us to
+		// `bd list --all` for the archive view.
+		if s.IncludeClosed {
+			issues, err = s.Client.ListAll(ctx)
+		} else {
+			issues, err = s.Client.List(ctx)
+		}
 	default:
-		issues, err = s.Client.Query(ctx, filter.Query(p, s.Me))
+		issues, err = s.Client.Query(ctx, filter.QueryWithClosed(p, s.Me, s.IncludeClosed))
 	}
 	if err != nil {
 		return nil, err
@@ -298,6 +309,31 @@ type MultiSource interface {
 // set" failure rather than a silent ID-collision mis-route.
 type MultiBDSource struct {
 	subs []subRepo
+}
+
+// ClosedToggler is the optional interface a Source implements to
+// honor the C-key "show closed" toggle. BDSource and MultiBDSource
+// both satisfy it; the model runtime type-asserts.
+type ClosedToggler interface {
+	SetIncludeClosed(v bool)
+}
+
+// SetIncludeClosed makes BDSource satisfy ClosedToggler so a
+// single-repo model can flip the state through the same seam as
+// the multi-repo path.
+func (s *BDSource) SetIncludeClosed(v bool) {
+	s.IncludeClosed = v
+}
+
+// SetIncludeClosed propagates the C-key toggle to every sub-source
+// in registry order so the next Fetch returns the requested scope
+// across all repos in one shot.
+func (m *MultiBDSource) SetIncludeClosed(v bool) {
+	for _, sub := range m.subs {
+		if bds, ok := sub.src.(*BDSource); ok {
+			bds.IncludeClosed = v
+		}
+	}
 }
 
 // Compile-time check.

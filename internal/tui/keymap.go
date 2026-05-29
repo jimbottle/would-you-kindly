@@ -55,6 +55,13 @@ type keyMap struct {
 	// column header (↑ for asc, ↓ for desc). Lets the user pivot
 	// the table for different triage moves without leaving the TUI.
 	SortCycle key.Binding // s — advance sort key
+
+	// ShowClosed toggles whether closed issues appear in the
+	// current preset. PresetAll switches between `bd list` (open)
+	// and `bd list --all`; other presets drop the `status!=closed`
+	// clause from their query. A chip surfaces in the filter strip
+	// when active.
+	ShowClosed key.Binding // C — toggle show-closed
 }
 
 func defaultKeyMap() keyMap {
@@ -87,7 +94,8 @@ func defaultKeyMap() keyMap {
 		FilterP3:   key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "≤P3")),
 		FilterPAll: key.NewBinding(key.WithKeys("0"), key.WithHelp("0", "all P")),
 
-		SortCycle: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+		SortCycle:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+		ShowClosed: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "±closed")),
 	}
 }
 
@@ -124,7 +132,7 @@ func (k keyMap) shortHelpReadOnly() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
-		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle},
+		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.ShowClosed},
 		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd},
 		{k.Refresh, k.Help, k.Quit},
 	}

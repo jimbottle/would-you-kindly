@@ -57,19 +57,47 @@ func NextPreset(p Preset) Preset {
 // fail loudly (bd rejects an empty query) rather than quietly return
 // the wrong set.
 func Query(p Preset, me string) string {
+	return QueryWithClosed(p, me, false)
+}
+
+// QueryWithClosed is Query with an explicit `includeClosed` flag.
+// When true, the `status!=closed` exclusion is dropped so the
+// caller sees closed issues alongside open ones — the C-key
+// toggle in the TUI surfaces this. PresetAll still returns the
+// empty string (callers map it to bd list or bd list --all based
+// on the same flag); PresetReady is unaffected (ready by
+// definition excludes closed, and bd ready has no --all equivalent).
+func QueryWithClosed(p Preset, me string, includeClosed bool) string {
 	switch p {
 	case PresetHuman:
+		if includeClosed {
+			return `label=human`
+		}
 		return `label=human AND status!=closed`
 	case PresetBlocked:
+		// status=blocked already excludes closed by construction.
 		return `status=blocked`
 	case PresetMine:
-		if me == "" {
+		base := ``
+		if me != "" {
+			base = `assignee=` + me
+		}
+		if includeClosed {
+			if base == "" {
+				return ``
+			}
+			return base
+		}
+		if base == "" {
 			return `status!=closed`
 		}
-		return `assignee=` + me + ` AND status!=closed`
+		return base + ` AND status!=closed`
 	case PresetReady, PresetAll:
 		return ""
 	default:
+		if includeClosed {
+			return ``
+		}
 		return `status!=closed`
 	}
 }

@@ -221,6 +221,11 @@ type Model struct {
 	// with s. sortNone preserves bd's native order (the default).
 	sortBy sortKey
 
+	// showClosed mirrors the BDSource/MultiBDSource IncludeClosed
+	// flag so the chip strip + status bar can render it without
+	// reaching back through the Source. Toggled by C.
+	showClosed bool
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -633,6 +638,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setPriorityCap(-1)
 	case keyHit(msg, m.keys.SortCycle):
 		return m.setSortKey(m.sortBy.next())
+	case keyHit(msg, m.keys.ShowClosed):
+		return m.toggleShowClosed()
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
 		// suspended after a terminal error. Bumping tickGen retires
@@ -727,7 +734,7 @@ func (m Model) rowsStartY() int {
 		// vertical real estate it actually consumes.
 		y += 1 + strings.Count(m.setupHint, "\n")
 	}
-	if m.preset != filter.PresetAll || m.priorityCap >= 0 || m.sortBy != sortNone {
+	if m.preset != filter.PresetAll || m.priorityCap >= 0 || m.sortBy != sortNone || m.showClosed {
 		y++ // chip strip
 	}
 	y++ // blank line between header chrome and table header
@@ -1257,6 +1264,20 @@ func (m Model) setSortKey(k sortKey) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// toggleShowClosed flips the include-closed flag on both the model
+// (for chip rendering) and the underlying Source (for the next
+// fetch query / bd subcommand choice), then triggers a refetch so
+// the rows reflect the new scope.
+func (m Model) toggleShowClosed() (tea.Model, tea.Cmd) {
+	m.showClosed = !m.showClosed
+	if tog, ok := m.src.(ClosedToggler); ok {
+		tog.SetIncludeClosed(m.showClosed)
+	}
+	m.cursor = 0
+	m.refreshing = true
+	return m, m.fetchCmd()
+}
+
 // View dispatches to the per-mode renderer.
 func (m Model) View() string {
 	switch m.mode {
@@ -1286,7 +1307,7 @@ func (m Model) viewHelp() string {
 			m.keys.Open, m.keys.Back,
 			m.keys.JumpPrevHuman, m.keys.JumpNextHuman,
 		}},
-		{"Filters", []key.Binding{m.keys.Filter, m.keys.Human, m.keys.Cycle}},
+		{"Filters", []key.Binding{m.keys.Filter, m.keys.Human, m.keys.Cycle, m.keys.SortCycle, m.keys.ShowClosed}},
 		{"Writes", []key.Binding{m.keys.Close, m.keys.ToggleHuman, m.keys.AddNote, m.keys.QuickAdd}},
 		{"Meta", []key.Binding{m.keys.Refresh, m.keys.Help, m.keys.Quit}},
 	}
@@ -1341,7 +1362,7 @@ func (m Model) viewList() string {
 	// when the user has set a cap. Renders blank for the default
 	// state (preset=all, no priority) so a fresh view stays
 	// chrome-free.
-	if chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy); chips != "" {
+	if chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed); chips != "" {
 		b.WriteString(chips)
 		b.WriteString("\n")
 	}
@@ -1982,7 +2003,7 @@ func (m Model) chromeExtra() int {
 		// setupHint can wrap; count newlines + 1.
 		n += 1 + strings.Count(m.setupHint, "\n")
 	}
-	if m.preset != filter.PresetAll || m.priorityCap >= 0 || m.sortBy != sortNone {
+	if m.preset != filter.PresetAll || m.priorityCap >= 0 || m.sortBy != sortNone || m.showClosed {
 		n++ // filter chip strip
 	}
 	if m.lastErr != nil && len(m.all) > 0 {
@@ -2057,9 +2078,10 @@ func (m *Model) ensureCursorVisible() {
 
 // renderFilterChips builds the filter-strip line shown above the
 // table. Returns the empty string when nothing is filtered (preset
-// is the default `all`, no priority cap, no sort) so a fresh view
-// stays chrome-free. Each active filter renders as an amber pill.
-func renderFilterChips(p filter.Preset, priorityCap int, sortBy sortKey) string {
+// is the default `all`, no priority cap, no sort, no show-closed)
+// so a fresh view stays chrome-free. Each active filter renders
+// as an amber pill.
+func renderFilterChips(p filter.Preset, priorityCap int, sortBy sortKey, showClosed bool) string {
 	var parts []string
 	if p != filter.PresetAll {
 		parts = append(parts, chipActiveStyle.Render(" "+string(p)+" "))
@@ -2073,6 +2095,9 @@ func renderFilterChips(p filter.Preset, priorityCap int, sortBy sortKey) string 
 	}
 	if sortBy != sortNone {
 		parts = append(parts, chipActiveStyle.Render(" ↕ "+sortBy.label()+" "))
+	}
+	if showClosed {
+		parts = append(parts, chipActiveStyle.Render(" +closed "))
 	}
 	if len(parts) == 0 {
 		return ""

@@ -1595,21 +1595,21 @@ func TestFilterChip_RendersWhenActiveOnlyOnNonDefaultPresetOrCap(t *testing.T) {
 	m := applyFetched(New(src), src)
 
 	// Default state — no chip line.
-	if got := renderFilterChips(m.preset, m.priorityCap, m.sortBy); got != "" {
+	if got := renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed); got != "" {
 		t.Errorf("default preset + no cap should produce no chip; got %q", got)
 	}
 
 	// After a priority cap — chip appears.
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = model.(Model)
-	if got := renderFilterChips(m.preset, m.priorityCap, m.sortBy); !strings.Contains(got, "P1") {
+	if got := renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed); !strings.Contains(got, "P1") {
 		t.Errorf("expected ≤P1 chip after pressing '2'; got %q", got)
 	}
 
 	// After preset switch + cap — both chips appear.
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m = model.(Model)
-	chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy)
+	chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed)
 	if !strings.Contains(chips, "human") || !strings.Contains(chips, "P1") {
 		t.Errorf("expected both human + P1 chips; got %q", chips)
 	}
@@ -1645,6 +1645,64 @@ func TestSortCycle_RotatesThroughKeys(t *testing.T) {
 	}
 	if m.sortBy != sortNone {
 		t.Errorf("cycle should return to sortNone after 5 presses; got %v", m.sortBy)
+	}
+}
+
+// stubClosedToggler wraps stubSource with a SetIncludeClosed
+// recorder so the C-key test can assert the toggle flowed all the
+// way through model → ClosedToggler.
+type stubClosedToggler struct {
+	stubSource
+	includeClosed bool
+}
+
+func (s *stubClosedToggler) SetIncludeClosed(v bool) { s.includeClosed = v }
+
+func TestShowClosed_TogglesStateAndRefetches(t *testing.T) {
+	src := &stubClosedToggler{stubSource: stubSource{issues: sampleIssues()}}
+	m := New(src)
+	// Seed initial rows without applyFetched (which wants the
+	// concrete *stubSource).
+	model, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	m = model.(Model)
+
+	if m.showClosed {
+		t.Fatalf("showClosed should start false")
+	}
+	callsBefore := src.calls
+
+	// Press C → flips the flag on both model and source, triggers
+	// a refetch cmd.
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+	m = model.(Model)
+	if !m.showClosed {
+		t.Errorf("expected model.showClosed=true after C")
+	}
+	if !src.includeClosed {
+		t.Errorf("expected source.IncludeClosed=true after C")
+	}
+	if cmd == nil {
+		t.Errorf("expected a refetch cmd after C")
+	} else if msg := cmd(); msg != nil {
+		// Drive the returned cmd so the stub's Fetch counter ticks.
+		next, _ := m.Update(msg)
+		m = next.(Model)
+	}
+	if src.calls <= callsBefore {
+		t.Errorf("expected Fetch to be re-issued after C; calls=%d before=%d", src.calls, callsBefore)
+	}
+
+	// Chip strip should now include the +closed pill.
+	chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed)
+	if !strings.Contains(chips, "+closed") {
+		t.Errorf("expected +closed chip; got %q", chips)
+	}
+
+	// Press C again → flips back off.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+	m = model.(Model)
+	if m.showClosed || src.includeClosed {
+		t.Errorf("second C should toggle off; model=%v source=%v", m.showClosed, src.includeClosed)
 	}
 }
 
