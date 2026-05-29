@@ -238,6 +238,13 @@ type Model struct {
 	// with s. sortNone preserves bd's native order (the default).
 	sortBy sortKey
 
+	// sortDesc reverses the active sort's NATURAL direction
+	// (priority's natural is asc, updated's is desc, etc.).
+	// Toggled by Shift-S so the user can flip without re-cycling
+	// the axis. Always false when sortBy == sortNone (no axis to
+	// reverse).
+	sortDesc bool
+
 	// showClosed mirrors the BDSource/MultiBDSource IncludeClosed
 	// flag so the chip strip + status bar can render it without
 	// reaching back through the Source. Toggled by C.
@@ -795,6 +802,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setPriorityCap(-1)
 	case keyHit(msg, m.keys.SortCycle):
 		return m.setSortKey(m.sortBy.next())
+	case keyHit(msg, m.keys.SortReverse):
+		return m.reverseSort()
 	case keyHit(msg, m.keys.ShowClosed):
 		return m.toggleShowClosed()
 	case keyHit(msg, m.keys.Columns):
@@ -1559,7 +1568,7 @@ func (m *Model) recomputeVisible() {
 		// bd's native order.
 		out := make([]beads.Issue, len(pool))
 		copy(out, pool)
-		applySort(out, m.sortBy)
+		applySort(out, m.sortBy, m.sortDesc)
 		m.visible = out
 		m.titleMatches = nil // no filter → no highlight
 		if m.cursor >= len(m.visible) {
@@ -1603,7 +1612,7 @@ func (m *Model) recomputeVisible() {
 	}
 	// Sort overrides the fuzzy-score ordering when set — the user
 	// asked for a specific axis, honour it.
-	applySort(out, m.sortBy)
+	applySort(out, m.sortBy, m.sortDesc)
 	m.visible = out
 
 	if m.cursor >= len(m.visible) {
@@ -1615,25 +1624,28 @@ func (m *Model) recomputeVisible() {
 // key. sortNone is a no-op so callers can pass through without
 // branching. Priority ASC (P0 first); updated DESC (newest first);
 // repo / id ASC (alphabetical).
-func applySort(issues []beads.Issue, k sortKey) {
+func applySort(issues []beads.Issue, k sortKey, reverse bool) {
+	// Each axis declares its NATURAL direction (priority asc =
+	// P0 first; updated desc = newest first). Reverse flips the
+	// less-func so a single bool drives every axis the same way.
+	var less func(i, j int) bool
 	switch k {
 	case sortPriority:
-		sort.SliceStable(issues, func(i, j int) bool {
-			return issues[i].Priority < issues[j].Priority
-		})
+		less = func(i, j int) bool { return issues[i].Priority < issues[j].Priority }
 	case sortUpdated:
-		sort.SliceStable(issues, func(i, j int) bool {
-			return issues[i].UpdatedAt.After(issues[j].UpdatedAt)
-		})
+		less = func(i, j int) bool { return issues[i].UpdatedAt.After(issues[j].UpdatedAt) }
 	case sortRepo:
-		sort.SliceStable(issues, func(i, j int) bool {
-			return issues[i].Repo < issues[j].Repo
-		})
+		less = func(i, j int) bool { return issues[i].Repo < issues[j].Repo }
 	case sortID:
-		sort.SliceStable(issues, func(i, j int) bool {
-			return issues[i].ID < issues[j].ID
-		})
+		less = func(i, j int) bool { return issues[i].ID < issues[j].ID }
+	default:
+		return
 	}
+	if reverse {
+		base := less
+		less = func(i, j int) bool { return base(j, i) }
+	}
+	sort.SliceStable(issues, less)
 }
 
 // setPriorityCap updates the priority filter and re-runs the
@@ -1653,9 +1665,29 @@ func (m Model) setPriorityCap(capLevel int) (tea.Model, tea.Cmd) {
 
 // setSortKey rotates the active sort and re-runs the visible-row
 // pipeline. Cursor resets to 0 because the user's previous
-// position has no meaning against a re-ordered list.
+// position has no meaning against a re-ordered list. Direction
+// resets to natural (sortDesc=false) on axis change — preserving
+// the reverse across an axis switch would carry an "unexpected
+// direction" surprise into the next sort.
 func (m Model) setSortKey(k sortKey) (tea.Model, tea.Cmd) {
 	m.sortBy = k
+	m.sortDesc = false
+	m.cursor = 0
+	m.recomputeVisible()
+	m.ensureCursorVisible()
+	return m, nil
+}
+
+// reverseSort flips m.sortDesc and re-runs the visible-row
+// pipeline. No-op when no axis is active — sortNone has no
+// direction to reverse, and a status banner is more useful than
+// a silent no-press.
+func (m Model) reverseSort() (tea.Model, tea.Cmd) {
+	if m.sortBy == sortNone {
+		m.setStatus("S: pick a sort first (press s)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	m.sortDesc = !m.sortDesc
 	m.cursor = 0
 	m.recomputeVisible()
 	m.ensureCursorVisible()
@@ -2242,36 +2274,51 @@ func (m Model) renderHeader() string {
 			fmt.Fprintf(&b, "%-*s  ", colWyk, "wyk")
 		}
 		if m.colVisible(colIDRepo) {
-			fmt.Fprintf(&b, "%-*s  ", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑"))
+			fmt.Fprintf(&b, "%-*s  ", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑", m.sortDesc))
 		}
 		if m.colVisible(colIDBranch) {
 			fmt.Fprintf(&b, "%-*s  ", colBranch, "Branch")
 		}
 	}
-	fmt.Fprintf(&b, "%-*s  ", colID, sortDecorate("ID", m.sortBy == sortID, "↑"))
+	fmt.Fprintf(&b, "%-*s  ", colID, sortDecorate("ID", m.sortBy == sortID, "↑", m.sortDesc))
 	if m.colVisible(colIDType) {
 		fmt.Fprintf(&b, "%-*s  ", colType, "T")
 	}
 	if m.colVisible(colIDStatus) {
 		fmt.Fprintf(&b, "%-*s  ", colStatus, "Status")
 	}
-	fmt.Fprintf(&b, "%-*s  ", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑"))
+	fmt.Fprintf(&b, "%-*s  ", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑", m.sortDesc))
 	if m.colVisible(colIDUpdated) {
-		fmt.Fprintf(&b, "%-*s  ", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓"))
+		fmt.Fprintf(&b, "%-*s  ", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓", m.sortDesc))
 	}
 	b.WriteString("Title")
 	return tableHeaderStyle.Render(b.String())
 }
 
 // sortDecorate appends an arrow to a column header when that
-// column is the active sort axis. Lets renderHeader stay a flat
-// fmt.Sprintf rather than carrying a separate "active?" branch
-// per column.
-func sortDecorate(label string, active bool, arrow string) string {
-	if active {
-		return label + arrow
+// column is the active sort axis. natural is the arrow for the
+// axis's natural direction (priority asc → ↑, updated desc → ↓);
+// reverse flips it. Lets renderHeader stay a flat fmt.Fprintf
+// rather than carrying a separate "active? reversed?" branch per
+// column.
+func sortDecorate(label string, active bool, natural string, reverse bool) string {
+	if !active {
+		return label
 	}
-	return label
+	if reverse {
+		return label + flipArrow(natural)
+	}
+	return label + natural
+}
+
+func flipArrow(a string) string {
+	switch a {
+	case "↑":
+		return "↓"
+	case "↓":
+		return "↑"
+	}
+	return a
 }
 
 func (m Model) renderRow(i beads.Issue, selected bool) string {

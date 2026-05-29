@@ -94,6 +94,12 @@ type keyMap struct {
 	// matches vim's visual-mode mental model. esc clears all
 	// marks.
 	Mark key.Binding // v — toggle mark on cursor row
+
+	// SortReverse flips the active sort's direction without
+	// re-cycling the axis. Priority asc ↔ desc, updated desc ↔
+	// asc, etc. No-op when no sort axis is active (sortNone has
+	// no direction).
+	SortReverse key.Binding // S — reverse sort direction
 }
 
 func defaultKeyMap() keyMap {
@@ -126,13 +132,14 @@ func defaultKeyMap() keyMap {
 		FilterP3:   key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "≤P3")),
 		FilterPAll: key.NewBinding(key.WithKeys("0"), key.WithHelp("0", "all P")),
 
-		SortCycle:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-		ShowClosed: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "±closed")),
-		Columns:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "columns")),
-		Yank:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank ID")),
-		Undo:       key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo close")),
-		Defer:      key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
-		Mark:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
+		SortCycle:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+		ShowClosed:  key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "±closed")),
+		Columns:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "columns")),
+		Yank:        key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank ID")),
+		Undo:        key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo close")),
+		Defer:       key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
+		Mark:        key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
+		SortReverse: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse sort")),
 	}
 }
 
@@ -169,7 +176,7 @@ func (k keyMap) shortHelpReadOnly() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
-		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.ShowClosed, k.Columns},
+		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
 		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark},
 		{k.Refresh, k.Help, k.Quit},
 	}

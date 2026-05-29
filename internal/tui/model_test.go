@@ -2403,13 +2403,63 @@ func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
 	}
 }
 
+func TestSortReverse_FlipsActiveAxisDirection(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 2},
+		{ID: "a-2", Priority: 0},
+		{ID: "a-3", Priority: 1},
+	}}
+	m := applyFetched(New(src), src)
+
+	// Press s → priority ascending (P0 first).
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = model.(Model)
+	if m.visible[0].Priority != 0 {
+		t.Fatalf("setup: expected P0 first; got %d", m.visible[0].Priority)
+	}
+
+	// Press S → reverse to descending (P2 first).
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}})
+	m = model.(Model)
+	if !m.sortDesc {
+		t.Errorf("S should set sortDesc=true; got %v", m.sortDesc)
+	}
+	if m.visible[0].Priority != 2 {
+		t.Errorf("reverse should put P2 first; got %d", m.visible[0].Priority)
+	}
+
+	// Switching axis (press s) should reset direction to natural.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = model.(Model)
+	if m.sortDesc {
+		t.Errorf("axis change should reset sortDesc; got %v", m.sortDesc)
+	}
+}
+
+func TestSortReverse_NoOpWhenNoSortActive(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}})
+	m = model.(Model)
+	if m.sortDesc {
+		t.Errorf("S with no active sort should NOT flip direction; got sortDesc=%v", m.sortDesc)
+	}
+	if !strings.Contains(m.status, "pick a sort first") {
+		t.Errorf("status should hint at the missing sort; got %q", m.status)
+	}
+}
+
 func TestApplySort_SortByUpdatedNewestFirst(t *testing.T) {
 	older := []beads.Issue{
 		{ID: "a-1", UpdatedAt: mustParse("2026-01-01T00:00:00Z")},
 		{ID: "a-2", UpdatedAt: mustParse("2026-03-01T00:00:00Z")},
 		{ID: "a-3", UpdatedAt: mustParse("2026-02-01T00:00:00Z")},
 	}
-	applySort(older, sortUpdated)
+	applySort(older, sortUpdated, false)
 	if older[0].ID != "a-2" || older[1].ID != "a-3" || older[2].ID != "a-1" {
 		t.Errorf("updated sort should be newest-first; got order %s %s %s",
 			older[0].ID, older[1].ID, older[2].ID)
