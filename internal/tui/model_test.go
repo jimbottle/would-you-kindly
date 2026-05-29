@@ -1783,6 +1783,24 @@ func TestRenderHeader_DecoratedColumnsStayWithinTheirWidth(t *testing.T) {
 		{"repo", sortRepo},
 		{"id", sortID},
 	}
+	// Anchor against an absolute expectation derived from the
+	// column-width constants. Self-referential baselines (using
+	// sortNone as the source of truth for the other cases) would
+	// silently mask a layout bug that shifted the baseline itself
+	// — every case here, including sortNone, is validated against
+	// the same expected rune-column.
+	const sep = 2 // two-space separator after each column
+	expectedTitleRune := 2 /* leading cursor */ +
+		colResp + sep +
+		colWyk + sep +
+		colRepo + sep +
+		colBranch + sep +
+		colID + sep +
+		colType + sep +
+		colStatus + sep +
+		colPrio + sep +
+		colUpdated + sep
+
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
 			m.sortBy = c.sort
@@ -1796,21 +1814,21 @@ func TestRenderHeader_DecoratedColumnsStayWithinTheirWidth(t *testing.T) {
 			// columns. Measure rune-count to get the true column
 			// position.
 			runesAt := utf8.RuneCountInString(out[:byteAt])
-			if c.label == "none" {
-				baselineTitleRune = runesAt
-			} else if runesAt != baselineTitleRune {
-				t.Errorf("sort=%s shifted Title from rune-col %d to %d (header overflow!)",
-					c.label, baselineTitleRune, runesAt)
+			if runesAt != expectedTitleRune {
+				t.Errorf("sort=%s: Title at rune-col %d, want %d (header overflow!)",
+					c.label, runesAt, expectedTitleRune)
 			}
 		})
 	}
 }
 
-var baselineTitleRune int
-
-// stripANSI removes ANSI escape sequences (\033[...m) so visual
-// widths can be compared. lipgloss decorates the header with
-// styles even when the test runs without a TTY.
+// stripANSI removes ANSI SGR escape sequences (\033[...m) — the
+// color/style sequences lipgloss emits — so visual widths can be
+// compared. It's narrow on purpose: only handles SGR (ending in
+// 'm'), which is all lipgloss produces in this codebase. A
+// truncated/malformed ESC sequence with no terminating 'm' would
+// be consumed greedily; in practice that doesn't happen for
+// our inputs, so the simple implementation is fine.
 func stripANSI(s string) string {
 	var b strings.Builder
 	i := 0
