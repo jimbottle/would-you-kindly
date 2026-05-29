@@ -2236,6 +2236,108 @@ func TestBulkFlag_AddsHumanToMarked(t *testing.T) {
 	}
 }
 
+func TestLabel_AddsWhenAbsent(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = model.(Model)
+	if m.mode != modeLabel {
+		t.Fatalf("L should enter modeLabel; got %v", m.mode)
+	}
+	for _, r := range "blocked" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter should dispatch AddLabel")
+	}
+	if msg := cmd().(writeMsg); msg.action != "label:blocked" {
+		t.Errorf("writeMsg action = %q, want label:blocked", msg.action)
+	}
+	if len(s.added) != 1 || s.added[0] != (labelOp{"a-1", "blocked"}) {
+		t.Errorf("AddLabel should land 'blocked' on a-1; got %+v", s.added)
+	}
+}
+
+func TestLabel_RemovesWhenPresent(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent", "needs-review"}},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = model.(Model)
+	for _, r := range "needs-review" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter should dispatch RemoveLabel")
+	}
+	if msg := cmd().(writeMsg); msg.action != "unlabel:needs-review" {
+		t.Errorf("writeMsg action = %q, want unlabel:needs-review", msg.action)
+	}
+	if len(s.removed) != 1 || s.removed[0] != (labelOp{"a-1", "needs-review"}) {
+		t.Errorf("RemoveLabel should target 'needs-review'; got %+v", s.removed)
+	}
+}
+
+func TestLabel_BulkIsAddOnly(t *testing.T) {
+	// Bulk path always adds (matches H's bulk semantics) — a row
+	// that already has the label is a no-op, a row missing it
+	// gets it added. No bulk-remove path exists.
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}},
+		{ID: "a-2", Labels: []string{"src:agent", "needs-review"}},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = model.(Model)
+	for _, r := range "needs-review" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter should dispatch bulk AddLabel")
+	}
+	_ = cmd()
+	// a-1 gets the label added; a-2 was already labeled, no-op.
+	if len(s.added) != 1 || s.added[0] != (labelOp{"a-1", "needs-review"}) {
+		t.Errorf("bulk path should add only to missing rows; got %+v", s.added)
+	}
+	if len(s.removed) != 0 {
+		t.Errorf("bulk path must not remove anything; got %+v", s.removed)
+	}
+}
+
+func TestLabel_ReadOnlyShowsHint(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("L on read-only source should NOT enter modeLabel; got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "read-only") {
+		t.Errorf("status should explain read-only; got %q", m.status)
+	}
+}
+
 func TestAssign_DispatchesSetAssigneeWithTypedValue(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
 		{ID: "a-1", Owner: "alice", Title: "rotate"},

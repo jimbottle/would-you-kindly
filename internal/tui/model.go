@@ -68,6 +68,7 @@ const (
 	modeCommand                  // vim-style `:` command palette
 	modeOutput                   // read-only overlay showing captured bd output
 	modeAssign                   // text input for `bd update --assignee` value
+	modeLabel                    // text input for an arbitrary label to toggle
 )
 
 // Source abstracts where issues come from so a test can plug in
@@ -818,6 +819,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateOutput(msg)
 		case modeAssign:
 			return m.updateAssign(msg)
+		case modeLabel:
+			return m.updateLabel(msg)
 		default:
 			m.status = ""
 			return m.updateList(msg)
@@ -919,6 +922,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.bumpPriority(+1)
 	case keyHit(msg, m.keys.AssignOwner):
 		return m.beginAssign()
+	case keyHit(msg, m.keys.Label):
+		return m.beginLabel()
 	case keyHit(msg, m.keys.ShowClosed):
 		return m.toggleShowClosed()
 	case keyHit(msg, m.keys.Columns):
@@ -1429,6 +1434,7 @@ var bulkVerbs = map[string]string{
 	"defer":    "deferred",
 	"priority": "reprioritized",
 	"assign":   "reassigned",
+	"label":    "labeled",
 }
 
 // handleWriteResult sets the status banner and triggers a refetch so
@@ -1472,7 +1478,23 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 	case "create":
 		m.setStatus("created " + msg.id)
 	default:
-		m.setStatus(msg.action + " " + msg.id)
+		// Compound actions like "label:foo" / "unlabel:foo" carry
+		// the label name in the action string itself so the
+		// status banner can read "labeled foo a-1" instead of a
+		// generic "label a-1". Plain actions (no `:`) fall
+		// through to the action-then-id format.
+		if name, label, ok := strings.Cut(msg.action, ":"); ok {
+			switch name {
+			case "label":
+				m.setStatus("labeled " + msg.id + " " + label)
+			case "unlabel":
+				m.setStatus("removed " + label + " from " + msg.id)
+			default:
+				m.setStatus(msg.action + " " + msg.id)
+			}
+		} else {
+			m.setStatus(msg.action + " " + msg.id)
+		}
 	}
 	// Refetch so the list reflects the write. Loading flag isn't set
 	// here because the existing data is still valid until the new
@@ -2361,6 +2383,92 @@ func parseSortKey(s string) (sortKey, bool) {
 	return sortNone, false
 }
 
+// beginLabel opens the arbitrary-label prompt. The cursor row's
+// label set is the toggle target: if the user enters a label
+// already on the row, it's removed; otherwise it's added.
+// Mirrors how H toggles `human` specifically, but for any label.
+// Bulk path is add-only (matches H's bulk) so a typo can't bulk-
+// remove an unrelated label across the selection.
+func (m Model) beginLabel() (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.marked) == 0 {
+		if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+			m.setStatus("nothing to label")
+			return m, flashClearCmd(m.statusGen)
+		}
+		m.pendingTarget = m.visible[m.cursor]
+	}
+	m.mode = modeLabel
+	m.input.SetValue("")
+	if len(m.marked) > 0 {
+		m.input.Prompt = fmt.Sprintf("add label to %d rows ▸ ", len(m.marked))
+	} else {
+		m.input.Prompt = "label ▸ "
+	}
+	m.input.Placeholder = "name (toggle on cursor; bulk path is add-only)"
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// updateLabel drives the label prompt. enter dispatches the
+// AddLabel/RemoveLabel pair based on whether the cursor row
+// already carries the label; bulk path always adds. Empty
+// submission cancels.
+func (m Model) updateLabel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	switch msg.String() {
+	case "esc":
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		m.pendingTarget = beads.Issue{}
+		return m, nil
+	case "enter":
+		label := strings.TrimSpace(m.input.Value())
+		target := m.pendingTarget
+		m.pendingTarget = beads.Issue{}
+		mu := m.mutator()
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		if label == "" {
+			m.setStatus("label cancelled (empty)")
+			return m, flashClearCmd(m.statusGen)
+		}
+		if len(m.marked) > 0 {
+			targets := m.markedIssues()
+			m.marked = nil
+			return m, runBulkWrite("label", targets, func(ctx context.Context, i beads.Issue) error {
+				if i.HasLabel(label) {
+					return nil // idempotent add
+				}
+				return mu.AddLabel(ctx, i, label)
+			})
+		}
+		if !m.issueExists(target.ID) {
+			m.setStatus("label cancelled: " + target.ID + " was removed from the workspace by a refresh")
+			return m, flashClearCmd(m.statusGen)
+		}
+		if target.HasLabel(label) {
+			return m, runWrite("unlabel:"+label, target.ID, func(ctx context.Context) error {
+				return mu.RemoveLabel(ctx, target, label)
+			})
+		}
+		return m, runWrite("label:"+label, target.ID, func(ctx context.Context) error {
+			return mu.AddLabel(ctx, target, label)
+		})
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
 // beginAssign opens the owner-change prompt. Seeded with the
 // current owner so the common "fix a typo" or "keep me, just
 // confirm" cases are one keystroke instead of a re-type.
@@ -2753,7 +2861,7 @@ func (m Model) viewList() string {
 
 	// modal prompts live just above the status bar
 	switch m.mode {
-	case modeFilter, modeNote, modeQuickAdd, modeDefer, modeCommand, modeAssign:
+	case modeFilter, modeNote, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
 		b.WriteString("\n")
 		b.WriteString(m.input.View())
 	case modeConfirmClose:

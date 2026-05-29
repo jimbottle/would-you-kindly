@@ -122,6 +122,13 @@ type keyMap struct {
 	// aware: with marks present, the value applies to every
 	// marked row.
 	AssignOwner key.Binding // O — change owner
+
+	// Label opens a textinput prompt for a label name; on submit,
+	// the cursor row toggles that label (add if absent, remove if
+	// present) — mirrors how H toggles the `human` label
+	// specifically. Empty submission cancels. Bulk path is add-
+	// only (matches H's bulk behavior).
+	Label key.Binding // L — toggle an arbitrary label
 }
 
 func defaultKeyMap() keyMap {
@@ -166,6 +173,7 @@ func defaultKeyMap() keyMap {
 		PriorityUp:   key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "↑prio")),
 		PriorityDown: key.NewBinding(key.WithKeys("-"), key.WithHelp("-", "↓prio")),
 		AssignOwner:  key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "owner")),
+		Label:        key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "label")),
 	}
 }
 
@@ -203,7 +211,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label},
 		{k.Refresh, k.Help, k.Quit, k.Command},
 	}
 }
