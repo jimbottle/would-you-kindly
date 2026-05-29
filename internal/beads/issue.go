@@ -48,8 +48,9 @@ type Issue struct {
 	// move is a human's. The TUI uses it to render a HUMAN-BLOCK
 	// badge so the inbox imperative ('work these now') doesn't
 	// fire on rows the agent literally can't unblock. Populated
-	// post-Fetch by MultiBDSource after a per-workspace
-	// `bd dep list` batch lookup; same-workspace only for v1.
+	// inside `BDSource.Fetch` via a per-issue `bd dep list`
+	// lookup (same-workspace only); concurrency capped by
+	// markBlockedByHumanConcurrency.
 	BlockedByHuman bool `json:"-"`
 }
 

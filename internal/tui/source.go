@@ -44,6 +44,14 @@ var (
 
 // Fetch dispatches to the right bd subcommand for the preset, then
 // decorates the result with Repo/Branch when Name is set.
+// depLister is the minimum surface markBlockedByHuman needs from
+// a Client — the real *beads.Client satisfies it, and tests inject
+// stubs that return canned dep lists so the dep-scan loop can be
+// exercised without a real bd binary.
+type depLister interface {
+	ListDeps(ctx context.Context, id string) ([]beads.Issue, error)
+}
+
 func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, error) {
 	var issues []beads.Issue
 	var err error
@@ -68,20 +76,32 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 	return issues, nil
 }
 
-// markBlockedByHuman runs `bd dep list <id>` in parallel for every
-// candidate issue (src:agent + NOT human + DependencyCount > 0) and
-// stamps Issue.BlockedByHuman=true on any whose blocker set
-// includes a human-labeled task. Best-effort: ListDeps errors are
-// swallowed so a flaky bd call only loses the badge for that row,
-// not the whole fetch.
+// markBlockedByHumanConcurrency caps the number of in-flight
+// `bd dep list` subprocesses markBlockedByHuman will spawn at a
+// time. The cap matters because Fetch runs on every refresh tick
+// AND inside MultiBDSource's per-sub goroutine pool — without a
+// cap, a registry with M repos × N agent-inbox candidates per
+// repo could fork M*N bd subprocesses per tick. 8 keeps the spawn
+// burst predictable while still finishing quickly for a typical
+// 5-20 candidate count.
+const markBlockedByHumanConcurrency = 8
+
+// markBlockedByHuman runs `bd dep list <id>` for every candidate
+// issue (src:agent + NOT human + DependencyCount > 0) and stamps
+// Issue.BlockedByHuman=true on any whose blocker set includes a
+// human-labeled task. Concurrency is bounded by
+// markBlockedByHumanConcurrency — see that const's comment for the
+// rationale. Best-effort: ListDeps errors are swallowed so a flaky
+// bd call only loses the badge for that row, not the whole fetch.
 //
 // Same-workspace only — the blocker has to be reachable via the
 // same bd Client. Cross-workspace deps (rare in practice) fall
 // through and the row keeps the plain AGENT badge.
-func markBlockedByHuman(ctx context.Context, c *beads.Client, issues []beads.Issue) {
+func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue) {
 	if c == nil {
 		return
 	}
+	sem := make(chan struct{}, markBlockedByHumanConcurrency)
 	var wg sync.WaitGroup
 	for i := range issues {
 		if !isAgentInboxCandidate(issues[i]) {
@@ -90,6 +110,8 @@ func markBlockedByHuman(ctx context.Context, c *beads.Client, issues []beads.Iss
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			deps, err := c.ListDeps(ctx, issues[i].ID)
 			if err != nil {
 				return

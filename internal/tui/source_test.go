@@ -724,3 +724,83 @@ func TestMarkBlockedByHuman_NilClientNoOps(t *testing.T) {
 		t.Error("nil client should leave BlockedByHuman = false")
 	}
 }
+
+// stubDepLister returns canned dep lists per candidate ID. Used to
+// pin markBlockedByHuman's dep-scan behaviour without needing a
+// real bd binary or workspace.
+type stubDepLister struct {
+	byID map[string][]beads.Issue
+	err  error
+}
+
+func (s *stubDepLister) ListDeps(_ context.Context, id string) ([]beads.Issue, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.byID[id], nil
+}
+
+func TestMarkBlockedByHuman_FlagsRowsWithHumanLabeledBlocker(t *testing.T) {
+	// Three agent-inbox candidates, each with a different dep
+	// composition. The dep-scan loop must:
+	//   - flag the candidate whose blocker carries `human`
+	//   - leave the candidate with a non-human blocker untouched
+	//   - leave the candidate whose blockers are mixed flagged
+	//     (any human blocker triggers it, not all-must-be-human)
+	issues := []beads.Issue{
+		{ID: "would-you-kindly-aaa", Labels: []string{"src:agent"}, DependencyCount: 1},  // blocker = human → flag
+		{ID: "would-you-kindly-bbb", Labels: []string{"src:agent"}, DependencyCount: 1},  // blocker = non-human → no flag
+		{ID: "would-you-kindly-ccc", Labels: []string{"src:agent"}, DependencyCount: 2},  // mixed → flag
+	}
+	stub := &stubDepLister{
+		byID: map[string][]beads.Issue{
+			"would-you-kindly-aaa": {
+				{ID: "would-you-kindly-xxx", Labels: []string{"human"}},
+			},
+			"would-you-kindly-bbb": {
+				{ID: "would-you-kindly-yyy", Labels: []string{"src:agent"}},
+			},
+			"would-you-kindly-ccc": {
+				{ID: "would-you-kindly-zzz", Labels: []string{"src:human"}},
+				{ID: "would-you-kindly-www", Labels: []string{"human"}},
+			},
+		},
+	}
+	markBlockedByHuman(context.Background(), stub, issues)
+	if !issues[0].BlockedByHuman {
+		t.Errorf("aaa: blocker has `human` label → should be flagged")
+	}
+	if issues[1].BlockedByHuman {
+		t.Errorf("bbb: blocker has no `human` label → should NOT be flagged")
+	}
+	if !issues[2].BlockedByHuman {
+		t.Errorf("ccc: at least one blocker has `human` → should be flagged")
+	}
+}
+
+func TestMarkBlockedByHuman_SkipsNonCandidates(t *testing.T) {
+	// Rows that aren't agent-inbox candidates (no src:agent, OR
+	// human-flagged, OR no deps) must not trigger a ListDeps call.
+	// We assert via a stub that explodes if invoked.
+	issues := []beads.Issue{
+		{ID: "human-row", Labels: []string{"src:agent", "human"}, DependencyCount: 1},
+		{ID: "no-src-row", Labels: []string{"src:human"}, DependencyCount: 1},
+		{ID: "no-deps-row", Labels: []string{"src:agent"}, DependencyCount: 0},
+	}
+	calls := 0
+	stub := stubDepListerFunc(func(_ context.Context, id string) ([]beads.Issue, error) {
+		calls++
+		t.Errorf("ListDeps called for non-candidate %q", id)
+		return nil, nil
+	})
+	markBlockedByHuman(context.Background(), stub, issues)
+	if calls != 0 {
+		t.Errorf("expected zero ListDeps calls; got %d", calls)
+	}
+}
+
+type stubDepListerFunc func(ctx context.Context, id string) ([]beads.Issue, error)
+
+func (f stubDepListerFunc) ListDeps(ctx context.Context, id string) ([]beads.Issue, error) {
+	return f(ctx, id)
+}
