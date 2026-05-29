@@ -130,6 +130,28 @@ func CachePath() (string, error) {
 	return filepath.Join(home, ".cache", "wyk", "update.json"), nil
 }
 
+// CachedOnly returns whatever the cache file currently holds,
+// without re-fetching live on miss/stale. Use this on the error
+// path of a live-fetch caller so a genuine network outage doesn't
+// trigger a second HTTP attempt inside the same handler. Returns
+// an empty slice when no cache exists or it can't be decoded.
+func CachedOnly() ([]Release, error) {
+	path, err := CachePath()
+	if err != nil {
+		return nil, err
+	}
+	entry, err := readCache(path)
+	if err != nil {
+		// Distinguish "no cache yet" (not an error for callers
+		// using us as a fallback) from a corrupted file.
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return entryReleases(entry), nil
+}
+
 // PersistLatest writes a fresh release-page snapshot to the cache
 // so subsequent reads (TUI nudge, doctor stanza, next LatestCached
 // within the TTL) see the up-to-date list. Used by callers that

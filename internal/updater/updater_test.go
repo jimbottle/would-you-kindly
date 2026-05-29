@@ -300,3 +300,44 @@ type netErr struct{}
 func (netErr) Error() string   { return "simulated network outage" }
 func (netErr) Timeout() bool   { return false }
 func (netErr) Temporary() bool { return true }
+
+func TestCachedOnly_DoesNotRefetchOnStale(t *testing.T) {
+	// CachedOnly is the pure-read variant — even when the on-disk
+	// snapshot is older than CacheTTL, it returns what's there
+	// rather than re-fetching live. Callers on the error path
+	// rely on this so a network outage doesn't trigger a second
+	// HTTP attempt inside the same handler.
+	cacheDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheDir)
+	path, _ := CachePath()
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	stale := cacheEntry{
+		CheckedAt: time.Now().Add(-72 * time.Hour), // well past TTL
+		Releases:  []Release{{TagName: "v0.0.1-stale"}},
+	}
+	b, _ := json.Marshal(stale)
+	_ = os.WriteFile(path, b, 0o644)
+
+	rels, err := CachedOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rels) != 1 || rels[0].TagName != "v0.0.1-stale" {
+		t.Errorf("CachedOnly should return the on-disk snapshot verbatim; got %v", tagNames(rels))
+	}
+}
+
+func TestCachedOnly_MissingCacheReturnsEmptyNotError(t *testing.T) {
+	// First-run case: no cache file yet. CachedOnly should
+	// return (nil, nil) so the caller can treat "no info" as
+	// the soft-fail signal rather than an error.
+	cacheDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheDir)
+	rels, err := CachedOnly()
+	if err != nil {
+		t.Errorf("missing cache should not be an error; got %v", err)
+	}
+	if len(rels) != 0 {
+		t.Errorf("missing cache should produce empty slice; got %v", tagNames(rels))
+	}
+}

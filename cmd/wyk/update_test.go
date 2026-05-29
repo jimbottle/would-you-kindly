@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -232,5 +233,62 @@ func TestRunUpdate_RejectsUnknownChannel(t *testing.T) {
 	}
 	if code := runUpdate([]string{"-channel", "prerelease", "-dry-run"}); code != 64 {
 		t.Errorf("unknown -channel value should exit 64; got %d", code)
+	}
+}
+
+func TestRunUpdate_LiveFailureFallsBackToCacheWithWarning(t *testing.T) {
+	// Network outage: liveFetcher errors. With a planted cache,
+	// runUpdate must use the cached snapshot, print the stderr
+	// warning, and proceed normally (not exit 1).
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	prev := liveFetcher
+	liveFetcher = func(_ context.Context) ([]updater.Release, error) {
+		return nil, errors.New("simulated network outage")
+	}
+	defer func() { liveFetcher = prev }()
+
+	// Seed the cache with a release strictly newer than the test
+	// binary's reported "(devel)" so the fallback has work to
+	// advertise.
+	if err := updater.PersistLatest([]updater.Release{
+		{TagName: "v8.8.8", Prerelease: false},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldErr := os.Stderr
+	rErr, wErr, _ := os.Pipe()
+	os.Stderr = wErr
+	defer func() { os.Stderr = oldErr }()
+
+	out := captureStdout(t, func() {
+		if code := runUpdate([]string{"-dry-run"}); code != 0 {
+			t.Errorf("fallback path should exit 0 (cached info available); got %d", code)
+		}
+	})
+	wErr.Close()
+	stderrOut, _ := io.ReadAll(rErr)
+
+	if !strings.Contains(out, "v8.8.8") {
+		t.Errorf("expected stdout to mention the cached version; got:\n%s", out)
+	}
+	if !strings.Contains(string(stderrOut), "live check failed") {
+		t.Errorf("expected stderr to warn about the fallback; got:\n%s", stderrOut)
+	}
+}
+
+func TestRunUpdate_LiveFailureNoCacheExitsOne(t *testing.T) {
+	// Genuine first-run failure: liveFetcher errors AND no cache
+	// exists yet. There's nothing to fall back to — exit 1 with
+	// a clear stderr message.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	prev := liveFetcher
+	liveFetcher = func(_ context.Context) ([]updater.Release, error) {
+		return nil, errors.New("no network")
+	}
+	defer func() { liveFetcher = prev }()
+
+	if code := runUpdate([]string{"-dry-run"}); code != 1 {
+		t.Errorf("live failure with no cache should exit 1; got %d", code)
 	}
 }

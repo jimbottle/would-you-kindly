@@ -55,7 +55,10 @@ func runUpdate(args []string) int {
 	// release page without hitting api.github.com.
 	rels, err := liveFetcher(ctx)
 	if err != nil {
-		cached, _, cerr := updater.LatestCached(ctx, nil)
+		// CachedOnly is the pure-read variant — it never
+		// re-fetches live, so a genuine network outage doesn't
+		// trigger a second HTTP attempt inside the same handler.
+		cached, cerr := updater.CachedOnly()
 		if cerr != nil || len(cached) == 0 {
 			fmt.Fprintln(os.Stderr, "wyk update: cannot check for releases:", err)
 			return 1
