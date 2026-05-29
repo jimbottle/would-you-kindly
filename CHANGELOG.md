@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.4.0] — 2026-05-29
+
 Largest round since v0.1.0 — `wyk` graduates from "TUI over the inbox" to
 a CLI-driven toolkit around the same contract. New top-level subcommands
 (`activity`, `export`, `import`, `dashboard`, `doctor`, `help`,
