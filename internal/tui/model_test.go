@@ -1861,6 +1861,118 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 }
 
+func TestRepeat_WithoutPriorActionShowsHint(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+	m = model.(Model)
+	if !strings.Contains(m.status, "nothing to repeat") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
+func TestRepeat_AfterLabelAppliesToNextCursor(t *testing.T) {
+	// Add 'needs-review' to a-1 via L, move cursor to a-2, press
+	// '.' — the label should land on a-2 too.
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1"},
+		{ID: "a-2"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	// L → "needs-review" → enter (toggle-adds to a-1).
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = model.(Model)
+	for _, r := range "needs-review" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("label enter should dispatch")
+	}
+	_ = cmd()
+
+	// Move cursor to a-2.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = model.(Model)
+
+	// '.' → re-applies AddLabel("needs-review") to a-2.
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+	if cmd == nil {
+		t.Fatal(". should re-dispatch the label")
+	}
+	_ = cmd()
+	if len(s.added) != 2 || s.added[1] != (labelOp{"a-2", "needs-review"}) {
+		t.Errorf(". should add 'needs-review' to a-2; got %+v", s.added)
+	}
+}
+
+func TestRepeat_AfterDeferAppliesSameWindowToNextRow(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1"},
+		{ID: "a-2"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	// d → "+1w" → enter (defer a-1 by 1w).
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = model.(Model)
+	for _, r := range "+1w" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	_ = cmd()
+
+	// Move cursor to a-2 and repeat.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = model.(Model)
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+	if cmd == nil {
+		t.Fatal(". should re-dispatch the defer")
+	}
+	_ = cmd()
+	if len(s.deferred) != 2 || s.deferred[1] != (labelOp{"a-2", "+1w"}) {
+		t.Errorf(". should defer a-2 by +1w; got %+v", s.deferred)
+	}
+}
+
+func TestRepeat_AfterPriorityBumpReusesAbsoluteValue(t *testing.T) {
+	// '+' on a P3 row sets P2; '.' on the next row should also
+	// set P2 (absolute), not relative-bump from that row's own
+	// priority.
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 3},
+		{ID: "a-2", Priority: 0},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+	m = model.(Model)
+	_ = cmd()
+	if len(s.priorities) != 1 || s.priorities[0] != (priorityOp{"a-1", 2}) {
+		t.Fatalf("setup: + on P3 should land P2; got %+v", s.priorities)
+	}
+
+	// Move cursor, '.' → set P2 (absolute, captured from the
+	// previous dispatch).
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = model.(Model)
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+	if cmd == nil {
+		t.Fatal(". should re-dispatch the priority set")
+	}
+	_ = cmd()
+	if len(s.priorities) != 2 || s.priorities[1] != (priorityOp{"a-2", 2}) {
+		t.Errorf(". should set a-2 to P2 (absolute); got %+v", s.priorities)
+	}
+}
+
 func TestEmptyMatchCopy_PresetSpecificHints(t *testing.T) {
 	// Pin each preset's first-line meaning AND the second-line
 	// recovery hint so a future drift gets caught. Empty view is

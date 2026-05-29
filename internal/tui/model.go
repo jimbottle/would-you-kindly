@@ -295,6 +295,14 @@ type Model struct {
 	// move, not a stack.
 	lastClosed beads.Issue
 
+	// lastAction snapshots the most recent write so `.` can
+	// re-apply it to the cursor row without re-prompting. The
+	// kind tag (close/defer/assign/label/unlabel/priority/flag/
+	// unflag) plus a stringified arg is enough to re-dispatch
+	// through the same Mutator method. Captured at each
+	// successful single-target dispatch site.
+	lastAction repeatableAction
+
 	// outputText is the body of the modeOutput overlay (captured
 	// stdout/stderr from a `:bd <args>` invocation). Cleared on
 	// dismiss so a future open doesn't show stale text.
@@ -960,6 +968,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.beginLabel()
 	case keyHit(msg, m.keys.Editor):
 		return m.beginEdit()
+	case keyHit(msg, m.keys.Repeat):
+		return m.handleRepeat()
 	case keyHit(msg, m.keys.ShowClosed):
 		return m.toggleShowClosed()
 	case keyHit(msg, m.keys.Columns):
@@ -1165,6 +1175,7 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "close cancelled: " + target.ID + " was removed from the workspace by a refresh"
 			return m, nil
 		}
+		m.lastAction = repeatableAction{kind: "close"}
 		return m, runWriteWithIssue("close", target, func(ctx context.Context) error {
 			return mu.Close(ctx, target)
 		})
@@ -1217,10 +1228,12 @@ func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 	}
 	i := m.visible[m.cursor]
 	if i.IsHuman() {
+		m.lastAction = repeatableAction{kind: "unflag"}
 		return m, runWrite("unflag", i.ID, func(ctx context.Context) error {
 			return mu.RemoveLabel(ctx, i, "human")
 		})
 	}
+	m.lastAction = repeatableAction{kind: "flag"}
 	return m, runWrite("flag", i.ID, func(ctx context.Context) error {
 		return mu.AddLabel(ctx, i, "human")
 	})
@@ -1405,6 +1418,80 @@ func (m Model) handleBulkWriteResult(msg bulkWriteMsg) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("%s %d of %d (%d failed: %s)", verb, succeeded, msg.total, len(msg.failed), msg.errs[0]))
 	}
 	return m, tea.Batch(m.fetchCmd(), flashClearCmd(m.statusGen))
+}
+
+// repeatableAction captures the minimum a `.` re-dispatch needs:
+// the kind tag (close/defer/assign/label/unlabel/priority/flag/
+// unflag) and a stringified arg (empty for kinds that take no
+// arg, like close/flag). Zero value means "nothing to repeat".
+type repeatableAction struct {
+	kind string
+	arg  string
+}
+
+// handleRepeat re-dispatches lastAction against the cursor row.
+// Re-prompts are skipped — the captured arg fires verbatim. Empty
+// lastAction surfaces a status banner so the user knows the key
+// was understood but had nothing to act on. Bulk-mode repeats are
+// not supported: `.` is a single-row tool by design.
+func (m Model) handleRepeat() (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if m.lastAction.kind == "" {
+		m.setStatus("nothing to repeat (do a close / defer / label / etc. first)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus("nothing to repeat against")
+		return m, flashClearCmd(m.statusGen)
+	}
+	target := m.visible[m.cursor]
+	arg := m.lastAction.arg
+	switch m.lastAction.kind {
+	case "close":
+		return m, runWriteWithIssue("close", target, func(ctx context.Context) error {
+			return mu.Close(ctx, target)
+		})
+	case "defer":
+		return m, runWriteWithIssue("defer", target, func(ctx context.Context) error {
+			return mu.SetDefer(ctx, target, arg)
+		})
+	case "assign":
+		return m, runWriteWithIssue("assign", target, func(ctx context.Context) error {
+			return mu.SetAssignee(ctx, target, arg)
+		})
+	case "label":
+		return m, runWrite("label:"+arg, target.ID, func(ctx context.Context) error {
+			return mu.AddLabel(ctx, target, arg)
+		})
+	case "unlabel":
+		return m, runWrite("unlabel:"+arg, target.ID, func(ctx context.Context) error {
+			return mu.RemoveLabel(ctx, target, arg)
+		})
+	case "priority":
+		n, err := strconv.Atoi(arg)
+		if err != nil {
+			m.setStatus("repeat: stored priority %q is not a number")
+			return m, flashClearCmd(m.statusGen)
+		}
+		return m, runWrite(fmt.Sprintf("set P%d", n), target.ID, func(ctx context.Context) error {
+			return mu.SetPriority(ctx, target, n)
+		})
+	case "flag":
+		return m, runWrite("flag", target.ID, func(ctx context.Context) error {
+			return mu.AddLabel(ctx, target, "human")
+		})
+	case "unflag":
+		return m, runWrite("unflag", target.ID, func(ctx context.Context) error {
+			return mu.RemoveLabel(ctx, target, "human")
+		})
+	default:
+		m.setStatus("repeat: don't know how to redo " + m.lastAction.kind)
+		return m, flashClearCmd(m.statusGen)
+	}
 }
 
 // runWrite wraps a Mutator call in a tea.Cmd that emits a writeMsg.
@@ -2024,6 +2111,7 @@ func (m Model) bumpPriority(delta int) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("%s already at P%d", i.ID, i.Priority))
 		return m, flashClearCmd(m.statusGen)
 	}
+	m.lastAction = repeatableAction{kind: "priority", arg: strconv.Itoa(newP)}
 	return m, runWrite(fmt.Sprintf("set P%d", newP), i.ID, func(ctx context.Context) error {
 		return mu.SetPriority(ctx, i, newP)
 	})
@@ -2210,6 +2298,7 @@ func (m Model) dispatchPaletteAssign(owner string) (tea.Model, tea.Cmd) {
 		m.setStatus(":assign cancelled: " + target.ID + " was removed by a refresh")
 		return m, flashClearCmd(m.statusGen)
 	}
+	m.lastAction = repeatableAction{kind: "assign", arg: owner}
 	return m, runWriteWithIssue("assign", target, func(ctx context.Context) error {
 		return mu.SetAssignee(ctx, target, owner)
 	})
@@ -2250,6 +2339,7 @@ func (m Model) dispatchPalettePriority(arg string) (tea.Model, tea.Cmd) {
 		m.setStatus(":priority cancelled: " + target.ID + " was removed by a refresh")
 		return m, flashClearCmd(m.statusGen)
 	}
+	m.lastAction = repeatableAction{kind: "priority", arg: strconv.Itoa(n)}
 	return m, runWrite(fmt.Sprintf("set P%d", n), target.ID, func(ctx context.Context) error {
 		return mu.SetPriority(ctx, target, n)
 	})
@@ -2284,10 +2374,12 @@ func (m Model) dispatchPaletteLabel(label string) (tea.Model, tea.Cmd) {
 		return m, flashClearCmd(m.statusGen)
 	}
 	if target.HasLabel(label) {
+		m.lastAction = repeatableAction{kind: "unlabel", arg: label}
 		return m, runWrite("unlabel:"+label, target.ID, func(ctx context.Context) error {
 			return mu.RemoveLabel(ctx, target, label)
 		})
 	}
+	m.lastAction = repeatableAction{kind: "label", arg: label}
 	return m, runWrite("label:"+label, target.ID, func(ctx context.Context) error {
 		return mu.AddLabel(ctx, target, label)
 	})
@@ -2730,10 +2822,12 @@ func (m Model) updateLabel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, flashClearCmd(m.statusGen)
 		}
 		if target.HasLabel(label) {
+			m.lastAction = repeatableAction{kind: "unlabel", arg: label}
 			return m, runWrite("unlabel:"+label, target.ID, func(ctx context.Context) error {
 				return mu.RemoveLabel(ctx, target, label)
 			})
 		}
+		m.lastAction = repeatableAction{kind: "label", arg: label}
 		return m, runWrite("label:"+label, target.ID, func(ctx context.Context) error {
 			return mu.AddLabel(ctx, target, label)
 		})
@@ -2809,6 +2903,7 @@ func (m Model) updateAssign(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus("owner change cancelled: " + target.ID + " was removed from the workspace by a refresh")
 			return m, flashClearCmd(m.statusGen)
 		}
+		m.lastAction = repeatableAction{kind: "assign", arg: owner}
 		return m, runWriteWithIssue("assign", target, func(ctx context.Context) error {
 			return mu.SetAssignee(ctx, target, owner)
 		})
@@ -2894,6 +2989,7 @@ func (m Model) updateDefer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus("defer cancelled: " + target.ID + " was removed from the workspace by a refresh")
 			return m, flashClearCmd(m.statusGen)
 		}
+		m.lastAction = repeatableAction{kind: "defer", arg: when}
 		return m, runWriteWithIssue("defer", target, func(ctx context.Context) error {
 			return mu.SetDefer(ctx, target, when)
 		})

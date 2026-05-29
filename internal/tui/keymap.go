@@ -138,6 +138,12 @@ type keyMap struct {
 	// changed. Multi-line editing for descriptions that the
 	// single-line textinput modes can't handle.
 	Editor key.Binding // e — edit description in $EDITOR
+
+	// Repeat re-applies the last write action (close / defer /
+	// assign / label / priority / flag) to the cursor row. The
+	// model snapshots (action, arg) at each successful dispatch
+	// site so `.` can re-fire without re-prompting.
+	Repeat key.Binding // . — repeat last write
 }
 
 func defaultKeyMap() keyMap {
@@ -184,6 +190,7 @@ func defaultKeyMap() keyMap {
 		AssignOwner:  key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "owner")),
 		Label:        key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "label")),
 		Editor:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		Repeat:       key.NewBinding(key.WithKeys("."), key.WithHelp(".", "repeat last")),
 	}
 }
 
@@ -238,7 +245,7 @@ func DocsKeymap() []HelpGroup {
 		{"Writes", []key.Binding{
 			k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Defer,
 			k.AssignOwner, k.Label, k.Editor, k.PriorityUp, k.PriorityDown,
-			k.Mark, k.Undo,
+			k.Mark, k.Undo, k.Repeat,
 		}},
 		{"Clipboard / command", []key.Binding{k.Yank, k.Command}},
 		{"Meta", []key.Binding{k.Refresh, k.Help, k.Quit}},
@@ -282,7 +289,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label, k.Editor},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label, k.Editor, k.Repeat},
 		{k.Refresh, k.Help, k.Quit, k.Command},
 	}
 }
