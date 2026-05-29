@@ -350,10 +350,13 @@ type Model struct {
 	// overwritten) can't wipe the current one.
 	statusGen int
 
-	// input is the textinput shared by modeFilter and modeNote. The
-	// modes are mutually exclusive — only one prompt is on screen at
-	// a time — so a single field is enough; Prompt/Placeholder are
-	// reconfigured on entry.
+	// input is the single-line textinput shared by every prompt
+	// mode that isn't modeNote: modeFilter, modeQuickAdd,
+	// modeDefer, modeCommand, modeAssign, and modeLabel. The
+	// modes are mutually exclusive — only one prompt is on
+	// screen at a time — so a single field is enough;
+	// Prompt/Placeholder are reconfigured on entry. modeNote
+	// uses noteArea (textarea) for multi-line drafting.
 	input textinput.Model
 
 	// noteArea is the multi-line editor used by modeNote so a
@@ -2969,24 +2972,15 @@ func (m Model) viewHelp() string {
 	b.WriteString(detailHeaderStyle.Render("Keys"))
 	b.WriteString("\n")
 
-	groups := []struct {
-		title    string
-		bindings []key.Binding
-	}{
-		{"Navigation", []key.Binding{
-			m.keys.Up, m.keys.Down, m.keys.Top, m.keys.Bottom,
-			m.keys.Open, m.keys.Back,
-			m.keys.JumpPrevHuman, m.keys.JumpNextHuman,
-		}},
-		{"Filters", []key.Binding{m.keys.Filter, m.keys.Human, m.keys.Cycle, m.keys.SortCycle, m.keys.ShowClosed, m.keys.Columns}},
-		{"Writes", []key.Binding{m.keys.Close, m.keys.ToggleHuman, m.keys.AddNote, m.keys.QuickAdd}},
-		{"Meta", []key.Binding{m.keys.Refresh, m.keys.Help, m.keys.Quit}},
-	}
-	for _, g := range groups {
+	// Source the grouping from DocsKeymap so this overlay and the
+	// `wyk help --markdown` reference can never silently drift.
+	// Any keymap addition lands in both by adding a single entry
+	// in keymap.go.
+	for _, g := range DocsKeymap() {
 		b.WriteString("\n")
-		b.WriteString(detailLabelStyle.Render(g.title))
+		b.WriteString(detailLabelStyle.Render(g.Title))
 		b.WriteString("\n")
-		for _, kb := range g.bindings {
+		for _, kb := range g.Bindings {
 			h := kb.Help()
 			fmt.Fprintf(&b, "  %-6s  %s\n", h.Key, h.Desc)
 		}

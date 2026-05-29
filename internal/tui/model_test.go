@@ -3180,6 +3180,157 @@ func TestCommandPalette_LabelWithValueTogglesOnRow(t *testing.T) {
 	})
 }
 
+func TestCommandPalette_AssignBareOpensModeAssign(t *testing.T) {
+	// ':assign' with no value should mode-handoff into the same
+	// prompt 'O' opens — pin the mode transition because the
+	// updateCommand → dispatchCommand → beginAssign chain has
+	// historically been the kind of interaction that silently
+	// drifted.
+	src := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Owner: "alice"},
+	}}}
+	m := applyMutatorFetched(New(src), src)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "assign" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeAssign {
+		t.Errorf("bare :assign should hand off to modeAssign; got %v", m.mode)
+	}
+}
+
+func TestCommandPalette_LabelBareOpensModeLabel(t *testing.T) {
+	src := &stubMutator{stubSource: stubSource{issues: []beads.Issue{{ID: "a-1"}}}}
+	m := applyMutatorFetched(New(src), src)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "label" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeLabel {
+		t.Errorf("bare :label should hand off to modeLabel; got %v", m.mode)
+	}
+}
+
+func TestCommandPalette_ReadOnlySurfacesHint(t *testing.T) {
+	// Read-only source: each of :assign, :priority, :label must
+	// surface the 'read-only mode' status and dispatch nothing.
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	cases := []string{"assign bob", "priority 0", "label needs-review"}
+	for _, sub := range cases {
+		t.Run(sub, func(t *testing.T) {
+			src := &stubSource{issues: sampleIssues()} // NOT a Mutator
+			m := applyFetched(New(src), src)
+			model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+			m = model.(Model)
+			for _, r := range sub {
+				model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+				m = model.(Model)
+			}
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = model.(Model)
+			if !strings.Contains(m.status, "read-only") {
+				t.Errorf("status should announce read-only; got %q", m.status)
+			}
+		})
+	}
+}
+
+func TestCommandPalette_BulkAssignAppliesToAllMarked(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Owner: "alice"},
+		{ID: "a-2", Owner: "bob"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	// Mark both rows.
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	// :assign carol via palette.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "assign carol" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal(":assign with marks should dispatch a bulk write")
+	}
+	_ = cmd()
+	if len(s.assignees) != 2 || s.assignees[0].label != "carol" || s.assignees[1].label != "carol" {
+		t.Errorf("bulk :assign should land 'carol' on both rows; got %+v", s.assignees)
+	}
+}
+
+func TestCommandPalette_BulkPriorityAppliesToAllMarked(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 3},
+		{ID: "a-2", Priority: 2},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "priority 0" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal(":priority with marks should dispatch a bulk write")
+	}
+	_ = cmd()
+	if len(s.priorities) != 2 || s.priorities[0] != (priorityOp{"a-1", 0}) || s.priorities[1] != (priorityOp{"a-2", 0}) {
+		t.Errorf("bulk :priority 0 should set both rows to P0; got %+v", s.priorities)
+	}
+}
+
+func TestCommandPalette_BulkLabelIsAddOnlyAndIdempotent(t *testing.T) {
+	// Mirror the keyboard L's bulk semantics: rows missing the
+	// label get it added; rows that already have it are
+	// silently skipped (no AddLabel call dispatched).
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1"}, // missing the label
+		{ID: "a-2", Labels: []string{"needs-review"}}, // already has it
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "label needs-review" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal(":label with marks should dispatch a bulk write")
+	}
+	_ = cmd()
+	if len(s.added) != 1 || s.added[0] != (labelOp{"a-1", "needs-review"}) {
+		t.Errorf("bulk :label should add only to a-1; got %+v", s.added)
+	}
+	if len(s.removed) != 0 {
+		t.Errorf("bulk :label must NOT remove anything; got %+v", s.removed)
+	}
+}
+
 func TestCommandPalette_OpensAndDispatches(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

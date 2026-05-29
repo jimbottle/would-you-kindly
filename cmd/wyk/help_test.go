@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"testing"
 )
@@ -19,11 +20,13 @@ func TestRunHelp_MarkdownEmitsReference(t *testing.T) {
 		_ = devnull.Close()
 	}()
 
+	// io.ReadAll drains the pipe regardless of size or write
+	// boundaries — single-Read with a 64KB buffer would
+	// intermittently truncate as the markdown reference grows.
 	doneCh := make(chan string)
 	go func() {
-		buf := make([]byte, 64*1024)
-		n, _ := r.Read(buf)
-		doneCh <- string(buf[:n])
+		b, _ := io.ReadAll(r)
+		doneCh <- string(b)
 	}()
 
 	if code := runHelp([]string{"--markdown"}); code != 0 {
@@ -52,9 +55,8 @@ func TestRunHelp_NoFlagPointsAtOverlay(t *testing.T) {
 
 	doneCh := make(chan string)
 	go func() {
-		buf := make([]byte, 1024)
-		n, _ := r.Read(buf)
-		doneCh <- string(buf[:n])
+		b, _ := io.ReadAll(r)
+		doneCh <- string(b)
 	}()
 
 	if code := runHelp(nil); code != 0 {

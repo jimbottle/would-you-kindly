@@ -228,8 +228,8 @@ func checkXDGPaths() []check {
 		path func() (string, error)
 	}{
 		{"~/.config/wyk/repos.json", registry.DefaultPath},
-		{"~/.config/wyk/ui.json", uiconfigDefaultPath},
-		{"~/.config/wyk/filters.json", filtersDefaultPath},
+		{"~/.config/wyk/ui.json", uiconfig.DefaultPath},
+		{"~/.config/wyk/filters.json", filters.DefaultPath},
 	} {
 		p, err := e.path()
 		if err != nil {
@@ -256,15 +256,6 @@ func checkXDGPaths() []check {
 	}
 	return out
 }
-
-// uiconfigDefaultPath and filtersDefaultPath thin-wrap the
-// per-package DefaultPath helpers so checkXDGPaths can build its
-// table without importing both packages directly. Keeps the
-// import block tidy.
-var (
-	uiconfigDefaultPath = uiconfig.DefaultPath
-	filtersDefaultPath  = filters.DefaultPath
-)
 
 func checkRegistry() ([]check, []registry.Repo) {
 	regPath, err := registry.DefaultPath()
