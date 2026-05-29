@@ -41,6 +41,7 @@ func runInbox(args []string) int {
 	// disables the cap. A user passing -priority 1 gets P0 + P1
 	// only — exactly the "what should I attack first" set.
 	maxPriority := fs.Int("priority", -1, "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)")
+	repoName := fs.String("repo", "", "restrict the inbox to the registered repo with this name (mutually exclusive with -C)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -49,11 +50,15 @@ func runInbox(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N]")
+		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N] [-repo name]")
+		return 64
+	}
+	if *dir != "" && *repoName != "" {
+		fmt.Fprintln(os.Stderr, "wyk inbox: -C and -repo are mutually exclusive")
 		return 64
 	}
 
-	subs, code := inboxSubs(*dir)
+	subs, code := inboxSubs(*dir, *repoName)
 	if code != 0 {
 		return code
 	}
@@ -103,9 +108,11 @@ type inboxSub struct {
 }
 
 // inboxSubs returns one entry per repo to query. -C overrides the
-// registry; an empty registry falls back to cwd (matches the TUI's
-// buildSource rules).
-func inboxSubs(dir string) ([]inboxSub, int) {
+// registry; -repo selects one entry from the registry by name; an
+// empty registry falls back to cwd (matches the TUI's buildSource
+// rules). dir and repoName are mutually exclusive — that's
+// enforced by the caller.
+func inboxSubs(dir, repoName string) ([]inboxSub, int) {
 	if dir != "" {
 		c := beads.NewClient()
 		c.Dir = dir
@@ -124,6 +131,14 @@ func inboxSubs(dir string) ([]inboxSub, int) {
 	if len(reg.Repos) == 0 {
 		c := beads.NewClient()
 		return []inboxSub{{client: c, name: ""}}, 0
+	}
+	if repoName != "" {
+		filtered, err := filterRegistryByName(reg, repoName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk inbox:", err)
+			return nil, 1
+		}
+		reg = filtered
 	}
 	out := make([]inboxSub, len(reg.Repos))
 	for i, r := range reg.Repos {
