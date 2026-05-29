@@ -4,11 +4,11 @@ import "testing"
 
 func TestQueryWithClosed(t *testing.T) {
 	cases := []struct {
-		name           string
-		preset         Preset
-		me             string
-		includeClosed  bool
-		want           string
+		name          string
+		preset        Preset
+		me            string
+		includeClosed bool
+		want          string
 	}{
 		{"human open-only", PresetHuman, "ev", false, `label=human AND status!=closed`},
 		{"human with closed", PresetHuman, "ev", true, `label=human`},

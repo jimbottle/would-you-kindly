@@ -21,4 +21,3 @@ func TestHandoff_MissingArgsReturnsUsageCode(t *testing.T) {
 		t.Errorf("expected exit 64 when no <id> and no -create; got %d", code)
 	}
 }
-

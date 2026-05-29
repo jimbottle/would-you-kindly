@@ -29,7 +29,7 @@ func TestIsNewer_SemverOrdering(t *testing.T) {
 		{"v0.3.0-alpha", "v0.3.0", true},
 		{"v0.3.0", "v0.3.0", false},
 		{"v0.3.0", "v0.3.0-alpha", false}, // final beats prerelease
-		{"v0.3.0", "v0.2.3", false},        // newer current beats older latest
+		{"v0.3.0", "v0.2.3", false},       // newer current beats older latest
 	}
 	for _, c := range cases {
 		if got := IsNewer(c.current, c.latest); got != c.want {

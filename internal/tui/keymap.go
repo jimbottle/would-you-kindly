@@ -84,8 +84,8 @@ type keyMap struct {
 
 func defaultKeyMap() keyMap {
 	return keyMap{
-		Up:   key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
-		Down: key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j/k", "nav")), // ShortHelp uses Down's help string for the combined j/k hint; Up's "k up" still surfaces in the FullHelp overlay.
+		Up:      key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
+		Down:    key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j/k", "nav")), // ShortHelp uses Down's help string for the combined j/k hint; Up's "k up" still surfaces in the FullHelp overlay.
 		Top:     key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "top")),
 		Bottom:  key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "bottom")),
 		Open:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "open")),

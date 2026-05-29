@@ -109,8 +109,8 @@ var (
 	// be noticed on first run; not loud enough to keep dominating
 	// the eye on every subsequent paint.
 	setupHintStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("214")).
-				Italic(true)
+			Foreground(lipgloss.Color("214")).
+			Italic(true)
 
 	// wykIndicatorStyle renders the ✓ in the W column for repos that
 	// have wyk's post-commit hook installed. Green so it reads as

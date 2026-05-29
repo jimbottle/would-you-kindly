@@ -27,6 +27,21 @@ jobs:
       - name: Module download
         run: go mod download
 
+      - name: gofmt
+        # `gofmt -l` prints any non-conforming file and exits 0; the
+        # `! -s` flag inversion fails the step when output is
+        # non-empty so unformatted code can't reland. Previous rounds
+        # accumulated drift across 9 files; pinning this in CI keeps
+        # the tree clean without relying on local pre-commit hooks.
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt found non-conforming files:"
+            echo "$out"
+            echo "Run \`gofmt -w .\` to fix."
+            exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
 

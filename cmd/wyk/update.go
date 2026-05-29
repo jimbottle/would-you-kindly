@@ -228,4 +228,3 @@ func readUpdateNudge(currentVer string) string {
 	}
 	return fmt.Sprintf("↑ wyk %s available — run `wyk update`", tag)
 }
-

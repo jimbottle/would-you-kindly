@@ -5,13 +5,13 @@ package tui
 // place becomes a compile error rather than a silently-ignored
 // hidden column.
 const (
-	colIDOwner    = "owner"
-	colIDWyk      = "wyk"
-	colIDRepo     = "repo"
-	colIDBranch   = "branch"
-	colIDType     = "type"
-	colIDStatus   = "status"
-	colIDUpdated  = "updated"
+	colIDOwner   = "owner"
+	colIDWyk     = "wyk"
+	colIDRepo    = "repo"
+	colIDBranch  = "branch"
+	colIDType    = "type"
+	colIDStatus  = "status"
+	colIDUpdated = "updated"
 )
 
 // toggleableCol describes one column the `o` overlay can hide/show.

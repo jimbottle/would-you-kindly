@@ -122,18 +122,18 @@ type Model struct {
 	preset filter.Preset
 	query  string
 
-	all      []beads.Issue // last full fetch result
-	visible  []beads.Issue // after fuzzy filter
+	all     []beads.Issue // last full fetch result
+	visible []beads.Issue // after fuzzy filter
 	// commonPrefix is the longest shared ID prefix (ending in `-`)
 	// across m.all. Recomputed on each fetch; used by displayID to
 	// strip noise from the ID column in single-repo mode.
 	commonPrefix string
 	cursor       int
-	width    int
-	height   int
-	lastErr  error
-	lastSync time.Time
-	loading  bool // true between a fetch dispatch and its result
+	width        int
+	height       int
+	lastErr      error
+	lastSync     time.Time
+	loading      bool // true between a fetch dispatch and its result
 
 	// status is a transient banner shown above the status bar after
 	// a write completes ("Closed wyk-42" or an error). It clears on
@@ -890,7 +890,7 @@ func (m Model) jumpToHuman(dir int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	for offset := 1; offset <= n; offset++ {
-		idx := ((m.cursor + dir*offset) % n + n) % n
+		idx := ((m.cursor+dir*offset)%n + n) % n
 		if m.visible[idx].IsHuman() {
 			m.cursor = idx
 			m.ensureCursorVisible()
@@ -1831,7 +1831,7 @@ func (m Model) viewList() string {
 // extra width was just whitespace in every row.
 const (
 	colResp    = 13 // responsibility column: " ← HUMAN ", " · HUMAN ", " AGENT ", " HUMAN-BLOCK ", or blank. 13 = " HUMAN-BLOCK " visual width (Padding(0,1) + 11-char content), the widest variant. Shorter badges get trailing whitespace. Placed second-from-left to put the most important "whose move is it" signal where the eye lands first.
-	colWyk     = 3 // wyk-hook indicator: ✓ if installed, blank if not. Header reads "wyk" so the column is self-explanatory.
+	colWyk     = 3  // wyk-hook indicator: ✓ if installed, blank if not. Header reads "wyk" so the column is self-explanatory.
 	colRepo    = 18
 	colBranch  = 10
 	colID      = 12

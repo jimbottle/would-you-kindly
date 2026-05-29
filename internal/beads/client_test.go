@@ -12,10 +12,10 @@ import (
 // argv (and stdin, where relevant) the client constructed. It is the
 // only mechanism the write-method tests use to avoid touching real bd.
 type fakeRunner struct {
-	calls   []fakeCall
-	stdout  []byte
-	stderr  []byte
-	err     error
+	calls  []fakeCall
+	stdout []byte
+	stderr []byte
+	err    error
 }
 
 type fakeCall struct {
