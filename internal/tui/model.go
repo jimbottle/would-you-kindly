@@ -697,14 +697,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		// Mouse is only handled in the list view (modes that own
-		// the canvas — detail / help / modals — keep keyboard
-		// focus and ignore mouse). Wheel scrolls the cursor;
-		// left-click sets the cursor to the targeted row.
-		if m.mode != modeList {
+		// Mouse routes by mode:
+		// - modeList: wheel scrolls the cursor; left-click sets it
+		// - modeDetail: wheel scrolls the viewport body so a long
+		//   description doesn't force the user to hunt for j/k
+		// - other modes (help, modals, prompts): keyboard-focused,
+		//   mouse is dropped
+		switch m.mode {
+		case modeList:
+			return m.handleMouse(msg)
+		case modeDetail:
+			var cmd tea.Cmd
+			m.detailVP, cmd = m.detailVP.Update(msg)
+			return m, cmd
+		default:
 			return m, nil
 		}
-		return m.handleMouse(msg)
 
 	case tea.KeyMsg:
 		// Any keystroke processed in modeList — including the ones

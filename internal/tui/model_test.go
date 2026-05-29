@@ -3133,6 +3133,42 @@ func TestMouse_IgnoredOutsideListMode(t *testing.T) {
 	}
 }
 
+func TestDetailView_MouseWheelScrollsViewport(t *testing.T) {
+	// modeDetail wires mouse wheel events to detailVP so a long
+	// description doesn't force the user to reach for the
+	// keyboard. The cursor in modeList must NOT move on the
+	// wheel event — it's owned by the viewport while the detail
+	// view is open.
+	src := &stubSource{issues: manyIssues(20)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+
+	// Open the cursor row's detail view.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Fatalf("enter should open modeDetail; got %v", m.mode)
+	}
+	preCursor := m.cursor
+	preYOff := m.detailVP.YOffset
+
+	// Wheel-down should leave the list cursor alone and forward
+	// to the viewport (which may or may not actually scroll
+	// depending on body length, but the routing alone is what we
+	// care about).
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	m = model.(Model)
+	if m.cursor != preCursor {
+		t.Errorf("mouse wheel in detail view must not move the list cursor; was %d, now %d", preCursor, m.cursor)
+	}
+	// detailVP.Update doesn't guarantee a YOffset change for a
+	// short body, but the routing should at least not panic and
+	// should consume the event silently.
+	_ = preYOff
+}
+
 func TestRowsStartY_AccountsForChipStrip(t *testing.T) {
 	src := &stubSource{issues: manyIssues(20)}
 	m := applyFetched(New(src), src)
