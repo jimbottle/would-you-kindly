@@ -43,6 +43,21 @@ jobs:
             exit 1
           fi
 
+      - name: docs-snapshot drift check
+        # Builds wyk, regenerates docs/generated/{keymap.md,cli.md}, and
+        # fails if the diff isn't clean. A code change touching a flag
+        # surface or keymap entry must bring the matching docs snapshot
+        # along — the would-you-kindly.raylytics.io docs agent reads
+        # those files directly, so drift here would silently feed it
+        # stale data. Same pattern as the gofmt check above; named
+        # `make docs-check` so the same check runs identically on a
+        # contributor's machine.
+        run: |
+          if ! make docs-check; then
+            echo "::error::docs/generated/ is stale — run \`make docs-snapshot\` and commit the result"
+            exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
 
