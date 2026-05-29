@@ -30,6 +30,7 @@ var wykSubcommands = []string{
 	"update",
 	"dashboard",
 	"export",
+	"import",
 	"activity",
 	"help",
 	"completion",

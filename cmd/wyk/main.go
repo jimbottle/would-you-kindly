@@ -92,6 +92,8 @@ func main() {
 			os.Exit(runDashboard(os.Args[2:]))
 		case "export":
 			os.Exit(runExport(os.Args[2:]))
+		case "import":
+			os.Exit(runImport(os.Args[2:]))
 		case "activity":
 			os.Exit(runActivity(os.Args[2:]))
 		case "help":
@@ -523,6 +525,7 @@ Subcommands:
   stats        aggregate handoff metrics across registered repos
   dashboard    per-repo open/human/closed-this-week summary (−json for structured)
   export       JSON dump of every registered repo's full issue list + ready IDs
+  import       restore from a 'wyk export' dump (-file path, -dry-run)
   activity     recently-touched issues across registered repos (-since 24h, -json)
   help         pointer to the in-TUI overlay; --markdown emits a keymap reference
   completion   emit bash/zsh/fish completion script (run: wyk completion <shell>)
