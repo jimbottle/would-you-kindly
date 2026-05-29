@@ -1781,6 +1781,58 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 }
 
+func TestRenderStatsLine_CountsHumanAndMine(t *testing.T) {
+	issues := []beads.Issue{
+		{ID: "a-1", Labels: []string{"human"}, Owner: "ev"},
+		{ID: "a-2", Labels: []string{"human", "src:agent"}, Owner: "ev"},
+		{ID: "a-3", Labels: []string{"src:agent"}, Owner: "other"},
+		{ID: "a-4", Owner: "ev"},
+	}
+	src := &stubSource{issues: issues}
+	m := applyFetched(New(src).WithMe("ev"), src)
+
+	got := m.renderStatsLine()
+	// 2 human (a-1, a-2), 3 mine (a-1, a-2, a-4 owned by ev).
+	if !strings.Contains(got, "2 human") {
+		t.Errorf("expected '2 human' in stats; got %q", got)
+	}
+	if !strings.Contains(got, "3 mine") {
+		t.Errorf("expected '3 mine' in stats; got %q", got)
+	}
+}
+
+func TestRenderStatsLine_EmptyWhenNoSignals(t *testing.T) {
+	// No identity AND no human-labeled issues → no stats line at
+	// all. A bare "· 0 human · 0 mine" suffix would be visual
+	// chrome the user can't act on; the empty string keeps the
+	// status bar clean for read-only or unconfigured runs.
+	issues := []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}, Owner: "other"},
+	}
+	src := &stubSource{issues: issues}
+	m := applyFetched(New(src), src) // me unset
+
+	if got := m.renderStatsLine(); got != "" {
+		t.Errorf("expected empty stats line; got %q", got)
+	}
+}
+
+func TestRenderStatsLine_MineSlotShowsZeroWhenMeSet(t *testing.T) {
+	// With an identity wired up but zero owned rows, we still
+	// render "0 mine" so the user can tell their identity made it
+	// through. Silent omission would look like a config bug.
+	issues := []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}, Owner: "other"},
+	}
+	src := &stubSource{issues: issues}
+	m := applyFetched(New(src).WithMe("ev"), src)
+
+	got := m.renderStatsLine()
+	if !strings.Contains(got, "0 mine") {
+		t.Errorf("expected '0 mine' when me set + zero owned; got %q", got)
+	}
+}
+
 func TestUndo_ReopensLastClosed(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)

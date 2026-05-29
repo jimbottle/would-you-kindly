@@ -255,6 +255,14 @@ type Model struct {
 	// move, not a stack.
 	lastClosed beads.Issue
 
+	// me is the current-user identity, used to count the "mine"
+	// slot in the status-bar stats line. Mirrors the Me field on
+	// every BDSource (which the filter package uses for PresetMine
+	// query construction) so the count and the preset stay
+	// consistent. Empty disables the mine slot — no identity, no
+	// meaningful count.
+	me string
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -331,6 +339,16 @@ func (m Model) WithHiddenColumns(hidden map[string]bool, persistPath string) Mod
 	}
 	m.colsHidden = hidden
 	m.uiConfigPath = persistPath
+	return m
+}
+
+// WithMe returns a copy of the model with the current-user
+// identity set so the status-bar stats line can compute the
+// "mine" count. main wires this from the same value passed to
+// every BDSource.Me, keeping the count and PresetMine query in
+// sync. Empty leaves the stats line without a mine slot.
+func (m Model) WithMe(me string) Model {
+	m.me = me
 	return m
 }
 
@@ -2178,6 +2196,9 @@ func (m Model) viewDetail() string {
 
 func (m Model) statusBar() string {
 	left := fmt.Sprintf("[%s]  %d/%d", m.preset, len(m.visible), len(m.all))
+	if stats := m.renderStatsLine(); stats != "" {
+		left += "  " + stats
+	}
 	if m.query != "" {
 		left += fmt.Sprintf("  filter:%q", m.query)
 	}
@@ -2214,6 +2235,42 @@ func (m Model) statusBar() string {
 
 func keyHit(msg tea.KeyMsg, b key.Binding) bool {
 	return key.Matches(msg, b)
+}
+
+// renderStatsLine builds the "· N human · M mine" suffix appended
+// to the status bar's left side. Computed from m.all (no extra
+// fetch) and intentionally excludes "ready" — bd ready has
+// blocker-aware semantics that a label count can't approximate,
+// and a wrong number in a stats line is worse than no number.
+// Empty when there's nothing to display (no human, no me set).
+func (m Model) renderStatsLine() string {
+	human := 0
+	mine := 0
+	for _, i := range m.all {
+		for _, l := range i.Labels {
+			if l == "human" {
+				human++
+				break
+			}
+		}
+		if m.me != "" && i.Owner == m.me {
+			mine++
+		}
+	}
+	var parts []string
+	if human > 0 {
+		parts = append(parts, fmt.Sprintf("%d human", human))
+	}
+	if m.me != "" {
+		// Show the mine slot even at 0 so the user knows it's
+		// computed — silently dropping when zero would make a
+		// user think their identity isn't wired up.
+		parts = append(parts, fmt.Sprintf("%d mine", mine))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "· " + strings.Join(parts, " · ")
 }
 
 // renderFetchErrorBanner formats the per-sub Fetch failures into a

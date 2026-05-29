@@ -88,7 +88,7 @@ func main() {
 		os.Exit(runProbe(src))
 	}
 
-	model := tui.NewWithHint(src, hint)
+	model := tui.NewWithHint(src, hint).WithMe(*me)
 	// Hydrate column-visibility state from ~/.config/wyk/ui.json
 	// so the user's last layout choice survives a restart. A
 	// missing or unreadable file falls back to "all columns on"
