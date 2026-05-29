@@ -31,12 +31,16 @@ func runActivity(args []string) int {
 	fs := flag.NewFlagSet("activity", flag.ContinueOnError)
 	since := fs.Duration("since", 24*time.Hour, "show issues updated within this duration (e.g. 1h, 24h, 168h)")
 	asJSON := fs.Bool("json", false, "emit a structured JSON array instead of the table")
+	// -priority mirrors wyk inbox: lower number = more urgent in
+	// bd's convention. -1 (default) disables the cap. A user
+	// passing -priority 1 sees recent activity on P0 + P1 only.
+	maxPriority := fs.Int("priority", -1, "cap rows at priority N or higher (lower number = higher priority; -1 disables)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json]")
+		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json] [-priority N]")
 		return 64
 	}
 	if *since <= 0 {
@@ -60,7 +64,7 @@ func runActivity(args []string) int {
 	}
 
 	cutoff := time.Now().Add(-*since)
-	events, hadError := collectActivity(reg, cutoff, defaultActivityClient)
+	events, hadError := collectActivity(reg, cutoff, *maxPriority, defaultActivityClient)
 	if *asJSON {
 		emitActivityJSON(os.Stdout, events, cutoff)
 	} else {
@@ -103,7 +107,9 @@ var defaultActivityClient = func(dir string) activityClient {
 // dashboard / export concurrency policy). Per-repo errors fold
 // into the hadError flag but don't abort — the merged stream is
 // more useful with one missing repo than not at all.
-func collectActivity(reg *registry.Registry, cutoff time.Time, mk func(dir string) activityClient) ([]activityEvent, bool) {
+// maxPriority of -1 disables the cap (preserves prior behavior);
+// any non-negative value drops issues whose Priority exceeds it.
+func collectActivity(reg *registry.Registry, cutoff time.Time, maxPriority int, mk func(dir string) activityClient) ([]activityEvent, bool) {
 	// Initialize as an empty (non-nil) slice so the JSON shape is
 	// always `[]` rather than `null` when the window is empty —
 	// downstream tools iterating events don't need a null guard.
@@ -119,15 +125,19 @@ func collectActivity(reg *registry.Registry, cutoff time.Time, mk func(dir strin
 			continue
 		}
 		for _, i := range issues {
-			if !i.UpdatedAt.IsZero() && i.UpdatedAt.After(cutoff) {
-				events = append(events, activityEvent{
-					Repo:      r.Name,
-					ID:        i.ID,
-					Title:     i.Title,
-					Status:    i.Status,
-					UpdatedAt: i.UpdatedAt,
-				})
+			if i.UpdatedAt.IsZero() || !i.UpdatedAt.After(cutoff) {
+				continue
 			}
+			if maxPriority >= 0 && i.Priority > maxPriority {
+				continue
+			}
+			events = append(events, activityEvent{
+				Repo:      r.Name,
+				ID:        i.ID,
+				Title:     i.Title,
+				Status:    i.Status,
+				UpdatedAt: i.UpdatedAt,
+			})
 		}
 	}
 	sort.Slice(events, func(i, j int) bool { return events[i].UpdatedAt.After(events[j].UpdatedAt) })

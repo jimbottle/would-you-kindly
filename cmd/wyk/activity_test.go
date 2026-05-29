@@ -47,7 +47,7 @@ func TestCollectActivity_FiltersAndSorts(t *testing.T) {
 	}
 	mk := func(dir string) activityClient { return stubs[dir] }
 
-	events, hadError := collectActivity(reg, cutoff, mk)
+	events, hadError := collectActivity(reg, cutoff, -1, mk)
 	if !hadError {
 		t.Errorf("hadError should be true when any sub failed")
 	}
@@ -98,9 +98,43 @@ func TestCollectActivity_SkipsZeroUpdatedAt(t *testing.T) {
 	}
 	mk := func(dir string) activityClient { return stubs[dir] }
 
-	events, _ := collectActivity(reg, cutoff, mk)
+	events, _ := collectActivity(reg, cutoff, -1, mk)
 	if len(events) != 1 || events[0].ID != "a-2" {
 		t.Errorf("zero-UpdatedAt row should be skipped; got %+v", events)
+	}
+}
+
+func TestCollectActivity_PriorityCap(t *testing.T) {
+	cutoff := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
+	now := cutoff.Add(time.Hour)
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "alpha", Path: "/tmp/a"}}}
+	stubs := map[string]*stubActivityClient{
+		"/tmp/a": {issues: []beads.Issue{
+			{ID: "p0", Priority: 0, UpdatedAt: now},
+			{ID: "p1", Priority: 1, UpdatedAt: now},
+			{ID: "p2", Priority: 2, UpdatedAt: now},
+			{ID: "p3", Priority: 3, UpdatedAt: now},
+		}},
+	}
+	mk := func(dir string) activityClient { return stubs[dir] }
+
+	// max=1 keeps P0 + P1 only.
+	events, _ := collectActivity(reg, cutoff, 1, mk)
+	if len(events) != 2 {
+		t.Fatalf("max=1 should yield 2 events; got %d", len(events))
+	}
+	ids := map[string]bool{}
+	for _, e := range events {
+		ids[e.ID] = true
+	}
+	if !ids["p0"] || !ids["p1"] {
+		t.Errorf("max=1 should include p0+p1; got %v", ids)
+	}
+
+	// max=-1 disables the cap — all 4 should land.
+	events, _ = collectActivity(reg, cutoff, -1, mk)
+	if len(events) != 4 {
+		t.Errorf("max=-1 should yield 4 events (cap off); got %d", len(events))
 	}
 }
 
