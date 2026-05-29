@@ -2997,6 +2997,49 @@ func TestYankRich_EmptyTitleFallsBackToBareID(t *testing.T) {
 	}
 }
 
+func TestYankAll_CopiesEveryVisibleID(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "first"},
+		{ID: "a-2", Title: "second"},
+		{ID: "a-3", Title: "third"},
+	}}
+	m := applyFetched(New(src), src)
+
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'*'}})
+	m = model.(Model)
+	want := "a-1\na-2\na-3"
+	if copied != want {
+		t.Errorf("* should yank newline-joined IDs; got %q, want %q", copied, want)
+	}
+	if !strings.Contains(m.status, "3 IDs") {
+		t.Errorf("status should report the count; got %q", m.status)
+	}
+}
+
+func TestYankAll_EmptyListSetsStatusInstead(t *testing.T) {
+	src := &stubSource{issues: nil}
+	m := applyFetched(New(src), src)
+
+	called := false
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { called = true; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'*'}})
+	m = model.(Model)
+	if called {
+		t.Error("empty list should NOT touch the clipboard")
+	}
+	if !strings.Contains(m.status, "nothing to yank") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
 func TestYank_CopiesCursorIssueID(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

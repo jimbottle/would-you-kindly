@@ -979,6 +979,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleYank()
 	case keyHit(msg, m.keys.YankRich):
 		return m.handleYankRich()
+	case keyHit(msg, m.keys.YankAll):
+		return m.handleYankAll()
 	case keyHit(msg, m.keys.Undo):
 		return m.handleUndo()
 	case keyHit(msg, m.keys.Defer):
@@ -2013,6 +2015,30 @@ func (m Model) handleYankRich() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setStatus("copied " + payload)
+	return m, flashClearCmd(m.statusGen)
+}
+
+// handleYankAll copies every visible row's ID to the clipboard,
+// newline-separated. "Visible" is post-filter, post-preset — the
+// agent's mental model of "the set I'm currently looking at" —
+// so the yanked payload matches what's on screen. Empty-list
+// produces a no-op with a status banner, never a silent
+// clipboard wipe.
+func (m Model) handleYankAll() (tea.Model, tea.Cmd) {
+	if len(m.visible) == 0 {
+		m.setStatus("nothing to yank")
+		return m, flashClearCmd(m.statusGen)
+	}
+	ids := make([]string, len(m.visible))
+	for i, row := range m.visible {
+		ids[i] = row.ID
+	}
+	payload := strings.Join(ids, "\n")
+	if err := clipboardCopy(payload); err != nil {
+		m.setStatus("yank failed: " + err.Error())
+		return m, nil
+	}
+	m.setStatus(fmt.Sprintf("copied %d IDs", len(ids)))
 	return m, flashClearCmd(m.statusGen)
 }
 

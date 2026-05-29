@@ -83,6 +83,12 @@ type keyMap struct {
 	// as Yank.
 	YankRich key.Binding // Y — copy "ID — title"
 
+	// YankAll copies every currently-visible issue ID (post-filter,
+	// post-preset) to the clipboard, newline-separated. Useful for
+	// piping a filtered set of IDs into a shell loop or sharing the
+	// matching set with another agent run.
+	YankAll key.Binding // * — copy every visible ID
+
 	// Undo reopens the most-recently-closed issue from this
 	// session. One-deep only — vim-style single-step undo, not a
 	// stack. Cleared once the reopen lands so a second press is a
@@ -187,6 +193,7 @@ func defaultKeyMap() keyMap {
 		Columns:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "columns")),
 		Yank:         key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank ID")),
 		YankRich:     key.NewBinding(key.WithKeys("Y"), key.WithHelp("Y", "yank ID — title")),
+		YankAll:      key.NewBinding(key.WithKeys("*"), key.WithHelp("*", "yank all visible IDs")),
 		Undo:         key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo close")),
 		Defer:        key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
 		Mark:         key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
@@ -254,7 +261,7 @@ func DocsKeymap() []HelpGroup {
 			k.AssignOwner, k.Label, k.Editor, k.PriorityUp, k.PriorityDown,
 			k.Mark, k.Undo, k.Repeat,
 		}},
-		{"Clipboard / command", []key.Binding{k.Yank, k.YankRich, k.Command}},
+		{"Clipboard / command", []key.Binding{k.Yank, k.YankRich, k.YankAll, k.Command}},
 		{"Meta", []key.Binding{k.Refresh, k.Help, k.Quit}},
 	}
 }
@@ -296,7 +303,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.YankRich, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label, k.Editor, k.Repeat},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.YankRich, k.YankAll, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label, k.Editor, k.Repeat},
 		{k.Refresh, k.Help, k.Quit, k.Command},
 	}
 }
