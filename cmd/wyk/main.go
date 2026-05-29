@@ -88,6 +88,8 @@ func main() {
 			os.Exit(runConventions(os.Args[2:]))
 		case "update":
 			os.Exit(runUpdate(os.Args[2:]))
+		case "dashboard":
+			os.Exit(runDashboard(os.Args[2:]))
 		case "version", "--version", "-v":
 			fmt.Println(versionString())
 			os.Exit(0)
@@ -512,6 +514,7 @@ Subcommands:
   init         install the post-commit auto-close hook in this repo
   doctor       diagnose installation / registry / per-repo configuration
   stats        aggregate handoff metrics across registered repos
+  dashboard    per-repo open/human/closed-this-week summary (−json for structured)
   registry     list / remove / prune registered workspaces
   conventions  print the agent-facing label convention (–json for structured)
   update       check for and install a newer wyk release
