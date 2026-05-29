@@ -57,10 +57,16 @@ func (s checkStatus) MarshalJSON() ([]byte, error) {
 }
 
 // check is one diagnostic with its outcome and optional detail line.
+// leadingBlank tells the text path to emit a blank line before the
+// row; used by the informational stanzas (handoff convention,
+// update nudge) to preserve the prior layout where those blocks
+// were visually set off from the per-check rows. Unexported and
+// excluded from JSON via the custom MarshalJSON below.
 type check struct {
-	name   string
-	status checkStatus
-	detail string
+	name         string
+	status       checkStatus
+	detail       string
+	leadingBlank bool
 }
 
 // MarshalJSON exposes the unexported fields under stable JSON
@@ -111,6 +117,9 @@ func runDoctor(args []string) int {
 	}
 
 	for _, c := range checks {
+		if c.leadingBlank {
+			fmt.Println()
+		}
 		fmt.Printf("  [%s] %s\n", c.status, c.name)
 		if c.detail != "" {
 			for _, line := range strings.Split(c.detail, "\n") {
@@ -159,6 +168,7 @@ func collectDoctorChecks() []check {
 		detail: "human-flagged tasks carry: label=human + label=src:agent\n" +
 			"agent inbox: label=src:agent AND NOT label=human AND status!=closed\n" +
 			"prefer `wyk handoff <id>` over hand-rolling labels; full text in `wyk conventions`",
+		leadingBlank: true,
 	})
 
 	// Update nudge from the cached release snapshot. Skipped when
@@ -166,9 +176,10 @@ func collectDoctorChecks() []check {
 	// has populated it).
 	if nudge := readUpdateNudge(versionString()); nudge != "" {
 		checks = append(checks, check{
-			name:   "wyk update available",
-			status: statusWarn,
-			detail: nudge + "\nRun `wyk update` to install (or `wyk update -dry-run` to see the install command first).",
+			name:         "wyk update available",
+			status:       statusWarn,
+			detail:       nudge + "\nRun `wyk update` to install (or `wyk update -dry-run` to see the install command first).",
+			leadingBlank: true,
 		})
 	}
 	return checks
