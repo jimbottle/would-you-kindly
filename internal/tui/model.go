@@ -217,6 +217,10 @@ type Model struct {
 	// P0..P1, etc.); the "0" key clears the cap.
 	priorityCap int
 
+	// sortBy is the active sort key for the visible rows. Cycled
+	// with s. sortNone preserves bd's native order (the default).
+	sortBy sortKey
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -326,6 +330,44 @@ type fetchedMsg struct {
 }
 
 type tickMsg struct{ gen int }
+
+// sortKey identifies the active client-side sort for the visible
+// rows. sortNone preserves bd's native order (the default).
+type sortKey int
+
+const (
+	sortNone sortKey = iota
+	sortPriority
+	sortUpdated
+	sortRepo
+	sortID
+)
+
+// next returns the next sort key in the cycle so `s` rotates
+// through {none, priority, updated, repo, id, none, ...}.
+func (k sortKey) next() sortKey {
+	if k == sortID {
+		return sortNone
+	}
+	return k + 1
+}
+
+// label returns the human-readable name for the chip strip and
+// the header arrow.
+func (k sortKey) label() string {
+	switch k {
+	case sortPriority:
+		return "priority"
+	case sortUpdated:
+		return "updated"
+	case sortRepo:
+		return "repo"
+	case sortID:
+		return "id"
+	default:
+		return ""
+	}
+}
 
 // flashClearMsg auto-clears m.status after a short delay so a
 // "closed wyk-42" banner doesn't linger forever when the user
@@ -578,6 +620,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setPriorityCap(3)
 	case keyHit(msg, m.keys.FilterPAll):
 		return m.setPriorityCap(-1)
+	case keyHit(msg, m.keys.SortCycle):
+		return m.setSortKey(m.sortBy.next())
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
 		// suspended after a terminal error. Bumping tickGen retires
@@ -1038,7 +1082,13 @@ func (m *Model) recomputeVisible() {
 	}
 
 	if m.query == "" {
-		m.visible = pool
+		// No fuzzy filter: clone so the sort below doesn't reorder
+		// m.all, which the rest of the model expects to be in
+		// bd's native order.
+		out := make([]beads.Issue, len(pool))
+		copy(out, pool)
+		applySort(out, m.sortBy)
+		m.visible = out
 		if m.cursor >= len(m.visible) {
 			m.cursor = max(0, len(m.visible)-1)
 		}
@@ -1070,10 +1120,38 @@ func (m *Model) recomputeVisible() {
 	for _, s := range list {
 		out = append(out, pool[s.idx])
 	}
+	// Sort overrides the fuzzy-score ordering when set — the user
+	// asked for a specific axis, honour it.
+	applySort(out, m.sortBy)
 	m.visible = out
 
 	if m.cursor >= len(m.visible) {
 		m.cursor = max(0, len(m.visible)-1)
+	}
+}
+
+// applySort orders the issue slice in place per the chosen sort
+// key. sortNone is a no-op so callers can pass through without
+// branching. Priority ASC (P0 first); updated DESC (newest first);
+// repo / id ASC (alphabetical).
+func applySort(issues []beads.Issue, k sortKey) {
+	switch k {
+	case sortPriority:
+		sort.SliceStable(issues, func(i, j int) bool {
+			return issues[i].Priority < issues[j].Priority
+		})
+	case sortUpdated:
+		sort.SliceStable(issues, func(i, j int) bool {
+			return issues[i].UpdatedAt.After(issues[j].UpdatedAt)
+		})
+	case sortRepo:
+		sort.SliceStable(issues, func(i, j int) bool {
+			return issues[i].Repo < issues[j].Repo
+		})
+	case sortID:
+		sort.SliceStable(issues, func(i, j int) bool {
+			return issues[i].ID < issues[j].ID
+		})
 	}
 }
 
@@ -1084,6 +1162,17 @@ func (m *Model) recomputeVisible() {
 // cursor offscreen.
 func (m Model) setPriorityCap(cap int) (tea.Model, tea.Cmd) {
 	m.priorityCap = cap
+	m.cursor = 0
+	m.recomputeVisible()
+	m.ensureCursorVisible()
+	return m, nil
+}
+
+// setSortKey rotates the active sort and re-runs the visible-row
+// pipeline. Cursor resets to 0 because the user's previous
+// position has no meaning against a re-ordered list.
+func (m Model) setSortKey(k sortKey) (tea.Model, tea.Cmd) {
+	m.sortBy = k
 	m.cursor = 0
 	m.recomputeVisible()
 	m.ensureCursorVisible()
@@ -1173,7 +1262,7 @@ func (m Model) viewList() string {
 	// when the user has set a cap. Renders blank for the default
 	// state (preset=all, no priority) so a fresh view stays
 	// chrome-free.
-	if chips := renderFilterChips(m.preset, m.priorityCap); chips != "" {
+	if chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy); chips != "" {
 		b.WriteString(chips)
 		b.WriteString("\n")
 	}
@@ -1794,7 +1883,7 @@ func (m Model) chromeExtra() int {
 		// setupHint can wrap; count newlines + 1.
 		n += 1 + strings.Count(m.setupHint, "\n")
 	}
-	if m.preset != filter.PresetAll || m.priorityCap >= 0 {
+	if m.preset != filter.PresetAll || m.priorityCap >= 0 || m.sortBy != sortNone {
 		n++ // filter chip strip
 	}
 	if m.lastErr != nil && len(m.all) > 0 {
@@ -1869,10 +1958,9 @@ func (m *Model) ensureCursorVisible() {
 
 // renderFilterChips builds the filter-strip line shown above the
 // table. Returns the empty string when nothing is filtered (preset
-// is the default `all` AND no priority cap) so a fresh view stays
-// chrome-free. The non-default preset chip + priority chip both
-// use chipStyle for visual coherence.
-func renderFilterChips(p filter.Preset, priorityCap int) string {
+// is the default `all`, no priority cap, no sort) so a fresh view
+// stays chrome-free. Each active filter renders as an amber pill.
+func renderFilterChips(p filter.Preset, priorityCap int, sortBy sortKey) string {
 	var parts []string
 	if p != filter.PresetAll {
 		parts = append(parts, chipActiveStyle.Render(" "+string(p)+" "))
@@ -1883,6 +1971,9 @@ func renderFilterChips(p filter.Preset, priorityCap int) string {
 			label = " P0 only "
 		}
 		parts = append(parts, chipActiveStyle.Render(label))
+	}
+	if sortBy != sortNone {
+		parts = append(parts, chipActiveStyle.Render(" ↕ "+sortBy.label()+" "))
 	}
 	if len(parts) == 0 {
 		return ""

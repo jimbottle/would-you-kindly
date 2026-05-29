@@ -48,6 +48,12 @@ type keyMap struct {
 	FilterP2   key.Binding // 3 — P0..P2
 	FilterP3   key.Binding // 4 — P0..P3
 	FilterPAll key.Binding // 0 — clear the priority cap
+
+	// Sort cycling. Cycles through {none, priority, updated, repo,
+	// id} with an ↑/↓ arrow in the relevant column header. Lets
+	// the user pivot the table for different triage moves without
+	// leaving the TUI.
+	SortCycle key.Binding // s — advance sort key
 }
 
 func defaultKeyMap() keyMap {
@@ -79,6 +85,8 @@ func defaultKeyMap() keyMap {
 		FilterP2:   key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "≤P2")),
 		FilterP3:   key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "≤P3")),
 		FilterPAll: key.NewBinding(key.WithKeys("0"), key.WithHelp("0", "all P")),
+
+		SortCycle: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 	}
 }
 
@@ -115,7 +123,7 @@ func (k keyMap) shortHelpReadOnly() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
-		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll},
+		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle},
 		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd},
 		{k.Refresh, k.Help, k.Quit},
 	}

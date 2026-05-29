@@ -1594,22 +1594,73 @@ func TestFilterChip_RendersWhenActiveOnlyOnNonDefaultPresetOrCap(t *testing.T) {
 	m := applyFetched(New(src), src)
 
 	// Default state — no chip line.
-	if got := renderFilterChips(m.preset, m.priorityCap); got != "" {
+	if got := renderFilterChips(m.preset, m.priorityCap, m.sortBy); got != "" {
 		t.Errorf("default preset + no cap should produce no chip; got %q", got)
 	}
 
 	// After a priority cap — chip appears.
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = model.(Model)
-	if got := renderFilterChips(m.preset, m.priorityCap); !strings.Contains(got, "P1") {
+	if got := renderFilterChips(m.preset, m.priorityCap, m.sortBy); !strings.Contains(got, "P1") {
 		t.Errorf("expected ≤P1 chip after pressing '2'; got %q", got)
 	}
 
 	// After preset switch + cap — both chips appear.
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m = model.(Model)
-	chips := renderFilterChips(m.preset, m.priorityCap)
+	chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy)
 	if !strings.Contains(chips, "human") || !strings.Contains(chips, "P1") {
 		t.Errorf("expected both human + P1 chips; got %q", chips)
 	}
+}
+
+func TestSortCycle_RotatesThroughKeys(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "a", Priority: 2},
+		{ID: "a-2", Title: "b", Priority: 0},
+		{ID: "a-3", Title: "c", Priority: 1},
+	}}
+	m := applyFetched(New(src), src)
+
+	// Default: no sort, bd's native order preserved.
+	if m.visible[0].ID != "a-1" {
+		t.Errorf("default sort should preserve order; got %q first", m.visible[0].ID)
+	}
+
+	// Press s → priority asc.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = model.(Model)
+	if m.sortBy != sortPriority {
+		t.Errorf("first s should set sortPriority; got %v", m.sortBy)
+	}
+	if m.visible[0].Priority != 0 {
+		t.Errorf("priority sort should put P0 first; got priority=%d", m.visible[0].Priority)
+	}
+
+	// Press s four more times → updated → repo → id → none.
+	for i := 0; i < 4; i++ {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+		m = model.(Model)
+	}
+	if m.sortBy != sortNone {
+		t.Errorf("cycle should return to sortNone after 5 presses; got %v", m.sortBy)
+	}
+}
+
+func TestApplySort_SortByUpdatedNewestFirst(t *testing.T) {
+	older := []beads.Issue{
+		{ID: "a-1", UpdatedAt: mustParse("2026-01-01T00:00:00Z")},
+		{ID: "a-2", UpdatedAt: mustParse("2026-03-01T00:00:00Z")},
+		{ID: "a-3", UpdatedAt: mustParse("2026-02-01T00:00:00Z")},
+	}
+	applySort(older, sortUpdated)
+	if older[0].ID != "a-2" || older[1].ID != "a-3" || older[2].ID != "a-1" {
+		t.Errorf("updated sort should be newest-first; got order %s %s %s",
+			older[0].ID, older[1].ID, older[2].ID)
+	}
+}
+
+func mustParse(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
 }
