@@ -90,6 +90,8 @@ func main() {
 			os.Exit(runUpdate(os.Args[2:]))
 		case "dashboard":
 			os.Exit(runDashboard(os.Args[2:]))
+		case "export":
+			os.Exit(runExport(os.Args[2:]))
 		case "version", "--version", "-v":
 			fmt.Println(versionString())
 			os.Exit(0)
@@ -515,6 +517,7 @@ Subcommands:
   doctor       diagnose installation / registry / per-repo configuration
   stats        aggregate handoff metrics across registered repos
   dashboard    per-repo open/human/closed-this-week summary (−json for structured)
+  export       JSON dump of every registered repo's full issue list + ready IDs
   registry     list / remove / prune registered workspaces
   conventions  print the agent-facing label convention (–json for structured)
   update       check for and install a newer wyk release
