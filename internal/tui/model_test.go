@@ -3040,6 +3040,62 @@ func TestYankAll_EmptyListSetsStatusInstead(t *testing.T) {
 	}
 }
 
+func TestYankMarkdown_OpenRowEmitsUncheckedBox(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "rotate", Status: "open"},
+	}}
+	m := applyFetched(New(src), src)
+
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	_ = model
+	want := "- [ ] a-1 — rotate"
+	if copied != want {
+		t.Errorf("M open: got %q, want %q", copied, want)
+	}
+}
+
+func TestYankMarkdown_ClosedRowEmitsCheckedBox(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "done thing", Status: "closed"},
+	}}
+	m := applyFetched(New(src), src)
+
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	_ = model
+	want := "- [x] a-1 — done thing"
+	if copied != want {
+		t.Errorf("M closed: got %q, want %q", copied, want)
+	}
+}
+
+func TestYankMarkdown_EmptyTitleFallsBackToBareID(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "   ", Status: "open"},
+	}}
+	m := applyFetched(New(src), src)
+
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	_ = model
+	if copied != "- [ ] a-1" {
+		t.Errorf("whitespace-only title should drop the dash-title; got %q", copied)
+	}
+}
+
 func TestYank_CopiesCursorIssueID(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

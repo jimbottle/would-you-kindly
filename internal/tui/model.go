@@ -993,6 +993,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleYankRich()
 	case keyHit(msg, m.keys.YankAll):
 		return m.handleYankAll()
+	case keyHit(msg, m.keys.YankMarkdown):
+		return m.handleYankMarkdown()
 	case keyHit(msg, m.keys.Undo):
 		return m.handleUndo()
 	case keyHit(msg, m.keys.Defer):
@@ -2051,6 +2053,32 @@ func (m Model) handleYankAll() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setStatus(fmt.Sprintf("copied %d IDs", len(ids)))
+	return m, flashClearCmd(m.statusGen)
+}
+
+// handleYankMarkdown copies the cursor row as a markdown task
+// line: "- [ ] <ID> — <title>" for open rows, "- [x] ..." for
+// closed. Whitespace-only titles fall back to bare-ID like
+// handleYankRich. Same OSC 52 path as the other yank handlers.
+func (m Model) handleYankMarkdown() (tea.Model, tea.Cmd) {
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus("nothing to yank")
+		return m, flashClearCmd(m.statusGen)
+	}
+	row := m.visible[m.cursor]
+	box := "[ ]"
+	if row.Status == "closed" {
+		box = "[x]"
+	}
+	payload := "- " + box + " " + row.ID
+	if title := strings.TrimSpace(row.Title); title != "" {
+		payload += " — " + title
+	}
+	if err := clipboardCopy(payload); err != nil {
+		m.setStatus("yank failed: " + err.Error())
+		return m, nil
+	}
+	m.setStatus("copied " + payload)
 	return m, flashClearCmd(m.statusGen)
 }
 
