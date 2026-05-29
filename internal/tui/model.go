@@ -16,7 +16,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sahilm/fuzzy"
@@ -188,6 +190,24 @@ type Model struct {
 	// or the data set changes shape.
 	scroll int
 
+	// detailVP scrolls the detail view's body (description +
+	// notes) so long runbooks stay readable without dropping out
+	// to a pager. The header lines (title, meta, badge) stay
+	// fixed above the viewport so the row's identity never
+	// scrolls off. Initialised in New, sized on WindowSizeMsg,
+	// content set on entry to modeDetail.
+	detailVP viewport.Model
+
+	// spinner animates the first-paint loading state. Replaces
+	// the static "loading…" word so the user sees the TUI is
+	// actually doing something during the initial bd fetch.
+	spinner spinner.Model
+
+	// statusGen rises on every m.status assignment so a stale
+	// auto-clear tick (from a previous status that has since been
+	// overwritten) can't wipe the current one.
+	statusGen int
+
 	// input is the textinput shared by modeFilter and modeNote. The
 	// modes are mutually exclusive — only one prompt is on screen at
 	// a time — so a single field is enough; Prompt/Placeholder are
@@ -204,13 +224,19 @@ func New(src Source) Model {
 	ti.Placeholder = "fuzzy filter…"
 	ti.CharLimit = 200
 
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = setupHintStyle
+
 	return Model{
-		src:     src,
-		keys:    defaultKeyMap(),
-		mode:    modeList,
-		preset:  filter.PresetAll,
-		input:   ti,
-		loading: true, // first paint shows "loading…" until Init's fetch returns
+		src:      src,
+		keys:     defaultKeyMap(),
+		mode:     modeList,
+		preset:   filter.PresetAll,
+		input:    ti,
+		loading:  true, // first paint shows "loading…" until Init's fetch returns
+		detailVP: viewport.New(80, 20),
+		spinner:  sp,
 	}
 }
 
@@ -232,11 +258,12 @@ func (m Model) WithUpdateNudge(nudge string) Model {
 	return m
 }
 
-// Init triggers the first fetch and starts the refresh tick.
+// Init triggers the first fetch and starts the refresh tick. Also
+// kicks the spinner so the loading indicator animates from frame 0.
 func (m Model) Init() tea.Cmd {
 	// gen 0 is implicit on the zero-valued Model; the matching tick
 	// message carries gen 0 too, so the chain starts coherently.
-	return tea.Batch(m.fetchCmd(), tickCmd(m.tickGen))
+	return tea.Batch(m.fetchCmd(), tickCmd(m.tickGen), m.spinner.Tick)
 }
 
 // fetchCmd asks the Source for issues matching the current preset.
@@ -275,6 +302,23 @@ type fetchedMsg struct {
 
 type tickMsg struct{ gen int }
 
+// flashClearMsg auto-clears m.status after a short delay so a
+// "closed wyk-42" banner doesn't linger forever when the user
+// goes idle. Tagged with statusGen so a stale clear (status was
+// overwritten before the timer fired) can't wipe the current one.
+type flashClearMsg struct{ gen int }
+
+// flashClearDelay is how long a status banner sticks before
+// auto-clearing. Short enough not to feel stale on the next
+// glance; long enough to read.
+const flashClearDelay = 4 * time.Second
+
+func flashClearCmd(gen int) tea.Cmd {
+	return tea.Tick(flashClearDelay, func(_ time.Time) tea.Msg {
+		return flashClearMsg{gen: gen}
+	})
+}
+
 // detailMsg carries the enriched Issue back from a Detail dispatch.
 // See Update's modeDetail entry branch.
 type detailMsg struct {
@@ -297,6 +341,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Resize can shrink the body below the cursor — re-clamp
 		// the scroll so the cursor stays in the viewport.
 		m.ensureCursorVisible()
+		// Resize the detail viewport too. detailChromeHeight
+		// reserves space for the fixed header (title + badge +
+		// meta + labels + section title) and the footer help
+		// line; the rest goes to the scrollable body.
+		bodyH := msg.Height - detailChromeHeight
+		if bodyH < 1 {
+			bodyH = 1
+		}
+		m.detailVP.Width = msg.Width
+		m.detailVP.Height = bodyH
 		return m, nil
 
 	case fetchedMsg:
@@ -357,12 +411,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case writeMsg:
 		return m.handleWriteResult(msg)
 
+	case spinner.TickMsg:
+		// Animate the loading indicator. Only re-tick while we're
+		// actually showing it (the first paint, before data lands)
+		// to avoid burning CPU on every other view.
+		if m.loading {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
+	case flashClearMsg:
+		// Stale clears (status was overwritten before the timer
+		// fired) carry an older gen and are dropped — only the
+		// active gen actually clears.
+		if msg.gen == m.statusGen {
+			m.status = ""
+		}
+		return m, nil
+
 	case detailMsg:
 		// Late-arriving Detail result. Only adopt it if the user
 		// is still looking at the same issue — otherwise the
 		// notes would attach to the wrong row.
 		if m.mode == modeDetail && msg.err == nil && msg.issue.ID == m.detailIssue.ID {
 			m.detailIssue = msg.issue
+			// Re-seed the viewport now that notes have arrived.
+			// Preserve scroll offset: a user who'd already paged
+			// to line 40 shouldn't be yanked back to the top.
+			prev := m.detailVP.YOffset
+			m.detailVP.SetContent(detailBody(m.detailIssue))
+			m.detailVP.SetYOffset(prev)
 		}
 		return m, nil
 
@@ -432,6 +512,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// with title/description from the list, then dispatch
 			// a Detail call to enrich with notes asynchronously.
 			m.detailIssue = m.visible[m.cursor]
+			// Seed the viewport with the body we have now (notes
+			// may be empty until the Detail Cmd resolves); reset
+			// scroll to the top so a previous detail view's scroll
+			// position doesn't bleed in.
+			m.detailVP.SetContent(detailBody(m.detailIssue))
+			m.detailVP.GotoTop()
 			if d, ok := m.src.(Detailer); ok {
 				target := m.detailIssue
 				return m, func() tea.Msg {
@@ -762,41 +848,42 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 		// Create failure has no ID yet — render without the empty
 		// "id" slot to keep the message clean (no double-space).
 		if msg.id == "" {
-			m.status = fmt.Sprintf("%s failed: %s", msg.action, msg.err.Error())
+			m.setStatus(fmt.Sprintf("%s failed: %s", msg.action, msg.err.Error()))
 		} else {
-			m.status = fmt.Sprintf("%s %s failed: %s", msg.action, msg.id, msg.err.Error())
+			m.setStatus(fmt.Sprintf("%s %s failed: %s", msg.action, msg.id, msg.err.Error()))
 		}
-		// Setting m.status grows chromeExtra() by one, shrinking
-		// bodyHeight by one. Re-clamp scroll so a cursor at the
-		// bottom of a long list doesn't fall just outside the now-
-		// smaller viewport — without this, the failure path (no
-		// refetch) wouldn't self-correct until the next cursor
-		// move or auto-refresh tick.
-		m.ensureCursorVisible()
-		return m, nil
+		return m, flashClearCmd(m.statusGen)
 	}
 	switch msg.action {
 	case "close":
-		m.status = "closed " + msg.id
+		m.setStatus("closed " + msg.id)
 	case "flag":
-		m.status = "flagged " + msg.id + " for human"
+		m.setStatus("flagged " + msg.id + " for human")
 	case "unflag":
-		m.status = "unflagged " + msg.id
+		m.setStatus("unflagged " + msg.id)
 	case "note":
-		m.status = "noted " + msg.id
+		m.setStatus("noted " + msg.id)
 	case "create":
-		m.status = "created " + msg.id
+		m.setStatus("created " + msg.id)
 	default:
-		m.status = msg.action + " " + msg.id
+		m.setStatus(msg.action + " " + msg.id)
 	}
-	// Same re-clamp as the error path: the status banner just
-	// appeared and bubbletea will repaint with the new chrome
-	// before the fetchCmd dispatched below resolves.
-	m.ensureCursorVisible()
 	// Refetch so the list reflects the write. Loading flag isn't set
 	// here because the existing data is still valid until the new
 	// fetch arrives — flashing "loading…" would just be noise.
-	return m, m.fetchCmd()
+	return m, tea.Batch(m.fetchCmd(), flashClearCmd(m.statusGen))
+}
+
+// setStatus is the single seam for setting the transient status
+// banner. Bumps statusGen so any in-flight flashClearCmd from a
+// previous status can't wipe the new one, and re-clamps the
+// viewport since the new line shrinks bodyHeight by one. Pointer
+// receiver because callers use it on a value Model — Go promotes
+// it via &m at the call site.
+func (m *Model) setStatus(s string) {
+	m.status = s
+	m.statusGen++
+	m.ensureCursorVisible()
 }
 
 // switchPreset clears the visible rows before dispatching the new
@@ -820,12 +907,18 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case keyHit(msg, m.keys.Back), keyHit(msg, m.keys.Open):
 		m.mode = modeList
+		return m, nil
 	case keyHit(msg, m.keys.Quit):
 		return m, tea.Quit
 	case keyHit(msg, m.keys.Help):
 		return m.openHelp()
 	}
-	return m, nil
+	// Forward any other key (j/k/PgUp/PgDn/g/G inside the
+	// detail view, mouse wheel events, etc.) to the viewport so
+	// the body scrolls.
+	var cmd tea.Cmd
+	m.detailVP, cmd = m.detailVP.Update(msg)
+	return m, cmd
 }
 
 // openHelp captures the current mode and switches to modeHelp; the
@@ -1016,7 +1109,11 @@ func (m Model) viewList() string {
 		b.WriteString(m.renderHeader())
 		b.WriteByte('\n')
 		if len(m.visible) == 0 {
-			b.WriteString(emptyStyle.Render(fmt.Sprintf("no matches for %q", m.query)))
+			// Preset-aware empty copy. The default "no rows for
+			// this filter" line is honest but uninspiring; the
+			// human preset specifically gets a celebratory line
+			// since "nothing for me to do" is a great state.
+			b.WriteString(emptyStyle.Render(emptyMatchCopy(m.preset, m.query)))
 		} else {
 			// Sticky-header viewport: pick a window around the
 			// cursor instead of dumping every row and letting the
@@ -1055,9 +1152,15 @@ func (m Model) viewList() string {
 		b.WriteString("\n\n")
 		b.WriteString(emptyStyle.Render("press r to retry, q to quit"))
 	case m.loading:
-		b.WriteString(emptyStyle.Render("loading…"))
+		b.WriteString(m.spinner.View())
+		b.WriteString(emptyStyle.Render(" loading…"))
+	case m.preset != filter.PresetAll:
+		// Non-default preset with zero rows AND zero matches —
+		// celebrate / explain per preset rather than rendering
+		// the first-run copy that assumes bd is fresh.
+		b.WriteString(emptyStyle.Render(emptyMatchCopy(m.preset, m.query)))
 	default:
-		b.WriteString(emptyStyle.Render("no issues — bd returned an empty list"))
+		b.WriteString(emptyStyle.Render(firstRunEmptyCopy()))
 	}
 
 	// modal prompts live just above the status bar
@@ -1426,6 +1529,37 @@ func relTime(t time.Time) string {
 	}
 }
 
+// detailChromeHeight is the number of lines viewDetail emits
+// outside the scrolling body — used by WindowSizeMsg to size the
+// viewport correctly. Counts: badge line, blank, title, meta,
+// blank, labels (assume present), blank, footer help, plus a one-
+// line breathing buffer. Slightly over-counts when labels are
+// missing (the viewport just gets one extra line, never less).
+const detailChromeHeight = 9
+
+// detailBody composes the scrolling-eligible portion of the
+// detail view: the section headings, description, and notes. The
+// fixed-chrome portion (badge, title, meta, labels, footer) lives
+// in viewDetail directly so the row's identity never scrolls off
+// the top.
+func detailBody(i beads.Issue) string {
+	var b strings.Builder
+	b.WriteString(detailLabelStyle.Render("instructions"))
+	b.WriteString("\n")
+	if strings.TrimSpace(i.Description) == "" {
+		b.WriteString(emptyStyle.Render("(no description)"))
+	} else {
+		b.WriteString(i.Description)
+	}
+	if strings.TrimSpace(i.Notes) != "" {
+		b.WriteString("\n\n")
+		b.WriteString(detailLabelStyle.Render("notes"))
+		b.WriteString("\n")
+		b.WriteString(i.Notes)
+	}
+	return b.String()
+}
+
 func (m Model) viewDetail() string {
 	// Prefer the enriched (Detail-fetched) issue if available;
 	// otherwise fall back to the slim row from the list. m.detailIssue
@@ -1440,6 +1574,15 @@ func (m Model) viewDetail() string {
 	}
 
 	var b strings.Builder
+
+	// Responsibility badge on its own line above the title — for
+	// a `← HUMAN` runbook the badge IS the headline. Empty when
+	// the row has no responsibility signal.
+	if badge := responsibilityBadgeFor(i); badge != "" {
+		b.WriteString(badge)
+		b.WriteString("\n\n")
+	}
+
 	b.WriteString(detailHeaderStyle.Render(i.Title))
 	b.WriteString("\n")
 
@@ -1449,9 +1592,6 @@ func (m Model) viewDetail() string {
 		i.IssueType,
 		i.Priority,
 	)
-	if badge := responsibilityBadgeFor(i); badge != "" {
-		meta += "  " + badge
-	}
 	b.WriteString(meta)
 	b.WriteString("\n\n")
 
@@ -1461,25 +1601,23 @@ func (m Model) viewDetail() string {
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(detailLabelStyle.Render("instructions"))
+	// Scrollable body — viewport handles overflow. Re-seed
+	// content on every paint so a direct mutation of
+	// m.detailIssue (tests, future code paths) stays reflected.
+	// viewport.SetContent preserves YOffset, so the user's scroll
+	// position survives the refresh.
+	m.detailVP.SetContent(detailBody(i))
+	b.WriteString(m.detailVP.View())
+
+	// Footer: scroll percent (only when there's actually
+	// something to scroll) + key hint.
 	b.WriteString("\n")
-	if strings.TrimSpace(i.Description) == "" {
-		b.WriteString(emptyStyle.Render("(no description)"))
-	} else {
-		b.WriteString(i.Description)
+	footer := "esc / enter: back   j/k ↑↓ scroll   q: quit"
+	if m.detailVP.TotalLineCount() > m.detailVP.Height {
+		pct := int(m.detailVP.ScrollPercent() * 100)
+		footer = fmt.Sprintf("%d%%   %s", pct, footer)
 	}
-
-	// Notes — bd accumulates ad-hoc context here via `bd note` (or
-	// the n key). Only shown when present; absent for fresh issues.
-	if strings.TrimSpace(i.Notes) != "" {
-		b.WriteString("\n\n")
-		b.WriteString(detailLabelStyle.Render("notes"))
-		b.WriteString("\n")
-		b.WriteString(i.Notes)
-	}
-
-	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render("esc / enter: back   q: quit"))
+	b.WriteString(helpStyle.Render(footer))
 	return b.String()
 }
 
@@ -1636,6 +1774,35 @@ func (m *Model) ensureCursorVisible() {
 	if m.scroll < 0 {
 		m.scroll = 0
 	}
+}
+
+// emptyMatchCopy returns the preset-aware "no rows match this
+// filter" copy. The human preset gets a small celebration since
+// "nothing flagged for you" is the goal state; other presets
+// describe the absence factually.
+func emptyMatchCopy(p filter.Preset, query string) string {
+	if query != "" {
+		return fmt.Sprintf("no matches for %q", query)
+	}
+	switch p {
+	case filter.PresetHuman:
+		return "✓ no human-flagged issues — nothing waiting on you right now"
+	case filter.PresetReady:
+		return "no ready work — everything left is blocked or in progress"
+	case filter.PresetMine:
+		return "nothing assigned to you in this workspace"
+	case filter.PresetBlocked:
+		return "no blocked issues — work is flowing"
+	default:
+		return "no issues match this view"
+	}
+}
+
+// firstRunEmptyCopy is shown when bd has no issues at all (fresh
+// workspace, no rows ever fetched). Points the user at the most
+// likely next action.
+func firstRunEmptyCopy() string {
+	return "no issues yet — try `wyk handoff -create \"<title>\"` to file your first one, or `bd create \"<title>\"` directly"
 }
 
 func friendlyError(err error) string {

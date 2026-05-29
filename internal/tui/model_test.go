@@ -638,7 +638,19 @@ func TestWriteResult_SuccessTriggersRefetchAndSetsBanner(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("successful write should refetch")
 	}
-	_ = cmd() // exercise the fetch
+	// handleWriteResult now returns tea.Batch(fetchCmd, flashClearCmd).
+	// tea.Batch's resulting Cmd produces a tea.BatchMsg containing
+	// the inner cmds — drain them through Update so the fetch
+	// goroutine actually fires against the stub.
+	if msg := cmd(); msg != nil {
+		if bm, ok := msg.(tea.BatchMsg); ok {
+			for _, inner := range bm {
+				if inner != nil {
+					_ = inner()
+				}
+			}
+		}
+	}
 	if s.calls <= pre {
 		t.Errorf("expected Source.Fetch to be called; calls before=%d after=%d", pre, s.calls)
 	}
@@ -647,14 +659,28 @@ func TestWriteResult_SuccessTriggersRefetchAndSetsBanner(t *testing.T) {
 func TestWriteResult_FailureSurfacesInBanner(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
+	preCalls := s.calls
 
 	model, cmd := m.Update(writeMsg{
 		action: "close", id: "wyk-42",
 		err: errors.New("bd: issue is pinned"),
 	})
 	m = model.(Model)
+	// Failed write returns ONLY the flashClearCmd (no refetch).
+	// Drain it to confirm the fetch path was NOT triggered.
 	if cmd != nil {
-		t.Error("failed write should NOT refetch")
+		if msg := cmd(); msg != nil {
+			if bm, ok := msg.(tea.BatchMsg); ok {
+				for _, inner := range bm {
+					if inner != nil {
+						_ = inner()
+					}
+				}
+			}
+		}
+	}
+	if s.calls != preCalls {
+		t.Errorf("failed write should NOT refetch; calls before=%d after=%d", preCalls, s.calls)
 	}
 	if !strings.Contains(m.status, "close wyk-42 failed") {
 		t.Errorf("status should describe the failure; got %q", m.status)
@@ -1435,5 +1461,88 @@ func TestResponsibilityBadge_HumanBlockOnlyWhenFlagSet(t *testing.T) {
 	}
 	if strings.Contains(got, "HUMAN-BLOCK") {
 		t.Errorf("HUMAN-BLOCK must require the explicit flag; got %q", got)
+	}
+}
+
+func TestFlashAutoClear_ScheduledByWriteSuccess(t *testing.T) {
+	// handleWriteResult should set m.status AND return a
+	// flashClearCmd. Drain the batch; the inner clear cmd should
+	// produce a flashClearMsg tagged with the active statusGen.
+	// (The actual clear happens when Update receives that msg —
+	// we exercise that separately below.)
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	preGen := m.statusGen
+
+	model, cmd := m.Update(writeMsg{action: "close", id: "wyk-42"})
+	m = model.(Model)
+	if m.statusGen <= preGen {
+		t.Errorf("setStatus should bump statusGen; was %d, now %d", preGen, m.statusGen)
+	}
+
+	// Drain the batched cmds; one of the inner clears should be a
+	// flashClearMsg with our gen.
+	saw := false
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			if bm, ok := msg.(tea.BatchMsg); ok {
+				for _, inner := range bm {
+					if inner == nil {
+						continue
+					}
+					if fc, ok := inner().(flashClearMsg); ok && fc.gen == m.statusGen {
+						saw = true
+					}
+				}
+			}
+		}
+	}
+	if !saw {
+		t.Errorf("expected a flashClearMsg tagged with statusGen=%d among batched cmds", m.statusGen)
+	}
+}
+
+func TestFlashAutoClear_StaleClearDoesNotWipeNewStatus(t *testing.T) {
+	// A clear from gen=1 must not wipe a status whose gen is now
+	// 2 (the user did another action before the timer fired).
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m.setStatus("first")
+	firstGen := m.statusGen
+	m.setStatus("second")
+	if m.statusGen == firstGen {
+		t.Fatal("setStatus should bump statusGen on every call")
+	}
+
+	// Stale clear from gen=firstGen arrives — must be ignored.
+	model, _ := m.Update(flashClearMsg{gen: firstGen})
+	m = model.(Model)
+	if m.status != "second" {
+		t.Errorf("stale clear wiped the active status; want %q, got %q", "second", m.status)
+	}
+
+	// Current clear (gen=current) DOES wipe.
+	model, _ = m.Update(flashClearMsg{gen: m.statusGen})
+	m = model.(Model)
+	if m.status != "" {
+		t.Errorf("current-gen clear should wipe; got %q", m.status)
+	}
+}
+
+func TestEmptyState_HumanPresetCelebrates(t *testing.T) {
+	// `h` preset with no human-flagged issues should celebrate,
+	// not just say "no matches" (the dull default).
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "no human label here", Labels: []string{"src:agent"}},
+	}}
+	m := applyFetched(New(src), src)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = model.(Model)
+	// Pretend the human-preset fetch came back empty.
+	model, _ = m.Update(fetchedMsg{preset: m.preset, issues: []beads.Issue{}})
+	m = model.(Model)
+	out := m.View()
+	if !strings.Contains(out, "no human-flagged issues") {
+		t.Errorf("human-preset empty state should be celebratory; got:\n%s", out)
 	}
 }
