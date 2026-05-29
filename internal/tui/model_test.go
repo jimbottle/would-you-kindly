@@ -2477,6 +2477,63 @@ func TestBumpPriority_ClampsAtEdges(t *testing.T) {
 	})
 }
 
+func TestShellFields(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{`query "p0"`, []string{"query", "p0"}},
+		{`create -t "fix the thing"`, []string{"create", "-t", "fix the thing"}},
+		{`'single quoted'`, []string{"single quoted"}},
+		{`mixed "double" 'single'`, []string{"mixed", "double", "single"}},
+		{`  multiple   spaces  `, []string{"multiple", "spaces"}},
+		{``, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got := shellFields(tc.in)
+			if len(got) != len(tc.want) {
+				t.Errorf("shellFields(%q) = %v, want %v", tc.in, got, tc.want)
+				return
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("shellFields(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBumpPriority_BulkBannerReportsReprioritized(t *testing.T) {
+	// Regression for the MED finding on job 1316: the bulk path
+	// used to pass action="flag" so the banner read "flagged N
+	// rows" for a priority change. Pin "reprioritized" so the
+	// label can't silently regress.
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 2},
+		{ID: "a-2", Priority: 3},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+	if cmd == nil {
+		t.Fatal("+ with marks should dispatch a bulk write")
+	}
+	resultMsg := cmd()
+	model, _ := m.Update(resultMsg)
+	m = model.(Model)
+	if !strings.Contains(m.status, "reprioritized") {
+		t.Errorf("bulk + banner should say 'reprioritized'; got %q", m.status)
+	}
+	if strings.Contains(m.status, "flagged") {
+		t.Errorf("bulk + banner must not say 'flagged'; got %q", m.status)
+	}
+}
+
 func TestBumpPriority_BulkAppliesToAllMarked(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
 		{ID: "a-1", Priority: 2},
@@ -2620,6 +2677,70 @@ func TestCommandPalette_BDEmptyArgsIsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(m.status, "args required") {
 		t.Errorf("status should explain the usage; got %q", m.status)
+	}
+}
+
+func TestCommandPalette_BDErrorRendersBracketedErrorLine(t *testing.T) {
+	// The error branch of rawBDMsg appends "[error] <msg>" to
+	// the overlay body — uncovered before. Pin both halves
+	// (captured stdout AND the error) so a future refactor that
+	// drops the error line gets caught.
+	src := &stubRawBD{
+		stubSource: stubSource{issues: sampleIssues()},
+		out:        []byte("partial output\n"),
+		rawErr:     errors.New("bd exited 1"),
+	}
+	m := New(src)
+	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	m = mod.(Model)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "bd ready" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("enter should dispatch the bd invocation")
+	}
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+
+	if !strings.Contains(m.outputText, "partial output") {
+		t.Errorf("overlay should include captured stdout; got %q", m.outputText)
+	}
+	if !strings.Contains(m.outputText, "[error]") {
+		t.Errorf("overlay should include the [error] tag on bd failure; got %q", m.outputText)
+	}
+	if !strings.Contains(m.outputText, "bd exited 1") {
+		t.Errorf("overlay should include the error message; got %q", m.outputText)
+	}
+}
+
+func TestCommandPalette_BDDoesNotYankFromDetailMode(t *testing.T) {
+	// Regression: a slow `:bd` completing while the user has
+	// navigated into the detail view (or any non-list/command
+	// mode) should NOT silently switch them to the output
+	// overlay. Status banner names the recovery.
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubRawBD{stubSource: stubSource{issues: sampleIssues()}, out: []byte("done\n")}
+	m := New(src)
+	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	m = mod.(Model)
+	// Simulate: user pressed enter to open detail view.
+	m.mode = modeDetail
+
+	model, _ := m.Update(rawBDMsg{args: "ready", out: src.out})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Errorf("rawBDMsg arriving in modeDetail should not switch modes; got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "bd output ready") {
+		t.Errorf("status should announce the buffered output; got %q", m.status)
 	}
 }
 

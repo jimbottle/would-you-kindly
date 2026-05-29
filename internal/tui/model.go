@@ -688,8 +688,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			b.WriteByte('\n')
 		}
 		m.outputText = b.String()
-		m.mode = modeOutput
-		return m, nil
+		// Only open the overlay if the user is still on the list
+		// (or in the palette finishing the command). A slow `:bd`
+		// completing while the user has navigated into the
+		// detail view, help, or another modal would otherwise
+		// yank them back to the bd output unexpectedly. A status
+		// banner names the fix in that case so they can ':bd
+		// last' (or similar — currently they re-run).
+		if m.mode == modeList || m.mode == modeCommand {
+			m.mode = modeOutput
+			return m, nil
+		}
+		m.setStatus("bd output ready — esc your current view to see it (lost; re-run :bd)")
+		return m, flashClearCmd(m.statusGen)
 
 	case spinner.TickMsg:
 		// Animate the loading indicator. Only re-tick while we're
@@ -1378,9 +1389,10 @@ type bulkWriteMsg struct {
 // "closeed" and "defered"; this explicit map matches what
 // handleWriteResult uses for the single-target path.
 var bulkVerbs = map[string]string{
-	"close": "closed",
-	"flag":  "flagged",
-	"defer": "deferred",
+	"close":    "closed",
+	"flag":     "flagged",
+	"defer":    "deferred",
+	"priority": "reprioritized",
 }
 
 // handleWriteResult sets the status banner and triggers a refetch so
@@ -1893,7 +1905,11 @@ func (m Model) bumpPriority(delta int) (tea.Model, tea.Cmd) {
 	if len(m.marked) > 0 {
 		targets := m.markedIssues()
 		m.marked = nil
-		return m, runBulkWrite("flag", targets, func(ctx context.Context, i beads.Issue) error {
+		// "priority" is the bulkVerbs key; "reprioritized N rows"
+		// reads correctly in the banner. The prior copy-paste
+		// from the close/flag/defer handlers used "flag", which
+		// produced "flagged N rows" for a priority change.
+		return m, runBulkWrite("priority", targets, func(ctx context.Context, i beads.Issue) error {
 			return mu.SetPriority(ctx, i, clampPriority(i.Priority+delta))
 		})
 	}
@@ -2069,11 +2085,42 @@ func (m Model) runRawBD(rest string) (tea.Model, tea.Cmd) {
 	if len(m.visible) > 0 && m.cursor >= 0 && m.cursor < len(m.visible) {
 		repo = m.visible[m.cursor].Repo
 	}
-	args := strings.Fields(rest)
+	args := shellFields(rest)
 	return m, func() tea.Msg {
 		out, err := raw.RawBD(context.Background(), repo, args)
 		return rawBDMsg{args: rest, out: out, err: err}
 	}
+}
+
+// shellFields splits s into args, honoring "..." and '...' quoting
+// so `:bd query "p0"` reaches bd as ["query", "p0"] instead of
+// ["query", "\"p0\""]. Doesn't handle escapes (\"), backticks, or
+// $() — wyk is a TUI launcher for bd commands, not a shell, and
+// the simpler grammar is easier to reason about. Mixed quoting
+// inside a single token (e.g. foo"bar") is preserved as-is.
+func shellFields(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inDouble, inSingle := false, false
+	for _, r := range s {
+		switch {
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case (r == ' ' || r == '\t') && !inDouble && !inSingle:
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // rawBDInvoker is the optional capability the `:bd <args>`
