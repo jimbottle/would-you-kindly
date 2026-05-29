@@ -133,6 +133,15 @@ var (
 	fetchErrorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("214")).
 			Italic(true)
+
+	// fuzzyMatchStyle highlights individual runes inside a Title
+	// cell when a fuzzy-filter match landed there. Bright amber +
+	// bold so the matched runes catch the eye against the default
+	// foreground — at a glance the user can confirm "yes, this row
+	// is here because of `xyz` and the match is in /these/ runes".
+	fuzzyMatchStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Bold(true)
 )
 
 func statusStyleFor(status string) lipgloss.Style {

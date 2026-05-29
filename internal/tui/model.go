@@ -274,6 +274,14 @@ type Model struct {
 	// itself lives outside the model; main owns its lifecycle.
 	fsEvents <-chan struct{}
 
+	// titleMatches stores per-issue rune positions of fuzzy-filter
+	// matches inside the Title cell, keyed by Issue.ID. Populated
+	// by recomputeVisible when m.query != ""; consulted by
+	// renderRow to style the matched runes. Empty/nil disables
+	// highlighting (no filter active, or no match landed in the
+	// title field).
+	titleMatches map[string][]int
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -1411,6 +1419,7 @@ func (m *Model) recomputeVisible() {
 		copy(out, pool)
 		applySort(out, m.sortBy)
 		m.visible = out
+		m.titleMatches = nil // no filter → no highlight
 		if m.cursor >= len(m.visible) {
 			m.cursor = max(0, len(m.visible)-1)
 		}
@@ -1418,8 +1427,14 @@ func (m *Model) recomputeVisible() {
 	}
 
 	best := make(map[int]int, len(pool))
+	m.titleMatches = make(map[string][]int, len(pool))
 	for _, mt := range fuzzy.FindFrom(m.query, titleSource(pool)) {
 		best[mt.Index] = mt.Score
+		// Capture rune-index positions so renderRow can style
+		// each matched rune. fuzzy.MatchedIndexes are byte
+		// offsets into the source string; convert here once so
+		// renderRow stays a fast formatter.
+		m.titleMatches[pool[mt.Index].ID] = byteToRuneIdxs(pool[mt.Index].Title, mt.MatchedIndexes)
 	}
 	for _, mt := range fuzzy.FindFrom(m.query, descSource(pool)) {
 		if s, ok := best[mt.Index]; !ok || mt.Score > s {
@@ -2017,7 +2032,65 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	if avail := m.titleBudget(); avail > 0 {
 		title = trunc(title, avail)
 	}
+	// Apply fuzzy-match highlighting after truncation: matched
+	// rune indices that fall past the truncated length are
+	// silently dropped (truncated runes can't be highlighted),
+	// which is the behaviour the user expects — the visible
+	// portion lights up, off-screen runes don't generate
+	// invisible ANSI noise.
+	if idxs := m.titleMatches[i.ID]; len(idxs) > 0 {
+		title = highlightRunes(title, idxs, fuzzyMatchStyle)
+	}
 	b.WriteString(title)
+	return b.String()
+}
+
+// byteToRuneIdxs converts the byte-offset slice fuzzy returns into
+// rune-index positions inside the source string. sahilm/fuzzy
+// works on bytes, but renderer logic for highlighting wants
+// rune-aligned positions so a multi-byte glyph isn't half-styled.
+// Assumes byteIdxs is sorted ascending (which fuzzy guarantees).
+func byteToRuneIdxs(s string, byteIdxs []int) []int {
+	if len(byteIdxs) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(byteIdxs))
+	runeIdx := 0
+	next := 0
+	for byteOff := range s {
+		if next < len(byteIdxs) && byteOff == byteIdxs[next] {
+			out = append(out, runeIdx)
+			next++
+			if next == len(byteIdxs) {
+				break
+			}
+		}
+		runeIdx++
+	}
+	return out
+}
+
+// highlightRunes returns s with the runes at the given rune
+// indices wrapped in style.Render. Indices past the end of s
+// (e.g. matches in a truncated title) are silently dropped.
+func highlightRunes(s string, idxs []int, style lipgloss.Style) string {
+	if len(idxs) == 0 {
+		return s
+	}
+	set := make(map[int]bool, len(idxs))
+	for _, i := range idxs {
+		set[i] = true
+	}
+	var b strings.Builder
+	pos := 0
+	for _, r := range s {
+		if set[pos] {
+			b.WriteString(style.Render(string(r)))
+		} else {
+			b.WriteRune(r)
+		}
+		pos++
+	}
 	return b.String()
 }
 

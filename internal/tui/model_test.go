@@ -1818,6 +1818,93 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 }
 
+func TestByteToRuneIdxs_HandlesMultiByteRunes(t *testing.T) {
+	// "café" — c(0), a(1), f(2), é(3,4 in bytes). A match on
+	// byte offsets {0, 3} (c and é) should map to rune indices
+	// {0, 3}.
+	got := byteToRuneIdxs("café", []int{0, 3})
+	want := []int{0, 3}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("byteToRuneIdxs = %v, want %v", got, want)
+	}
+}
+
+func TestByteToRuneIdxs_EmptyInput(t *testing.T) {
+	if got := byteToRuneIdxs("anything", nil); got != nil {
+		t.Errorf("nil byteIdxs should return nil; got %v", got)
+	}
+}
+
+func TestHighlightRunes_StylesMatchedRunesOnly(t *testing.T) {
+	// lipgloss strips escapes in non-TTY environments (go test),
+	// so we can't grep for SGR codes directly. Instead, render
+	// each expected fragment with the same style and assert the
+	// output contains those exact rendered bytes — same logic
+	// the function uses, so the test pins the per-rune
+	// segmentation regardless of color profile.
+	got := highlightRunes("hello", []int{0, 4}, fuzzyMatchStyle)
+	wantH := fuzzyMatchStyle.Render("h")
+	wantO := fuzzyMatchStyle.Render("o")
+	if !strings.Contains(got, wantH) {
+		t.Errorf("expected styled 'h' in output; got %q", got)
+	}
+	if !strings.Contains(got, wantO) {
+		t.Errorf("expected styled 'o' in output; got %q", got)
+	}
+	// The plain middle 'ell' should pass through verbatim.
+	if !strings.Contains(got, "ell") {
+		t.Errorf("unmatched runes should pass through verbatim; got %q", got)
+	}
+}
+
+func TestHighlightRunes_OutOfRangeIndicesDropped(t *testing.T) {
+	// Match indices past the end of s (e.g., truncated title) are
+	// silently skipped — no panic, no trailing ANSI noise.
+	got := highlightRunes("hi", []int{0, 5}, fuzzyMatchStyle)
+	if !strings.Contains(got, "i") {
+		t.Errorf("expected the unmatched tail to render; got %q", got)
+	}
+}
+
+func TestRecomputeVisible_PopulatesTitleMatchesOnFilter(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "rotate password"},
+		{ID: "a-2", Title: "deploy preview"},
+	}}
+	m := applyFetched(New(src), src)
+	if len(m.titleMatches) != 0 {
+		t.Fatalf("titleMatches should start empty; got %v", m.titleMatches)
+	}
+
+	// Type a query → titleMatches should fill for matched rows.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	for _, r := range "rot" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if len(m.titleMatches) == 0 {
+		t.Errorf("titleMatches should populate after a filter; got %v", m.titleMatches)
+	}
+	if idxs, ok := m.titleMatches["a-1"]; !ok || len(idxs) == 0 {
+		t.Errorf("rotated row should have non-empty match indices; got %v", idxs)
+	}
+
+	// Clearing the filter should drop titleMatches so a future
+	// non-filtered paint doesn't render stale highlights.
+	// Pressing `/` re-seeds the input with the prior query, so to
+	// land on an empty filter we set m.query directly + re-run
+	// recomputeVisible — mirrors what the model does on every
+	// query change.
+	m.query = ""
+	m.recomputeVisible()
+	if m.titleMatches != nil {
+		t.Errorf("titleMatches should be nil after clearing filter; got %v", m.titleMatches)
+	}
+}
+
 func TestFSEventMsg_DispatchesNonNilCmd(t *testing.T) {
 	// A watcher tick should batch a refetch + wait re-arm. We
 	// can't easily inspect a tea.Batch's contents from a unit
