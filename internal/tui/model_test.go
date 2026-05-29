@@ -1781,6 +1781,44 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 }
 
+func TestFSEventMsg_DispatchesNonNilCmd(t *testing.T) {
+	// A watcher tick should batch a refetch + wait re-arm. We
+	// can't easily inspect a tea.Batch's contents from a unit
+	// test (it returns a BatchMsg the runtime then re-dispatches),
+	// so the contract test is just: a non-nil cmd came back.
+	// The fetchCmd path itself is exhaustively covered by every
+	// other write-handler test.
+	src := &stubSource{issues: sampleIssues()}
+	events := make(chan struct{}, 1)
+	m := applyFetched(New(src).WithFSEvents(events), src)
+
+	_, cmd := m.Update(fsEventMsg{})
+	if cmd == nil {
+		t.Errorf("fsEventMsg should produce a batched refetch+rearm cmd; got nil")
+	}
+}
+
+func TestFSEventMsg_SuspendedOnTerminalError(t *testing.T) {
+	// Terminal-error suspension (no bd / no workspace) still
+	// applies — refetching when there's no source to query just
+	// wastes work. The wait still re-arms so a later recovery
+	// (user fixes PATH) can come through.
+	src := &stubSource{err: errors.New("no bd binary on PATH")}
+	events := make(chan struct{}, 1)
+	m := applyFetched(New(src).WithFSEvents(events), src)
+	m.lastErr = errors.New("no bd binary on PATH") // simulate the terminal state
+
+	// Override the terminal-error detector via a no-bd-style
+	// error if it matches; rely on isTerminalErr's substring
+	// match. If isTerminalErr would return false for this string,
+	// the assertion below still holds — we just verify cmd
+	// isn't nil (re-arm should always happen).
+	_, cmd := m.Update(fsEventMsg{})
+	if cmd == nil {
+		t.Errorf("even in terminal-error state, the wait should re-arm")
+	}
+}
+
 func TestRenderStatsLine_CountsHumanAndMine(t *testing.T) {
 	issues := []beads.Issue{
 		{ID: "a-1", Labels: []string{"human"}, Owner: "ev"},

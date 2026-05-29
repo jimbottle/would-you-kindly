@@ -31,6 +31,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
+	"github.com/jimbottle/would-you-kindly/internal/watch"
 	"github.com/jimbottle/would-you-kindly/internal/updater"
 	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
@@ -78,7 +79,7 @@ func main() {
 		*me = defaultMe()
 	}
 
-	src, hint, err := buildSource(*dir, *me)
+	src, repoPaths, hint, err := buildSource(*dir, *me)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
 		os.Exit(1)
@@ -89,6 +90,18 @@ func main() {
 	}
 
 	model := tui.NewWithHint(src, hint).WithMe(*me)
+
+	// Spin up the filesystem watcher so external bd writes (a git
+	// pull pulling a new issue, another wyk instance committing,
+	// the post-commit hook auto-closing) refresh the list
+	// instantly instead of waiting up to 10s for the polling tick.
+	// Best-effort: a watcher failure (rare; usually a network FS)
+	// silently degrades to the polling path. Lifecycle is tied to
+	// the TUI's run — we leak the watcher goroutine on a hard exit,
+	// which is fine because the process is already going away.
+	if w, err := watch.New(context.Background(), repoPaths); err == nil {
+		model = model.WithFSEvents(w.Events())
+	}
 	// Hydrate column-visibility state from ~/.config/wyk/ui.json
 	// so the user's last layout choice survives a restart. A
 	// missing or unreadable file falls back to "all columns on"
@@ -155,20 +168,20 @@ func backgroundUpdateCheck() {
 //   - registry is empty: single-repo against cwd, the v0.1.0
 //     fallback so a user who hasn't run `wyk init` anywhere still
 //     gets a working TUI from inside a bd repo.
-func buildSource(dir, me string) (tui.Source, string, error) {
+func buildSource(dir, me string) (tui.Source, []string, string, error) {
 	if dir != "" {
 		c := beads.NewClient()
 		c.Dir = dir
-		return &tui.BDSource{Client: c, Me: me, Name: filepath.Base(dir)}, "", nil
+		return &tui.BDSource{Client: c, Me: me, Name: filepath.Base(dir)}, []string{dir}, "", nil
 	}
 
 	regPath, err := registry.DefaultPath()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	reg, err := registry.Load(regPath)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	switch len(reg.Repos) {
 	case 0:
@@ -185,26 +198,30 @@ func buildSource(dir, me string) (tui.Source, string, error) {
 		// layout consistent matters more than a perfect name in
 		// the rare-failure case.
 		name := "(cwd)"
+		var paths []string
 		if cwd, err := os.Getwd(); err == nil {
 			name = filepath.Base(cwd)
+			paths = []string{cwd}
 		}
-		return &tui.BDSource{Client: c, Me: me, Name: name}, hint, nil
+		return &tui.BDSource{Client: c, Me: me, Name: name}, paths, hint, nil
 	case 1:
 		// Single registered repo: use it (not cwd).
 		c := beads.NewClient()
 		c.Dir = reg.Repos[0].Path
-		return &tui.BDSource{Client: c, Me: me, Name: reg.Repos[0].Name}, "", nil
+		return &tui.BDSource{Client: c, Me: me, Name: reg.Repos[0].Name}, []string{reg.Repos[0].Path}, "", nil
 	default:
 		clients := make([]*beads.Client, len(reg.Repos))
 		names := make([]string, len(reg.Repos))
+		paths := make([]string, len(reg.Repos))
 		for i, r := range reg.Repos {
 			c := beads.NewClient()
 			c.Dir = r.Path
 			clients[i] = c
 			names[i] = r.Name
+			paths[i] = r.Path
 		}
 		src, err := tui.NewMultiBDSource(clients, names, me)
-		return src, "", err
+		return src, paths, "", err
 	}
 }
 

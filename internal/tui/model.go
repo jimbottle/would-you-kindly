@@ -263,6 +263,14 @@ type Model struct {
 	// meaningful count.
 	me string
 
+	// fsEvents is the optional channel a watch.Watcher feeds for
+	// instant refresh on external bd writes (an external `bd`
+	// invocation, another wyk instance, a git pull). Nil keeps the
+	// model on the 10s polling fallback only — used by tests and
+	// by sources that don't expose a filesystem path. The Watcher
+	// itself lives outside the model; main owns its lifecycle.
+	fsEvents <-chan struct{}
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -352,12 +360,47 @@ func (m Model) WithMe(me string) Model {
 	return m
 }
 
+// WithFSEvents returns a copy of the model wired to a watcher's
+// event channel. Each receive on `events` triggers an immediate
+// refresh — the 10s polling timer stays in place as a fallback
+// for platforms where fsnotify isn't supported. Nil disables the
+// fast path (used by tests and probe runs).
+func (m Model) WithFSEvents(events <-chan struct{}) Model {
+	m.fsEvents = events
+	return m
+}
+
 // Init triggers the first fetch and starts the refresh tick. Also
 // kicks the spinner so the loading indicator animates from frame 0.
+// When fsEvents is wired, also primes the fs-watch loop so external
+// bd writes refresh the list instantly.
 func (m Model) Init() tea.Cmd {
 	// gen 0 is implicit on the zero-valued Model; the matching tick
 	// message carries gen 0 too, so the chain starts coherently.
-	return tea.Batch(m.fetchCmd(), tickCmd(m.tickGen), m.spinner.Tick)
+	cmds := []tea.Cmd{m.fetchCmd(), tickCmd(m.tickGen), m.spinner.Tick}
+	if m.fsEvents != nil {
+		cmds = append(cmds, waitFSEvent(m.fsEvents))
+	}
+	return tea.Batch(cmds...)
+}
+
+// fsEventMsg lands when the watcher reports a debounced bd-write.
+// The Update handler refetches and re-arms the wait. Carries no
+// payload — "something changed in .beads" is the only signal we
+// act on.
+type fsEventMsg struct{}
+
+// waitFSEvent is the requeue pattern: block on the channel, emit
+// fsEventMsg when it fires, let Update re-arm the wait. Closes
+// the loop cleanly when the channel closes (watcher shut down).
+func waitFSEvent(events <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		_, ok := <-events
+		if !ok {
+			return nil
+		}
+		return fsEventMsg{}
+	}
 }
 
 // fetchCmd asks the Source for issues matching the current preset.
@@ -547,6 +590,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Batch(m.fetchCmd(), tickCmd(m.tickGen))
+
+	case fsEventMsg:
+		// External bd write — refetch immediately AND re-arm the
+		// watcher wait so the next event still arrives. We don't
+		// bump tickGen; the 10s timer keeps running as fallback.
+		// Terminal-error suspension still applies: no point
+		// refetching when there's no source to query.
+		if isTerminalErr(m.lastErr) {
+			return m, waitFSEvent(m.fsEvents)
+		}
+		return m, tea.Batch(m.fetchCmd(), waitFSEvent(m.fsEvents))
 
 	case writeMsg:
 		return m.handleWriteResult(msg)
