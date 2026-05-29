@@ -27,6 +27,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/clipboard"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
@@ -287,6 +288,13 @@ type Model struct {
 	// itself lives outside the model; main owns its lifecycle.
 	fsEvents <-chan struct{}
 
+	// filterAliases is the loaded ~/.config/wyk/filters.json
+	// snapshot. When the user types `@name` in the / prompt the
+	// model substitutes the saved query before applying the
+	// fuzzy filter. Empty map means "no aliases" — the @-syntax
+	// stays available but always misses.
+	filterAliases filters.Aliases
+
 	// titleMatches stores per-issue rune positions of fuzzy-filter
 	// matches inside the Title cell, keyed by Issue.ID. Populated
 	// by recomputeVisible when m.query != ""; consulted by
@@ -399,6 +407,14 @@ func (m Model) WithMe(me string) Model {
 // fast path (used by tests and probe runs).
 func (m Model) WithFSEvents(events <-chan struct{}) Model {
 	m.fsEvents = events
+	return m
+}
+
+// WithFilterAliases returns a copy of the model with the loaded
+// filter aliases. main wires this from filters.Load at startup so
+// `@name` in the / prompt expands to the saved query.
+func (m Model) WithFilterAliases(a filters.Aliases) Model {
+	m.filterAliases = a
 	return m
 }
 
@@ -1523,11 +1539,30 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		return m, nil
 	case "enter":
-		m.query = m.input.Value()
+		raw := m.input.Value()
+		// Alias expansion: a value of `@name` swaps the query
+		// for the saved alias before applying. A miss keeps the
+		// raw `@name` as a literal fuzzy query (so a row with
+		// `@name` in its title still matches) and surfaces a
+		// status banner so the user knows the alias didn't
+		// resolve. Multi-word values starting with `@` (e.g.
+		// "@blocked something") are not expanded — keeps the
+		// rule narrow and predictable.
+		if q, ok := m.filterAliases.Lookup(strings.TrimSpace(raw)); ok {
+			m.query = q
+		} else {
+			m.query = raw
+			if strings.HasPrefix(strings.TrimSpace(raw), "@") {
+				m.setStatus("no filter alias for " + strings.TrimSpace(raw))
+			}
+		}
 		m.mode = modeList
 		m.input.Blur()
 		m.recomputeVisible()
 		m.ensureCursorVisible()
+		if m.status != "" {
+			return m, flashClearCmd(m.statusGen)
+		}
 		return m, nil
 	}
 	var cmd tea.Cmd

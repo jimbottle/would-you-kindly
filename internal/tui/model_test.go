@@ -14,6 +14,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
@@ -2400,6 +2401,56 @@ func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
 	// keeps it in the other.
 	if toggleableColumns[1].ID != colIDWyk {
 		t.Errorf("slot 2 should be wyk (multi-only); got %q", toggleableColumns[1].ID)
+	}
+}
+
+func TestFilterAlias_ExpandsAtNameToStoredQuery(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "rotate password"},
+		{ID: "a-2", Title: "deploy preview"},
+	}}
+	aliases := filters.Aliases{Aliases: map[string]string{
+		"rot": "rotate",
+	}}
+	m := applyFetched(New(src).WithFilterAliases(aliases), src)
+
+	// Open / prompt and type "@rot" then enter.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	for _, r := range "@rot" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.query != "rotate" {
+		t.Errorf("@rot should expand to 'rotate'; got %q", m.query)
+	}
+	if len(m.visible) != 1 || m.visible[0].ID != "a-1" {
+		t.Errorf("expanded query should match a-1 only; got %d rows", len(m.visible))
+	}
+}
+
+func TestFilterAlias_MissSurfacesStatusBanner(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src).WithFilterAliases(filters.Aliases{}), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	for _, r := range "@nope" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.query != "@nope" {
+		t.Errorf("miss should keep raw query; got %q", m.query)
+	}
+	if !strings.Contains(m.status, "no filter alias for @nope") {
+		t.Errorf("status should explain the miss; got %q", m.status)
 	}
 }
 

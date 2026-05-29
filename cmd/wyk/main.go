@@ -29,6 +29,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
@@ -124,6 +125,16 @@ func main() {
 			model = model.WithHiddenColumns(map[string]bool{}, uiPath)
 		}
 	}
+	// Load filter aliases (~/.config/wyk/filters.json) so @name
+	// expansion is available from the / prompt. Missing or
+	// unreadable file falls back to no-aliases silently — we don't
+	// want a corrupt filters.json to block launch.
+	if fpath, err := filters.DefaultPath(); err == nil {
+		if a, err := filters.Load(fpath); err == nil {
+			model = model.WithFilterAliases(a)
+		}
+	}
+
 	// Read the cached update nudge once at startup so the banner
 	// can render immediately if there's already a snapshot on
 	// disk. The background goroutine below refreshes it for the
