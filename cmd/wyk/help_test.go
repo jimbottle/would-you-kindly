@@ -69,6 +69,58 @@ func TestRunHelp_NoFlagPointsAtOverlay(t *testing.T) {
 	}
 }
 
+func TestRunHelp_CLIMarkdownEmitsEverySubcommand(t *testing.T) {
+	// Capture stdout the same way TestRunHelp_MarkdownEmitsReference
+	// does (drained-in-goroutine to avoid pipe-buffer truncation).
+	oldOut, oldErr := os.Stdout, os.Stderr
+	r, w, _ := os.Pipe()
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	os.Stdout = w
+	os.Stderr = devnull
+	defer func() {
+		os.Stdout = oldOut
+		os.Stderr = oldErr
+		_ = devnull.Close()
+	}()
+	doneCh := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		doneCh <- string(b)
+	}()
+
+	if code := runHelp([]string{"--cli-markdown"}); code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	_ = w.Close()
+	out := <-doneCh
+
+	if !contains(out, "# wyk CLI reference") {
+		t.Errorf("missing top-level heading; got:\n%s", out)
+	}
+	// Every subcommand in the canonical table should appear as an
+	// H2 — drift here means a subcommand was added to the dispatch
+	// but not the doc table (or vice versa).
+	for _, d := range cliSubcommandDocs {
+		want := "## `wyk " + d.Name + "`"
+		if !contains(out, want) {
+			t.Errorf("output missing section %q", want)
+		}
+	}
+}
+
+func TestRunHelp_MarkdownAndCLIMarkdownMutuallyExclusive(t *testing.T) {
+	oldErr := os.Stderr
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	os.Stderr = devnull
+	defer func() {
+		os.Stderr = oldErr
+		_ = devnull.Close()
+	}()
+	if code := runHelp([]string{"--markdown", "--cli-markdown"}); code != 64 {
+		t.Errorf("combined flags exit = %d, want 64", code)
+	}
+}
+
 func TestRunHelp_RejectsPositionalArg(t *testing.T) {
 	oldErr := os.Stderr
 	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
