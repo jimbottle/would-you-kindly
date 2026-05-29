@@ -3038,6 +3038,125 @@ func TestBumpPriority_BulkAppliesToAllMarked(t *testing.T) {
 	}
 }
 
+func TestCommandPalette_AssignWithValueDispatchesDirectly(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Owner: "alice"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "assign bob" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal(":assign <value> should dispatch directly")
+	}
+	_ = cmd()
+	if len(s.assignees) != 1 || s.assignees[0] != (labelOp{"a-1", "bob"}) {
+		t.Errorf(":assign should land 'bob' on a-1; got %+v", s.assignees)
+	}
+}
+
+func TestCommandPalette_PriorityAbsoluteSetsValue(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 3},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "priority 0" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal(":priority should dispatch")
+	}
+	_ = cmd()
+	if len(s.priorities) != 1 || s.priorities[0] != (priorityOp{"a-1", 0}) {
+		t.Errorf(":priority 0 should set P0 absolute; got %+v", s.priorities)
+	}
+}
+
+func TestCommandPalette_PriorityOutOfRangeIsUsageError(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	cases := []string{"priority 5", "priority -1", "priority foo", "priority"}
+	for _, sub := range cases {
+		t.Run(sub, func(t *testing.T) {
+			s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+				{ID: "a-1", Priority: 2},
+			}}}
+			m := applyMutatorFetched(New(s), s)
+
+			model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+			m = model.(Model)
+			for _, r := range sub {
+				model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+				m = model.(Model)
+			}
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = model.(Model)
+			if len(s.priorities) != 0 {
+				t.Errorf("%q should NOT dispatch; got %+v", sub, s.priorities)
+			}
+			if !strings.Contains(m.status, ":priority") {
+				t.Errorf("status should announce usage; got %q", m.status)
+			}
+		})
+	}
+}
+
+func TestCommandPalette_LabelWithValueTogglesOnRow(t *testing.T) {
+	// Already-labeled row → remove; missing-labeled row → add.
+	t.Run("removes when present", func(t *testing.T) {
+		s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+			{ID: "a-1", Labels: []string{"needs-review"}},
+		}}}
+		m := applyMutatorFetched(New(s), s)
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+		m = model.(Model)
+		for _, r := range "label needs-review" {
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = model.(Model)
+		}
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatal(":label should dispatch RemoveLabel")
+		}
+		_ = cmd()
+		if len(s.removed) != 1 || s.removed[0].label != "needs-review" {
+			t.Errorf(":label should remove existing; got %+v", s.removed)
+		}
+	})
+
+	t.Run("adds when absent", func(t *testing.T) {
+		s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+			{ID: "a-1"},
+		}}}
+		m := applyMutatorFetched(New(s), s)
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+		m = model.(Model)
+		for _, r := range "label blocked" {
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = model.(Model)
+		}
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatal(":label should dispatch AddLabel")
+		}
+		_ = cmd()
+		if len(s.added) != 1 || s.added[0].label != "blocked" {
+			t.Errorf(":label should add missing; got %+v", s.added)
+		}
+	})
+}
+
 func TestCommandPalette_OpensAndDispatches(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

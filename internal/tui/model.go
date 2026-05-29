@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -2129,10 +2130,140 @@ func (m Model) dispatchCommand(raw string) (tea.Model, tea.Cmd) {
 		return m.runRawBD(rest)
 	case "help":
 		return m.openHelp()
+	case "assign":
+		// Bare `:assign` opens the cursor row's owner prompt
+		// (same as O); `:assign <name>` short-circuits the prompt
+		// and dispatches the value directly so power users can
+		// pipe through the palette without a second keystroke.
+		if rest == "" {
+			return m.beginAssign()
+		}
+		return m.dispatchPaletteAssign(rest)
+	case "priority":
+		// `:priority <0-4>` sets an absolute priority on the
+		// cursor row (or every marked row), distinct from the
+		// `+`/`-` relative-bump keys. Out-of-range surfaces a
+		// usage error.
+		return m.dispatchPalettePriority(rest)
+	case "label":
+		// Bare `:label` opens the toggle prompt (same as L);
+		// `:label <name>` toggles directly.
+		if rest == "" {
+			return m.beginLabel()
+		}
+		return m.dispatchPaletteLabel(rest)
 	default:
-		m.setStatus(":" + name + ": unknown command. Known: refresh, preset, sort, reverse, filter save <name>, bd <args>, help")
+		m.setStatus(":" + name + ": unknown command. Known: refresh, preset, sort, reverse, filter save <name>, assign, priority <0-4>, label, bd <args>, help")
 		return m, flashClearCmd(m.statusGen)
 	}
+}
+
+// dispatchPaletteAssign sets the cursor row's owner (or every
+// marked row) to the supplied value without opening the prompt.
+// Mirrors updateAssign's enter case so behaviour stays in sync.
+func (m Model) dispatchPaletteAssign(owner string) (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.marked) > 0 {
+		targets := m.markedIssues()
+		m.marked = nil
+		return m, runBulkWrite("assign", targets, func(ctx context.Context, i beads.Issue) error {
+			return mu.SetAssignee(ctx, i, owner)
+		})
+	}
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus(":assign: nothing to reassign")
+		return m, flashClearCmd(m.statusGen)
+	}
+	target := m.visible[m.cursor]
+	if !m.issueExists(target.ID) {
+		m.setStatus(":assign cancelled: " + target.ID + " was removed by a refresh")
+		return m, flashClearCmd(m.statusGen)
+	}
+	return m, runWriteWithIssue("assign", target, func(ctx context.Context) error {
+		return mu.SetAssignee(ctx, target, owner)
+	})
+}
+
+// dispatchPalettePriority is the absolute-priority counterpart to
+// the `+`/`-` relative-bump keys. Accepts 0-4 (bd's range);
+// out-of-range or non-numeric input surfaces a usage error so a
+// typo doesn't get clamped silently into a real write.
+func (m Model) dispatchPalettePriority(arg string) (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if arg == "" {
+		m.setStatus(":priority: value required (0-4)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	n, err := strconv.Atoi(arg)
+	if err != nil || n < 0 || n > 4 {
+		m.setStatus(":priority: value must be 0-4")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.marked) > 0 {
+		targets := m.markedIssues()
+		m.marked = nil
+		return m, runBulkWrite("priority", targets, func(ctx context.Context, i beads.Issue) error {
+			return mu.SetPriority(ctx, i, n)
+		})
+	}
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus(":priority: nothing to reprioritize")
+		return m, flashClearCmd(m.statusGen)
+	}
+	target := m.visible[m.cursor]
+	if !m.issueExists(target.ID) {
+		m.setStatus(":priority cancelled: " + target.ID + " was removed by a refresh")
+		return m, flashClearCmd(m.statusGen)
+	}
+	return m, runWrite(fmt.Sprintf("set P%d", n), target.ID, func(ctx context.Context) error {
+		return mu.SetPriority(ctx, target, n)
+	})
+}
+
+// dispatchPaletteLabel mirrors updateLabel's toggle-or-add logic
+// for the palette path. Single target toggles; bulk path is
+// add-only (consistent with H's bulk semantics).
+func (m Model) dispatchPaletteLabel(label string) (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.marked) > 0 {
+		targets := m.markedIssues()
+		m.marked = nil
+		return m, runBulkWrite("label", targets, func(ctx context.Context, i beads.Issue) error {
+			if i.HasLabel(label) {
+				return nil
+			}
+			return mu.AddLabel(ctx, i, label)
+		})
+	}
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus(":label: nothing to label")
+		return m, flashClearCmd(m.statusGen)
+	}
+	target := m.visible[m.cursor]
+	if !m.issueExists(target.ID) {
+		m.setStatus(":label cancelled: " + target.ID + " was removed by a refresh")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if target.HasLabel(label) {
+		return m, runWrite("unlabel:"+label, target.ID, func(ctx context.Context) error {
+			return mu.RemoveLabel(ctx, target, label)
+		})
+	}
+	return m, runWrite("label:"+label, target.ID, func(ctx context.Context) error {
+		return mu.AddLabel(ctx, target, label)
+	})
 }
 
 // runRawBD shells out a `bd <args>` invocation in the cursor
