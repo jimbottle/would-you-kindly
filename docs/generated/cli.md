@@ -45,7 +45,7 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <r
 Agent inbox: issues filed with `src:agent` that a human has bounced back.
 
 ```
-wyk inbox [-C <dir>] [-json] [-priority N] [-repo name]
+wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N]
 ```
 
 | Flag | Default | Description |
@@ -54,6 +54,7 @@ wyk inbox [-C <dir>] [-json] [-priority N] [-repo name]
 | `-json` | `false` | emit a JSON array of issues for LLM consumption |
 | `-priority` | `-1` | cap the inbox at priority N or higher (lower number = higher priority; -1 disables) |
 | `-repo` | `_(empty)_` | restrict the inbox to the registered repo with this name (mutually exclusive with -C) |
+| `-limit` | `-1` | cap the inbox at N rows (after priority/repo filtering; -1 disables) |
 
 ## `wyk stats`
 
@@ -169,7 +170,7 @@ wyk import [-file path] [-dry-run] [-repo name]
 Recently-touched issues across registered repos (chronological merged stream).
 
 ```
-wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all]
+wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all] [-limit N]
 ```
 
 | Flag | Default | Description |
@@ -179,6 +180,7 @@ wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|close
 | `-priority` | `-1` | cap rows at priority N or higher (lower number = higher priority; -1 disables) |
 | `-repo` | `_(empty)_` | restrict the stream to the registered repo with this name (empty = every registered repo) |
 | `-status` | `all` | filter rows by status: open / closed / all |
+| `-limit` | `-1` | cap the stream at N rows (after every other filter; -1 disables) |
 
 ## `wyk help`
 

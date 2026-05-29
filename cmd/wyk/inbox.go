@@ -42,6 +42,7 @@ func runInbox(args []string) int {
 	// only — exactly the "what should I attack first" set.
 	maxPriority := fs.Int("priority", -1, "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)")
 	repoName := fs.String("repo", "", "restrict the inbox to the registered repo with this name (mutually exclusive with -C)")
+	limit := fs.Int("limit", -1, "cap the inbox at N rows (after priority/repo filtering; -1 disables)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -50,7 +51,7 @@ func runInbox(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N] [-repo name]")
+		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N]")
 		return 64
 	}
 	if *dir != "" && *repoName != "" {
@@ -83,6 +84,9 @@ func runInbox(args []string) int {
 
 	if *maxPriority >= 0 {
 		all = filterByMaxPriority(all, *maxPriority)
+	}
+	if *limit >= 0 && *limit < len(all) {
+		all = all[:*limit]
 	}
 
 	if *asJSON {

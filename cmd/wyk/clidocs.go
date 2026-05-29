@@ -62,12 +62,13 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "inbox",
 		Summary: "Agent inbox: issues filed with `src:agent` that a human has bounced back.",
-		Usage:   "wyk inbox [-C <dir>] [-json] [-priority N] [-repo name]",
+		Usage:   "wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
 			{Name: "-json", Default: "false", Description: "emit a JSON array of issues for LLM consumption"},
 			{Name: "-priority", Default: "-1", Description: "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)"},
 			{Name: "-repo", Default: "", Description: "restrict the inbox to the registered repo with this name (mutually exclusive with -C)"},
+			{Name: "-limit", Default: "-1", Description: "cap the inbox at N rows (after priority/repo filtering; -1 disables)"},
 		},
 	},
 	{
@@ -150,13 +151,14 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "activity",
 		Summary: "Recently-touched issues across registered repos (chronological merged stream).",
-		Usage:   "wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all]",
+		Usage:   "wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all] [-limit N]",
 		Flags: []cliFlag{
 			{Name: "-since", Default: "24h", Description: "show issues updated within this duration (e.g. 1h, 24h, 168h)"},
 			{Name: "-json", Default: "false", Description: "emit a structured JSON array instead of the table"},
 			{Name: "-priority", Default: "-1", Description: "cap rows at priority N or higher (lower number = higher priority; -1 disables)"},
 			{Name: "-repo", Default: "", Description: "restrict the stream to the registered repo with this name (empty = every registered repo)"},
 			{Name: "-status", Default: "all", Description: "filter rows by status: open / closed / all"},
+			{Name: "-limit", Default: "-1", Description: "cap the stream at N rows (after every other filter; -1 disables)"},
 		},
 	},
 	{

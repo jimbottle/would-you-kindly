@@ -37,12 +37,13 @@ func runActivity(args []string) int {
 	maxPriority := fs.Int("priority", -1, "cap rows at priority N or higher (lower number = higher priority; -1 disables)")
 	repoName := fs.String("repo", "", "restrict the stream to the registered repo with this name (empty = every registered repo)")
 	status := fs.String("status", "all", "filter rows by status: open / closed / all")
+	limit := fs.Int("limit", -1, "cap the stream at N rows (after every other filter; -1 disables)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all]")
+		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all] [-limit N]")
 		return 64
 	}
 	switch *status {
@@ -82,6 +83,9 @@ func runActivity(args []string) int {
 
 	cutoff := time.Now().Add(-*since)
 	events, hadError := collectActivity(reg, cutoff, *maxPriority, *status, defaultActivityClient)
+	if *limit >= 0 && *limit < len(events) {
+		events = events[:*limit]
+	}
 	if *asJSON {
 		emitActivityJSON(os.Stdout, events, cutoff)
 	} else {
