@@ -60,6 +60,7 @@ go test ./internal/tui/... -run TestNameYouCareAbout -v
 | `cmd/wyk/` | Subcommand entry points + main.go dispatcher |
 | `internal/tui/` | The bubbletea TUI: model, keymap, sources, render |
 | `internal/beads/` | Thin client over the `bd` CLI binary |
+| `internal/filter/` | Preset → bd-query mapping (`PresetReady`, `PresetHuman`, etc.) |
 | `internal/registry/` | The `~/.config/wyk/repos.json` schema and loader |
 | `internal/uiconfig/`, `internal/filters/` | Other per-user config files |
 | `internal/clipboard/`, `internal/updater/`, `internal/watch/` | Specialised concerns |
@@ -79,7 +80,18 @@ Look at `git log --oneline` for the style. The short form:
   `fix(updater): cache trap on stale 24h TTL`)
 - A blank line, then a body explaining the **why** (the diff already shows
   the what). Wrap at ~72 characters.
-- If the change closes a bd issue, end the body with `Closes bd <id>.`
+- If the change closes a bd issue, end with a `Closes:` trailer — one bare
+  issue ID per line, colon required. The post-commit hook scans for this
+  exact form and auto-closes matching issues; the prose form `Closes bd
+  <id>.` is **not** picked up. Example:
+
+  ```
+  Closes: would-you-kindly-ma5.4
+  ```
+
+  See [README's auto-close section](README.md#auto-closing-issues-on-commit-wyk-init)
+  for the full rules (multiple IDs need separate trailer lines; explanatory
+  text on the trailer line disqualifies it).
 
 The `area` prefixes in current use: `feat`, `fix`, `ci`, `docs`, `chore`.
 
@@ -97,7 +109,7 @@ human-filed ones don't need a source label.
 
 ```bash
 gofmt -l .                         # must be empty
-~/go/bin/golangci-lint run ./...   # must report 0 issues
+golangci-lint run ./...            # must report 0 issues
 go test -race -timeout 5m ./...    # must pass
 ```
 
@@ -116,10 +128,10 @@ If you added a write action, also confirm:
 
 ## Code review
 
-The project uses [`roborev`](https://github.com/anthropic/roborev) for
-multi-agent code reviews on every push. After your commit lands you'll see
-review jobs appear; address findings via `/roborev-fix` (or the equivalent
-manual flow) before the next push.
+The project uses an automated multi-agent code-review tool (`roborev`) on
+every push. After your commit lands you'll see review jobs appear; address
+findings via `/roborev-fix` (or the equivalent manual flow) before the
+next push.
 
 ## Releasing
 

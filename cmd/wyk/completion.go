@@ -6,17 +6,22 @@ import (
 	"os"
 )
 
-// wykSubcommands is the list of subcommands main.go's switch in
-// runMain dispatches on. Kept in sync by convention — adding a
-// subcommand without updating this slice means tab-completion
-// silently misses it.
+// wykSubcommands is the user-facing subcommand list that ships in
+// the generated shell completion scripts. Kept in sync with
+// main.go's dispatch switch by convention.
 //
-// Ordered to match the order in main.go's usage output so a user
-// reading either list mentally lines them up.
+// Ordering mirrors the switch in main.go (not the prose order in
+// printTopLevelUsage). The two USED to claim to match — they
+// don't, and the dispatch order is the source of truth.
+//
+// Intentionally excluded: `hook`. It's invoked by the installed
+// git post-commit hook, not by humans on the command line, and
+// completing to it would be misleading. Other top-level switch
+// cases (`version`, `--version`, `-v`) are aliases and only the
+// canonical `version` is listed.
 var wykSubcommands = []string{
 	"handoff",
 	"init",
-	"hook",
 	"inbox",
 	"stats",
 	"doctor",
@@ -27,6 +32,7 @@ var wykSubcommands = []string{
 	"export",
 	"activity",
 	"help",
+	"completion",
 	"version",
 }
 
