@@ -94,6 +94,8 @@ func main() {
 			os.Exit(runExport(os.Args[2:]))
 		case "activity":
 			os.Exit(runActivity(os.Args[2:]))
+		case "help":
+			os.Exit(runHelp(os.Args[2:]))
 		case "version", "--version", "-v":
 			fmt.Println(versionString())
 			os.Exit(0)
@@ -521,6 +523,7 @@ Subcommands:
   dashboard    per-repo open/human/closed-this-week summary (−json for structured)
   export       JSON dump of every registered repo's full issue list + ready IDs
   activity     recently-touched issues across registered repos (-since 24h, -json)
+  help         pointer to the in-TUI overlay; --markdown emits a keymap reference
   registry     list / remove / prune registered workspaces
   conventions  print the agent-facing label convention (–json for structured)
   update       check for and install a newer wyk release
