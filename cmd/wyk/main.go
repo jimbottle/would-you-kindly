@@ -33,6 +33,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/theme"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 	"github.com/jimbottle/would-you-kindly/internal/updater"
@@ -126,6 +127,18 @@ func main() {
 
 	if *probe {
 		os.Exit(runProbe(src))
+	}
+
+	// Overlay user theme.json onto the built-in lipgloss styles
+	// before constructing the model — the styles are package vars,
+	// so this must run before NewWithHint touches them. A missing
+	// file falls through to the built-in defaults; a malformed
+	// file logs a notice but still launches with defaults so a
+	// botched theme can't lock the user out of the TUI.
+	if th, err := theme.LoadDefault(); err == nil {
+		tui.ApplyTheme(th)
+	} else {
+		fmt.Fprintln(os.Stderr, "wyk: theme.json:", err, "(using defaults)")
 	}
 
 	model := tui.NewWithHint(src, hint).WithMe(*me)

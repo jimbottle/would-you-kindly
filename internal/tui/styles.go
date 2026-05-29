@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/jimbottle/would-you-kindly/internal/theme"
+)
 
 var (
 	titleStyle = lipgloss.NewStyle().
@@ -143,6 +147,101 @@ var (
 			Foreground(lipgloss.Color("214")).
 			Bold(true)
 )
+
+// ApplyTheme overlays a user theme.json onto the built-in styles.
+// Empty fields keep the built-in default; non-empty fields are
+// applied via lipgloss.Color (which accepts ANSI 256 codes like
+// "212" or hex literals like "#ff66cc"). Call once at startup
+// before any goroutine renders — these vars are package-level and
+// not synchronised.
+//
+//nolint:gocyclo // straight-line one-field-per-style fan-out; splitting hurts readability
+func ApplyTheme(t theme.Theme) {
+	if t.Title != "" {
+		titleStyle = titleStyle.Foreground(lipgloss.Color(t.Title))
+	}
+	if t.StatusOpen != "" {
+		statusOpen = statusOpen.Foreground(lipgloss.Color(t.StatusOpen))
+	}
+	if t.StatusInProgress != "" {
+		statusInProgress = statusInProgress.Foreground(lipgloss.Color(t.StatusInProgress))
+	}
+	if t.StatusBlocked != "" {
+		statusBlocked = statusBlocked.Foreground(lipgloss.Color(t.StatusBlocked))
+	}
+	if t.StatusClosed != "" {
+		statusClosed = statusClosed.Foreground(lipgloss.Color(t.StatusClosed))
+	}
+	if t.StatusOther != "" {
+		statusOther = statusOther.Foreground(lipgloss.Color(t.StatusOther))
+	}
+	if t.HumanBadgeBG != "" {
+		humanBadge = humanBadge.Background(lipgloss.Color(t.HumanBadgeBG))
+	}
+	if t.HumanBadgeFG != "" {
+		humanBadge = humanBadge.Foreground(lipgloss.Color(t.HumanBadgeFG))
+	}
+	if t.AgentBadgeBG != "" {
+		agentBadge = agentBadge.Background(lipgloss.Color(t.AgentBadgeBG))
+	}
+	if t.AgentBadgeFG != "" {
+		agentBadge = agentBadge.Foreground(lipgloss.Color(t.AgentBadgeFG))
+	}
+	if t.HumanBlockBG != "" {
+		humanBlockBadge = humanBlockBadge.Background(lipgloss.Color(t.HumanBlockBG))
+	}
+	if t.HumanBlockFG != "" {
+		humanBlockBadge = humanBlockBadge.Foreground(lipgloss.Color(t.HumanBlockFG))
+	}
+	if t.Cursor != "" {
+		cursorStyle = cursorStyle.Foreground(lipgloss.Color(t.Cursor))
+	}
+	if t.StatusBarBG != "" {
+		statusBarStyle = statusBarStyle.Background(lipgloss.Color(t.StatusBarBG))
+	}
+	if t.StatusBarFG != "" {
+		statusBarStyle = statusBarStyle.Foreground(lipgloss.Color(t.StatusBarFG))
+	}
+	if t.Error != "" {
+		errorStyle = errorStyle.Foreground(lipgloss.Color(t.Error))
+	}
+	if t.Empty != "" {
+		emptyStyle = emptyStyle.Foreground(lipgloss.Color(t.Empty))
+	}
+	if t.DetailHeader != "" {
+		detailHeaderStyle = detailHeaderStyle.Foreground(lipgloss.Color(t.DetailHeader))
+	}
+	if t.DetailLabel != "" {
+		detailLabelStyle = detailLabelStyle.Foreground(lipgloss.Color(t.DetailLabel))
+	}
+	if t.Help != "" {
+		helpStyle = helpStyle.Foreground(lipgloss.Color(t.Help))
+	}
+	if t.Confirm != "" {
+		confirmStyle = confirmStyle.Foreground(lipgloss.Color(t.Confirm))
+	}
+	if t.StatusBanner != "" {
+		statusBannerStyle = statusBannerStyle.Foreground(lipgloss.Color(t.StatusBanner))
+	}
+	if t.SetupHint != "" {
+		setupHintStyle = setupHintStyle.Foreground(lipgloss.Color(t.SetupHint))
+	}
+	if t.WykIndicator != "" {
+		wykIndicatorStyle = wykIndicatorStyle.Foreground(lipgloss.Color(t.WykIndicator))
+	}
+	if t.ChipActiveBG != "" {
+		chipActiveStyle = chipActiveStyle.Background(lipgloss.Color(t.ChipActiveBG))
+	}
+	if t.ChipActiveFG != "" {
+		chipActiveStyle = chipActiveStyle.Foreground(lipgloss.Color(t.ChipActiveFG))
+	}
+	if t.FetchError != "" {
+		fetchErrorStyle = fetchErrorStyle.Foreground(lipgloss.Color(t.FetchError))
+	}
+	if t.FuzzyMatch != "" {
+		fuzzyMatchStyle = fuzzyMatchStyle.Foreground(lipgloss.Color(t.FuzzyMatch))
+	}
+}
 
 func statusStyleFor(status string) lipgloss.Style {
 	switch status {
