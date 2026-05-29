@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Patch — fixes the `wyk update` cache trap surfaced testing v0.3.2's
 release flow. Recommended for everyone on v0.3.0/v0.3.1/v0.3.2.
 
+### Migration (if you're stuck on v0.3.0/v0.3.1/v0.3.2)
+
+Your installed binary carries the bug, so `wyk update` itself
+can't pull v0.3.3 — the stale cache locks the result for up to
+24h. Two ways out, pick either:
+
+```bash
+# A: nuke the stale cache, then your existing wyk update goes live:
+rm -f ~/.cache/wyk/update.json
+wyk update
+
+# B: install v0.3.3 directly, bypassing your buggy binary entirely:
+go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.3.3
+```
+
+After either, `wyk update` works normally for every future
+release (live-fetches every invocation).
+
 ### Fixed
 
 - **`wyk update` now bypasses the 24h cache** and live-fetches the
