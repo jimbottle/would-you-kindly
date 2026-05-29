@@ -36,6 +36,7 @@ func runStats(args []string) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
 	asJSON := fs.Bool("json", false, "emit a JSON object suitable for scripting")
+	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (mutually exclusive with -C)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -44,11 +45,15 @@ func runStats(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk stats [-C <dir>] [-json]")
+		fmt.Fprintln(os.Stderr, "usage: wyk stats [-C <dir>] [-json] [-repo name]")
+		return 64
+	}
+	if *dir != "" && *repoName != "" {
+		fmt.Fprintln(os.Stderr, "wyk stats: -C and -repo are mutually exclusive")
 		return 64
 	}
 
-	subs, code := statsSubs(*dir)
+	subs, code := statsSubs(*dir, *repoName)
 	if code != 0 {
 		return code
 	}
@@ -87,7 +92,7 @@ type statsSub struct {
 	name   string
 }
 
-func statsSubs(dir string) ([]statsSub, int) {
+func statsSubs(dir, repoName string) ([]statsSub, int) {
 	if dir != "" {
 		c := beads.NewClient()
 		c.Dir = dir
@@ -106,6 +111,14 @@ func statsSubs(dir string) ([]statsSub, int) {
 	if len(reg.Repos) == 0 {
 		c := beads.NewClient()
 		return []statsSub{{client: c}}, 0
+	}
+	if repoName != "" {
+		filtered, err := filterRegistryByName(reg, repoName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk stats:", err)
+			return nil, 1
+		}
+		reg = filtered
 	}
 	out := make([]statsSub, len(reg.Repos))
 	for i, r := range reg.Repos {

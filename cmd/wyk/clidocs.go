@@ -72,9 +72,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "stats",
 		Summary: "Aggregate snapshot across registered repos: counts by status, human-flagged splits, time-to-close.",
-		Usage:   "wyk stats [-json]",
+		Usage:   "wyk stats [-C <dir>] [-json] [-repo name]",
 		Flags: []cliFlag{
-			{Name: "-json", Default: "false", Description: "emit a structured JSON object instead of the table"},
+			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
+			{Name: "-json", Default: "false", Description: "emit a JSON object suitable for scripting"},
+			{Name: "-repo", Default: "", Description: "restrict the rollup to the registered repo with this name (mutually exclusive with -C)"},
 		},
 	},
 	{

@@ -59,12 +59,14 @@ wyk inbox [-C <dir>] [-json] [-priority N] [-repo name]
 Aggregate snapshot across registered repos: counts by status, human-flagged splits, time-to-close.
 
 ```
-wyk stats [-json]
+wyk stats [-C <dir>] [-json] [-repo name]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-json` | `false` | emit a structured JSON object instead of the table |
+| `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
+| `-json` | `false` | emit a JSON object suitable for scripting |
+| `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (mutually exclusive with -C) |
 
 ## `wyk doctor`
 
