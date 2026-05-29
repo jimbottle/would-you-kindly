@@ -2256,10 +2256,9 @@ func (m Model) dispatchFilterCommand(rest string) (tea.Model, tea.Cmd) {
 			m.setStatus(":filter save failed: " + err.Error())
 			return m, nil
 		}
+		// cloneAliases guarantees a non-nil Aliases map; no nil
+		// guard needed here.
 		next := cloneAliases(m.filterAliases)
-		if next.Aliases == nil {
-			next.Aliases = map[string]string{}
-		}
 		next.Aliases[args] = m.query
 		if err := filters.Save(path, next); err != nil {
 			m.setStatus(":filter save failed: " + err.Error())
