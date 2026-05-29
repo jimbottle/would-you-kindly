@@ -1861,6 +1861,43 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 }
 
+func TestEmptyMatchCopy_PresetSpecificHints(t *testing.T) {
+	// Pin each preset's first-line meaning AND the second-line
+	// recovery hint so a future drift gets caught. Empty view is
+	// where new users land most often — the copy is part of the
+	// product experience.
+	cases := []struct {
+		name        string
+		preset      filter.Preset
+		query       string
+		wantContent string
+		wantHint    string
+	}{
+		{"human celebrates", filter.PresetHuman, "", "no human-flagged issues", "Tab cycles"},
+		{"ready explains state", filter.PresetReady, "", "no ready work", "Tab to cycle"},
+		{"mine nudges at -me", filter.PresetMine, "", "nothing assigned to you", "-me"},
+		{"blocked is positive", filter.PresetBlocked, "", "no blocked issues", "Tab cycles"},
+		{"default mentions closed", filter.PresetAll, "", "no issues match", "C includes closed"},
+		{"query miss explains escape", filter.PresetAll, "rotate", `no matches for "rotate"`, "clear the fuzzy filter"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := emptyMatchCopy(tc.preset, tc.query)
+			if !strings.Contains(got, tc.wantContent) {
+				t.Errorf("first line should contain %q; got %q", tc.wantContent, got)
+			}
+			if !strings.Contains(got, tc.wantHint) {
+				t.Errorf("recovery hint should contain %q; got %q", tc.wantHint, got)
+			}
+			// Two-line shape: every preset gets a hint on a
+			// second line.
+			if !strings.Contains(got, "\n") {
+				t.Errorf("copy should be 2 lines (content + hint); got %q", got)
+			}
+		})
+	}
+}
+
 func TestHelpOverlay_IncludesStatusLegend(t *testing.T) {
 	// The legend lives alongside the keybindings so a new user
 	// can read it without leaving the TUI. Pin presence of the

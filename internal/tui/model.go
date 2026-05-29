@@ -3977,24 +3977,27 @@ func renderFilterChips(p filter.Preset, priorityCap int, sortBy sortKey, showClo
 }
 
 // emptyMatchCopy returns the preset-aware "no rows match this
-// filter" copy. The human preset gets a small celebration since
+// filter" copy followed by a recovery hint on a second line so a
+// user who hits an empty view doesn't have to guess the next
+// keystroke. The human preset gets a small celebration since
 // "nothing flagged for you" is the goal state; other presets
-// describe the absence factually.
+// describe the absence factually + nudge toward a useful next
+// step (cycle presets, include closed, clear the filter).
 func emptyMatchCopy(p filter.Preset, query string) string {
 	if query != "" {
-		return fmt.Sprintf("no matches for %q", query)
+		return fmt.Sprintf("no matches for %q\n  → / esc to clear the fuzzy filter, or Tab to cycle presets", query)
 	}
 	switch p {
 	case filter.PresetHuman:
-		return "✓ no human-flagged issues — nothing waiting on you right now"
+		return "✓ no human-flagged issues — nothing waiting on you right now\n  → Tab cycles presets; r refreshes if you expected a hand-off"
 	case filter.PresetReady:
-		return "no ready work — everything left is blocked or in progress"
+		return "no ready work — everything left is blocked or in progress\n  → Tab to cycle to `human` or `blocked`; press `[` to jump human-flagged rows"
 	case filter.PresetMine:
-		return "nothing assigned to you in this workspace"
+		return "nothing assigned to you in this workspace\n  → Tab cycles presets; check `-me` if you expected rows"
 	case filter.PresetBlocked:
-		return "no blocked issues — work is flowing"
+		return "no blocked issues — work is flowing\n  → Tab cycles presets"
 	default:
-		return "no issues match this view"
+		return "no issues match this view\n  → C includes closed rows; / opens a fuzzy filter; Tab cycles presets"
 	}
 }
 
