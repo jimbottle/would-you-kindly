@@ -1832,6 +1832,29 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 }
 
+func TestHelpOverlay_IncludesStatusLegend(t *testing.T) {
+	// The legend lives alongside the keybindings so a new user
+	// can read it without leaving the TUI. Pin presence of the
+	// section header + each status row so a future viewHelp
+	// refactor doesn't silently drop the legend.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	out := m.viewHelp()
+
+	for _, want := range []string{
+		"Status column",
+		"open",
+		"wip",
+		"blocked",
+		"deferred",
+		"closed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help overlay should contain %q in the status legend; got\n%s", want, out)
+		}
+	}
+}
+
 func TestByteToRuneIdxs_HandlesMultiByteRunes(t *testing.T) {
 	// "café" — c(0), a(1), f(2), é(3,4 in bytes). A match on
 	// byte offsets {0, 3} (c and é) should map to rune indices

@@ -2554,6 +2554,30 @@ func (m Model) viewHelp() string {
 	b.WriteString(helpStyle.Render("  Yank (y) uses OSC 52 so the copy reaches your local clipboard\n"))
 	b.WriteString(helpStyle.Render("  even over SSH; in tmux, enable `set -g allow-passthrough on`.\n"))
 	b.WriteString("\n")
+
+	// Status column legend — each row renders the value with its
+	// actual style (so the user sees the color/strike treatment
+	// used in the table) followed by a plain-text gloss. The
+	// `wip` row is intentional: bd's underlying status is
+	// `in_progress`, but the Status column abbreviates it.
+	b.WriteString(detailLabelStyle.Render("Status column"))
+	b.WriteString("\n")
+	legend := []struct {
+		display string
+		raw     string // input to statusStyleFor (uses the real bd value)
+		gloss   string
+	}{
+		{"open", "open", "available for work"},
+		{"wip", "in_progress", "in progress (abbreviated in the table)"},
+		{"blocked", "blocked", "has an open dependency or is human-blocked"},
+		{"deferred", "deferred", "hidden from `bd ready` until a date (set via `d`)"},
+		{"closed", "closed", "done; strikethrough"},
+	}
+	for _, e := range legend {
+		styled := statusStyleFor(e.raw).Render(fmt.Sprintf("%-9s", e.display))
+		fmt.Fprintf(&b, "  %s  %s\n", styled, helpStyle.Render(e.gloss))
+	}
+	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("esc / ? / q to close"))
 	return b.String()
 }
