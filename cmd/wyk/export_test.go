@@ -165,7 +165,7 @@ func TestEmitExportJSON_ShapeAndIndentation(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	emitExportJSON(&buf, dump)
+	emitExportJSON(&buf, dump, false)
 
 	// Re-decode to confirm the shape round-trips.
 	var got exportDump
@@ -190,5 +190,23 @@ func TestEmitExportJSON_ShapeAndIndentation(t *testing.T) {
 	// Pretty-printed: at least one indented line.
 	if !bytes.Contains(buf.Bytes(), []byte("  \"")) {
 		t.Errorf("output should be indented JSON; got %s", buf.String())
+	}
+}
+
+func TestEmitExportJSON_CompactSkipsIndentation(t *testing.T) {
+	dump := exportDump{
+		ExportedAt: time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC),
+		Repos:      []exportRepo{{Name: "r"}},
+	}
+	var buf bytes.Buffer
+	emitExportJSON(&buf, dump, true)
+	// Compact output must not contain the two-space indent prefix.
+	if bytes.Contains(buf.Bytes(), []byte("  \"")) {
+		t.Errorf("compact output should NOT be indented; got %s", buf.String())
+	}
+	// But the output is still valid JSON.
+	var got exportDump
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Errorf("compact output should still parse; %v\nraw: %s", err, buf.String())
 	}
 }

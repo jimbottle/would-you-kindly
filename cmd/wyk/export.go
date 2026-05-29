@@ -31,12 +31,13 @@ func runExport(args []string) int {
 	// ("24h", "7d" via 168h, "30m"). Empty (the default) emits
 	// the full dump, matching the historical behavior.
 	since := fs.String("since", "", "filter issues to those updated within this duration (e.g. 24h, 168h)")
+	compact := fs.Bool("compact", false, "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h]")
+		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-compact]")
 		return 64
 	}
 	var cutoff time.Time
@@ -68,7 +69,7 @@ func runExport(args []string) int {
 	if !cutoff.IsZero() {
 		dump = filterDumpSince(dump, cutoff)
 	}
-	emitExportJSON(os.Stdout, dump)
+	emitExportJSON(os.Stdout, dump, *compact)
 	if hadError {
 		return 1
 	}
@@ -189,12 +190,14 @@ func filterDumpSince(dump exportDump, cutoff time.Time) exportDump {
 	return out
 }
 
-// emitExportJSON pretty-prints the dump to w. Indented because
-// the common consumer is a human eyeballing jq output or piping
-// into a one-off script; the size difference vs. compact JSON is
-// negligible compared to issue body content.
-func emitExportJSON(w io.Writer, dump exportDump) {
+// emitExportJSON prints the dump to w. Defaults to indented for
+// the common human-eyeballing case; -compact skips SetIndent so
+// the output is suitable for streaming consumers and large
+// dumps where the indentation cost adds up.
+func emitExportJSON(w io.Writer, dump exportDump, compact bool) {
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
+	if !compact {
+		enc.SetIndent("", "  ")
+	}
 	_ = enc.Encode(dump)
 }
