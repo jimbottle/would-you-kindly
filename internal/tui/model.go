@@ -2335,13 +2335,16 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		title = trunc(title, avail)
 	}
 	// Apply fuzzy-match highlighting after truncation. When trunc
-	// inserts an ellipsis (`runes[:n-1] + "…"`), drop any match at
-	// or after the ellipsis position so we don't style the `…`
-	// glyph itself — the prior version styled the ellipsis when
-	// a match index happened to land there. Matches past the
-	// truncated tail are silently dropped (no off-screen ANSI).
+	// inserts an ellipsis (`runes[:n-1] + "…"`, taken when n >= 2
+	// AND the string was longer than n), drop any match at or
+	// after the ellipsis position so we don't style the `…` glyph
+	// itself. trunc's n==1 branch returns a bare first rune with
+	// NO ellipsis, so we keep the visibleLen >= 2 guard to avoid
+	// suppressing a legitimate index-0 highlight in that case.
+	// Matches past the truncated tail are silently dropped (no
+	// off-screen ANSI).
 	if idxs := m.titleMatches[issueKey(i)]; len(idxs) > 0 {
-		if visibleLen := utf8.RuneCountInString(title); visibleLen < origLen {
+		if visibleLen := utf8.RuneCountInString(title); visibleLen < origLen && visibleLen >= 2 {
 			ceiling := visibleLen - 1
 			filtered := make([]int, 0, len(idxs))
 			for _, ix := range idxs {
