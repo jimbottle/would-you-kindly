@@ -47,6 +47,29 @@ var (
 			Bold(true).
 			Padding(0, 1)
 
+	// agentBadge renders the "agent's responsibility" case — green
+	// to read as "in flight / on it", distinct from the pink/blue
+	// HUMAN variants which read as "needs your attention". Surfaces
+	// on rows that match the agent inbox query
+	// (label=src:agent AND NOT label=human).
+	agentBadge = lipgloss.NewStyle().
+			Background(lipgloss.Color("84")).
+			Foreground(lipgloss.Color("232")).
+			Bold(true).
+			Padding(0, 1)
+
+	// humanBlockBadge renders the "agent owns it but a human is
+	// blocking" case — amber, so it reads between the pink HUMAN
+	// (the human's move) and the green AGENT (agent on it). The
+	// inbox imperative explicitly doesn't fire on these rows — the
+	// agent cannot make progress until a blocker closes — so the
+	// colour cue matters.
+	humanBlockBadge = lipgloss.NewStyle().
+			Background(lipgloss.Color("214")).
+			Foreground(lipgloss.Color("232")).
+			Bold(true).
+			Padding(0, 1)
+
 	cursorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("212")).
 			Bold(true)

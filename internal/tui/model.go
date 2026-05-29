@@ -1137,7 +1137,7 @@ func (m Model) viewList() string {
 // remaining suffix is usually ≤ 8 chars (e.g. `ma5.2.1`), so the
 // extra width was just whitespace in every row.
 const (
-	colHuman   = 9 // human-flagged indicator: " ← HUMAN ", " · HUMAN ", or blank. 9 = " ← HUMAN " visual width (Padding(0,1) + 7-char content). Placed second-from-left to put the most important "needs your attention" signal where the eye lands first.
+	colResp    = 13 // responsibility column: " ← HUMAN ", " · HUMAN ", " AGENT ", " HUMAN-BLOCK ", or blank. 13 = " HUMAN-BLOCK " visual width (Padding(0,1) + 11-char content), the widest variant. Shorter badges get trailing whitespace. Placed second-from-left to put the most important "whose move is it" signal where the eye lands first.
 	colWyk     = 3 // wyk-hook indicator: ✓ if installed, blank if not. Header reads "wyk" so the column is self-explanatory.
 	colRepo    = 18
 	colBranch  = 10
@@ -1233,7 +1233,7 @@ func (m Model) renderHeader() string {
 	// home regardless of single/multi-repo mode. Header lower-
 	// cased to match `wyk` — both are indicator columns rather
 	// than data ones.
-	humanCol := fmt.Sprintf("%-*s  ", colHuman, "human")
+	respCol := fmt.Sprintf("%-*s  ", colResp, "owner")
 	var prefix string
 	if m.isMultiRepo() {
 		prefix = fmt.Sprintf("%-*s  %-*s  %-*s  ",
@@ -1243,7 +1243,7 @@ func (m Model) renderHeader() string {
 		)
 	}
 	h := fmt.Sprintf("%s%s%s%-*s  %-*s  %-*s  %-*s  %-*s  %s",
-		cursor, humanCol, prefix,
+		cursor, respCol, prefix,
 		colID, "ID",
 		colType, "T",
 		colStatus, "Status",
@@ -1260,7 +1260,7 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		cursor = cursorStyle.Render("▶ ")
 	}
 
-	humanCol := paddedHumanBadge(i) + "  "
+	respCol := paddedResponsibilityBadge(i) + "  "
 
 	var prefix string
 	if m.isMultiRepo() {
@@ -1290,7 +1290,7 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	if avail := m.titleBudget(); avail > 0 {
 		title = trunc(title, avail)
 	}
-	return fmt.Sprintf("%s%s%s%s  %s  %s  %s  %s  %s", cursor, humanCol, prefix, id, tp, st, pri, upd, title)
+	return fmt.Sprintf("%s%s%s%s  %s  %s  %s  %s  %s", cursor, respCol, prefix, id, tp, st, pri, upd, title)
 }
 
 // titleBudget returns how many runes are available for the title
@@ -1308,7 +1308,7 @@ func (m Model) titleBudget() int {
 	// non-final column to mirror what renderRow prints.
 	const sep = 2
 	used := 2 // cursor (▶ or 2 spaces is 2 visual cols either way)
-	used += colHuman + sep
+	used += colResp + sep
 	if m.isMultiRepo() {
 		used += colWyk + sep
 		used += colRepo + sep
@@ -1326,38 +1326,62 @@ func (m Model) titleBudget() int {
 	return avail
 }
 
-// paddedHumanBadge renders the per-row HUMAN cell so the column
-// stays aligned regardless of badge presence/variant. Empty rows
-// emit colHuman spaces; human-flagged rows emit the styled badge
-// padded out to the same visual width with trailing blanks. We
-// can't just %-*s the badge string because lipgloss escape codes
-// would be counted as visual width by fmt.
-func paddedHumanBadge(i beads.Issue) string {
-	if !i.IsHuman() {
-		return strings.Repeat(" ", colHuman)
+// paddedResponsibilityBadge renders the per-row responsibility cell
+// so the column stays aligned regardless of badge presence/variant.
+// Rows with no responsibility signal (no human label and no
+// src:agent label) emit colResp spaces; flagged rows emit the
+// styled badge padded out to the same visual width with trailing
+// blanks. We can't just %-*s the badge string because lipgloss
+// escape codes would be counted as visual width by fmt.
+func paddedResponsibilityBadge(i beads.Issue) string {
+	badge := responsibilityBadgeFor(i)
+	if badge == "" {
+		return strings.Repeat(" ", colResp)
 	}
-	badge := humanBadgeFor(i)
-	pad := colHuman - lipgloss.Width(badge)
+	pad := colResp - lipgloss.Width(badge)
 	if pad > 0 {
 		badge += strings.Repeat(" ", pad)
 	}
 	return badge
 }
 
-// humanBadgeFor distinguishes the two states the contract supports:
-// src:agent means an agent handed this back ("← HUMAN"), src:human
-// means the person filed it themselves ("· HUMAN"). The leading
-// glyph is the cheap, high-readability signal; a hover or expanded
-// view could carry more.
-func humanBadgeFor(i beads.Issue) string {
-	switch {
-	case i.HasLabel("src:agent"):
-		return humanBadgeAgent.Render("← HUMAN")
-	case i.HasLabel("src:human"):
-		return humanBadgeSelf.Render("· HUMAN")
-	default:
-		return humanBadge.Render("HUMAN")
+// responsibilityBadgeFor returns the badge for the "owner" column,
+// telling the reader whose move it is. Three branches in
+// precedence order:
+//   - has `human` label → one of the HUMAN variants (the
+//     human-needs-to-act signal trumps everything else)
+//   - has `src:agent` and no `human` → AGENT (the inbox case; the
+//     agent has the next move and the convention says they should
+//     be acting on it)
+//   - otherwise → empty (no responsibility signal applies)
+//
+// The HUMAN variants distinguish source: "← HUMAN" for agent-filed
+// (hot pink, the "needs your attention" hand-back), "· HUMAN" for
+// human-filed (muted blue), bare "HUMAN" for legacy issues with no
+// src label.
+func responsibilityBadgeFor(i beads.Issue) string {
+	if i.IsHuman() {
+		switch {
+		case i.HasLabel("src:agent"):
+			return humanBadgeAgent.Render("← HUMAN")
+		case i.HasLabel("src:human"):
+			return humanBadgeSelf.Render("· HUMAN")
+		default:
+			return humanBadge.Render("HUMAN")
+		}
 	}
+	if i.HasLabel("src:agent") {
+		// HUMAN-BLOCK takes precedence over plain AGENT so a row
+		// the agent cannot unblock reads visually different from
+		// rows the inbox imperative says to act on. Set by
+		// markBlockedByHuman post-Fetch when a dep carries the
+		// human label.
+		if i.BlockedByHuman {
+			return humanBlockBadge.Render("HUMAN-BLOCK")
+		}
+		return agentBadge.Render("AGENT")
+	}
+	return ""
 }
 
 // abbrevType returns a fixed-width type slug. Most bd types fit in
@@ -1425,8 +1449,8 @@ func (m Model) viewDetail() string {
 		i.IssueType,
 		i.Priority,
 	)
-	if i.IsHuman() {
-		meta += "  " + humanBadgeFor(i)
+	if badge := responsibilityBadgeFor(i); badge != "" {
+		meta += "  " + badge
 	}
 	b.WriteString(meta)
 	b.WriteString("\n\n")

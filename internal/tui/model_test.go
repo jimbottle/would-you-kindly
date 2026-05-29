@@ -236,13 +236,13 @@ func TestHumanBadge_DistinguishesSource(t *testing.T) {
 	self := beads.Issue{Labels: []string{"human", "src:human"}}
 	plain := beads.Issue{Labels: []string{"human"}}
 
-	if got := humanBadgeFor(agent); !strings.Contains(got, "←") {
+	if got := responsibilityBadgeFor(agent); !strings.Contains(got, "←") {
 		t.Errorf("src:agent badge should contain a left-arrow; got %q", got)
 	}
-	if got := humanBadgeFor(self); !strings.Contains(got, "·") {
+	if got := responsibilityBadgeFor(self); !strings.Contains(got, "·") {
 		t.Errorf("src:human badge should contain a middle-dot; got %q", got)
 	}
-	if got := humanBadgeFor(plain); strings.Contains(got, "←") || strings.Contains(got, "·") {
+	if got := responsibilityBadgeFor(plain); strings.Contains(got, "←") || strings.Contains(got, "·") {
 		t.Errorf("unlabeled badge should be plain HUMAN; got %q", got)
 	}
 }
@@ -1243,12 +1243,11 @@ func TestStickyHeader_CursorStaysInViewWhenModalOpens(t *testing.T) {
 	}
 }
 
-func TestColumnOrder_HumanIsSecondFromLeft(t *testing.T) {
-	// Header pin: in multi-repo mode the column order should be
-	// cursor (whitespace) → human → wyk → Repo → Branch → ID → ...
-	// "human" must appear before "wyk" in the rendered header
-	// string so the HUMAN signal is the second-from-left thing the
-	// eye lands on.
+func TestColumnOrder_OwnerIsSecondFromLeft_LegacyHumanRenameCheck(t *testing.T) {
+	// Header pin: in multi-repo mode the responsibility column
+	// header is now "owner" (renamed from "human" so the column
+	// can carry AGENT badges too). "owner" must appear before
+	// "wyk" so the responsibility signal stays second-from-left.
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "alpha-1", Repo: "alpha", Title: "row in alpha"},
 		{ID: "beta-9", Repo: "beta", Title: "row in beta"},
@@ -1258,13 +1257,13 @@ func TestColumnOrder_HumanIsSecondFromLeft(t *testing.T) {
 	m = model.(Model)
 	m = applyFetched(m, src)
 	out := m.View()
-	hi := strings.Index(out, "human")
+	oi := strings.Index(out, "owner")
 	wi := strings.Index(out, "wyk")
-	if hi < 0 || wi < 0 {
-		t.Fatalf("expected both 'human' and 'wyk' headers in view; got:\n%s", out)
+	if oi < 0 || wi < 0 {
+		t.Fatalf("expected both 'owner' and 'wyk' headers in view; got:\n%s", out)
 	}
-	if hi > wi {
-		t.Errorf("'human' header should appear before 'wyk' header in the column row; got human at %d, wyk at %d", hi, wi)
+	if oi > wi {
+		t.Errorf("'owner' header should appear before 'wyk' header in the column row; got owner at %d, wyk at %d", oi, wi)
 	}
 }
 
@@ -1329,5 +1328,112 @@ func TestUpdateNudge_EmptyByDefault(t *testing.T) {
 	out := m.View()
 	if strings.Contains(out, "wyk update") || strings.Contains(out, "available — run") {
 		t.Errorf("update nudge should NOT render when unset; got:\n%s", out)
+	}
+}
+
+func TestResponsibilityBadge_AgentTaskNotHumanFlagged(t *testing.T) {
+	// New AGENT branch: src:agent + NOT human → an AGENT badge.
+	// This is the inbox row case — the agent's responsibility is
+	// to act on these rather than note them.
+	agentInbox := beads.Issue{Labels: []string{"src:agent"}}
+	got := responsibilityBadgeFor(agentInbox)
+	if got == "" {
+		t.Fatalf("src:agent + NOT human should produce a badge; got empty")
+	}
+	if !strings.Contains(got, "AGENT") {
+		t.Errorf("expected AGENT badge for inbox row; got %q", got)
+	}
+	if strings.Contains(got, "HUMAN") {
+		t.Errorf("AGENT badge should not contain HUMAN; got %q", got)
+	}
+}
+
+func TestResponsibilityBadge_HumanLabelTrumpsAgentSource(t *testing.T) {
+	// An issue carrying both `human` and `src:agent` is in the
+	// human's lap; the badge must read HUMAN (the agent's
+	// hand-back arrow variant), NOT AGENT, even though src:agent
+	// is also set.
+	bounced := beads.Issue{Labels: []string{"human", "src:agent"}}
+	got := responsibilityBadgeFor(bounced)
+	if !strings.Contains(got, "HUMAN") {
+		t.Errorf("human label should produce a HUMAN badge regardless of source; got %q", got)
+	}
+	if strings.Contains(got, "AGENT") {
+		t.Errorf("AGENT must not appear when human label is set; got %q", got)
+	}
+}
+
+func TestResponsibilityBadge_BlankForOwnerlessRows(t *testing.T) {
+	// No human label, no src:agent → no responsibility signal
+	// applies. Column renders blank.
+	orphan := beads.Issue{Labels: []string{"src:human"}}
+	if got := responsibilityBadgeFor(orphan); got != "" {
+		t.Errorf("src:human without human label should produce no badge; got %q", got)
+	}
+	bare := beads.Issue{Labels: nil}
+	if got := responsibilityBadgeFor(bare); got != "" {
+		t.Errorf("a label-less row should produce no badge; got %q", got)
+	}
+}
+
+func TestColumnOrder_OwnerHeaderIsSecondFromLeft(t *testing.T) {
+	// The column header renamed from 'human' to 'owner' to reflect
+	// the broader responsibility framing. Header must still appear
+	// before 'wyk' (second-from-left position invariant).
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "alpha-1", Repo: "alpha", Title: "x"},
+		{ID: "beta-9", Repo: "beta", Title: "y"},
+	}}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	out := m.View()
+	oi := strings.Index(out, "owner")
+	wi := strings.Index(out, "wyk")
+	if oi < 0 {
+		t.Errorf("'owner' header missing from view:\n%s", out)
+	}
+	if oi > wi {
+		t.Errorf("'owner' should appear before 'wyk'; got owner=%d wyk=%d", oi, wi)
+	}
+}
+
+func TestResponsibilityBadge_HumanBlockForBlockedAgentTask(t *testing.T) {
+	// src:agent + NOT human + BlockedByHuman → HUMAN-BLOCK badge.
+	// The flag is set post-Fetch by markBlockedByHuman; this test
+	// pins the badge-rendering side of the contract.
+	blocked := beads.Issue{
+		Labels:          []string{"src:agent"},
+		BlockedByHuman:  true,
+		DependencyCount: 1,
+	}
+	got := responsibilityBadgeFor(blocked)
+	if !strings.Contains(got, "HUMAN-BLOCK") {
+		t.Errorf("BlockedByHuman should produce HUMAN-BLOCK badge; got %q", got)
+	}
+	// Must NOT also produce the plain AGENT label — those are
+	// mutually exclusive states for the column.
+	if strings.Contains(got, "AGENT") {
+		t.Errorf("HUMAN-BLOCK badge should not also say AGENT; got %q", got)
+	}
+}
+
+func TestResponsibilityBadge_HumanBlockOnlyWhenFlagSet(t *testing.T) {
+	// An agent task with deps but no BlockedByHuman flag set
+	// stays plain AGENT. The flag is set explicitly by the
+	// dep-lookup pass; without it (lookup failed, blocker not
+	// in current fetch, etc.) we don't speculate.
+	deps := beads.Issue{
+		Labels:          []string{"src:agent"},
+		DependencyCount: 1,
+		BlockedByHuman:  false,
+	}
+	got := responsibilityBadgeFor(deps)
+	if !strings.Contains(got, "AGENT") {
+		t.Errorf("agent task with deps but flag unset stays AGENT; got %q", got)
+	}
+	if strings.Contains(got, "HUMAN-BLOCK") {
+		t.Errorf("HUMAN-BLOCK must require the explicit flag; got %q", got)
 	}
 }

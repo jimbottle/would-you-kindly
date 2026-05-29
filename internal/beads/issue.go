@@ -41,6 +41,16 @@ type Issue struct {
 	// have the auto-close machinery active vs. which are just being
 	// tracked.
 	WykHooked bool `json:"-"`
+
+	// BlockedByHuman is true when this issue's `src:agent` AND its
+	// dependency set contains at least one issue carrying the
+	// `human` label — i.e. the agent owns this task but the next
+	// move is a human's. The TUI uses it to render a HUMAN-BLOCK
+	// badge so the inbox imperative ('work these now') doesn't
+	// fire on rows the agent literally can't unblock. Populated
+	// post-Fetch by MultiBDSource after a per-workspace
+	// `bd dep list` batch lookup; same-workspace only for v1.
+	BlockedByHuman bool `json:"-"`
 }
 
 // HasLabel reports whether the issue carries the given label.

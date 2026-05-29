@@ -102,6 +102,23 @@ func (c *Client) ListAll(ctx context.Context) ([]Issue, error) {
 	return parseIssues(out)
 }
 
+// ListDeps runs `bd dep list <id> --json` and returns the issues
+// that block the given id (i.e. its direct dependencies). Each
+// returned Issue carries the full field set including labels, so
+// callers checking "is this blocker a human task?" can answer
+// without a second lookup. Multi-ID batching is intentionally not
+// exposed: bd's batch response is flat and doesn't tag which
+// blocker belongs to which queried id, so callers must do
+// per-issue lookups to maintain the per-row attribution the TUI's
+// HUMAN-BLOCK badge depends on.
+func (c *Client) ListDeps(ctx context.Context, id string) ([]Issue, error) {
+	out, err := c.run(ctx, nil, "dep", "list", id, "--json")
+	if err != nil {
+		return nil, err
+	}
+	return parseIssues(out)
+}
+
 // Show runs `bd show <id> --json` and returns the single Issue,
 // which carries the full field set (description AND notes — the
 // list/query endpoints drop one or the other for efficiency).

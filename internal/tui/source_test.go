@@ -671,3 +671,56 @@ func TestMultiBDSource_WriteRoutesByRepoNotID(t *testing.T) {
 		t.Errorf("beta should have received Close(shared-1); got %+v", b.closed)
 	}
 }
+
+func TestIsAgentInboxCandidate(t *testing.T) {
+	// Pin the predicate the dep-lookup pass uses to filter rows.
+	// Wrong here → we either skip rows that need the HUMAN-BLOCK
+	// check or do N pointless bd calls for rows that can't be
+	// blocked-by-human.
+	cases := []struct {
+		name string
+		i    beads.Issue
+		want bool
+	}{
+		{
+			name: "human-flagged-skipped",
+			i:    beads.Issue{Labels: []string{"src:agent", "human"}, DependencyCount: 1},
+			want: false,
+		},
+		{
+			name: "no-deps-skipped",
+			i:    beads.Issue{Labels: []string{"src:agent"}, DependencyCount: 0},
+			want: false,
+		},
+		{
+			name: "no-src-agent-skipped",
+			i:    beads.Issue{Labels: []string{"src:human"}, DependencyCount: 2},
+			want: false,
+		},
+		{
+			name: "agent-with-deps-and-not-human-is-the-target",
+			i:    beads.Issue{Labels: []string{"src:agent"}, DependencyCount: 1},
+			want: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isAgentInboxCandidate(c.i); got != c.want {
+				t.Errorf("isAgentInboxCandidate(%+v) = %v, want %v", c.i, got, c.want)
+			}
+		})
+	}
+}
+
+func TestMarkBlockedByHuman_NilClientNoOps(t *testing.T) {
+	// Single-repo callers without a real Client (e.g. test
+	// scaffolding) must not crash markBlockedByHuman; it should
+	// return immediately and leave the flag unset.
+	issues := []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}, DependencyCount: 1},
+	}
+	markBlockedByHuman(t.Context(), nil, issues)
+	if issues[0].BlockedByHuman {
+		t.Error("nil client should leave BlockedByHuman = false")
+	}
+}

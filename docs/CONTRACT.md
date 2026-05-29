@@ -128,11 +128,19 @@ is to pick up the highest-priority one and resume — that's the loop
 the round-trip is designed to enable. Letting inbox items
 accumulate without action defeats the contract.
 
-Exceptions are narrow: the user is mid-conversation about something
-explicitly urgent (production fire, release window), or the
-"What unblocks me when this returns" artifact is genuinely missing
-(in which case re-flag `human` with a note explaining what's still
-needed — don't sit silently with a half-resolved issue).
+Exceptions are narrow:
+
+- The user is mid-conversation about something explicitly urgent
+  (production fire, release window).
+- The "What unblocks me when this returns" artifact is genuinely
+  missing (re-flag `human` with a note explaining what's still
+  needed — don't sit silently with a half-resolved issue).
+- The row renders as **HUMAN-BLOCK** in the TUI's `owner` column.
+  This is an `src:agent` issue with at least one `human`-labeled
+  blocker via `bd dep add`. The agent cannot make progress on
+  these rows until the blocker closes; the convention treats them
+  as inbox-excluded so the "work them now" imperative does not
+  fire on tasks that can't move.
 
 ## Status lifecycle
 

@@ -64,7 +64,53 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 	}
 	hooked := wykHookInstalled(s.Client.Dir)
 	decorateIssues(issues, s.Name, func() string { return gitBranch(ctx, s.Client.Dir) }, hooked)
+	markBlockedByHuman(ctx, s.Client, issues)
 	return issues, nil
+}
+
+// markBlockedByHuman runs `bd dep list <id>` in parallel for every
+// candidate issue (src:agent + NOT human + DependencyCount > 0) and
+// stamps Issue.BlockedByHuman=true on any whose blocker set
+// includes a human-labeled task. Best-effort: ListDeps errors are
+// swallowed so a flaky bd call only loses the badge for that row,
+// not the whole fetch.
+//
+// Same-workspace only — the blocker has to be reachable via the
+// same bd Client. Cross-workspace deps (rare in practice) fall
+// through and the row keeps the plain AGENT badge.
+func markBlockedByHuman(ctx context.Context, c *beads.Client, issues []beads.Issue) {
+	if c == nil {
+		return
+	}
+	var wg sync.WaitGroup
+	for i := range issues {
+		if !isAgentInboxCandidate(issues[i]) {
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			deps, err := c.ListDeps(ctx, issues[i].ID)
+			if err != nil {
+				return
+			}
+			for _, d := range deps {
+				if d.IsHuman() {
+					issues[i].BlockedByHuman = true
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// isAgentInboxCandidate reports whether the issue is in scope for
+// the HUMAN-BLOCK dep-aware check: src:agent (the agent owns it),
+// NOT human-flagged (so the badge isn't HUMAN already), and has
+// at least one dependency (no point shelling out otherwise).
+func isAgentInboxCandidate(i beads.Issue) bool {
+	return i.HasLabel("src:agent") && !i.IsHuman() && i.DependencyCount > 0
 }
 
 // decorateIssues stamps every issue with Repo=name, a lazily-

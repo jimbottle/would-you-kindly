@@ -311,11 +311,19 @@ is no longer blocking on — the artifact you needed has arrived,
 the decision is made, the credential is in place. Treating them as
 "things to handle later" defeats the round-trip.
 
-Exceptions: the user is mid-conversation about something explicitly
-urgent (a production fire, a release window closing), or the inbox
-item's "What unblocks me when this returns" artifact is actually
-missing (the human bounced it back without finishing — re-flag
-`human` and explain in a note, don't just sit on it).
+Exceptions:
+- The user is mid-conversation about something explicitly urgent
+  (a production fire, a release window closing).
+- The inbox item's "What unblocks me when this returns" artifact
+  is actually missing (the human bounced it back without
+  finishing — re-flag `human` and explain in a note, don't just
+  sit on it).
+- The row renders as **HUMAN-BLOCK** in the TUI's `owner` column.
+  HUMAN-BLOCK means the agent owns the task but one of its
+  dependencies is a human-flagged task — the blocker isn't closed
+  yet, so progress is literally impossible until the human acts
+  on the dep. Skip to the next inbox item; revisit when the
+  blocker closes.
 
 If you're between explicit user requests and the inbox has items,
 pick the highest-priority one and resume — that's the loop the

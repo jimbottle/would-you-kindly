@@ -52,10 +52,16 @@ the human is no longer blocking the agent — the artifact has
 arrived, the decision is made. Treating them as 'things to handle
 later' defeats the round-trip.
 
-Exceptions: the user is mid-conversation about something explicitly
-urgent, or the 'What unblocks me when this returns' artifact is
-actually missing (in which case re-flag 'human' with a note and
-move on; don't sit silently).
+Exceptions:
+  - The user is mid-conversation about something explicitly
+    urgent.
+  - The 'What unblocks me when this returns' artifact is actually
+    missing (re-flag 'human' with a note explaining what's still
+    needed; don't sit silently).
+  - The row renders as HUMAN-BLOCK in the TUI — an agent task
+    whose dependency set includes a human-labeled task. The
+    blocker isn't closed yet, so the agent literally can't move
+    this row forward. Skip to the next inbox item.
 
 Status lifecycle (pick the right one when filing or updating)
 -------------------------------------------------------------
