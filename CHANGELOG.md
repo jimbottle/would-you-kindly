@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (nothing yet)
 
+## [0.3.3] — 2026-05-29
+
+Patch — fixes the `wyk update` cache trap surfaced testing v0.3.2's
+release flow. Recommended for everyone on v0.3.0/v0.3.1/v0.3.2.
+
+### Fixed
+
+- **`wyk update` now bypasses the 24h cache** and live-fetches the
+  release page every invocation. Previously, if the cache was last
+  refreshed mid-cycle (e.g. when only `v0.3.0-alpha` was tagged),
+  `wyk update` returned the stale answer (`already on v0.3.0
+  (latest is v0.3.0-alpha)`) until the TTL expired — so the user
+  couldn't actually update for ~24h after each release. The TUI
+  nudge and `wyk doctor` keep using the cache (advisory, latency-
+  sensitive). `wyk update` now persists the fresh result back to
+  the cache so the next nudge reflects the same view the user just
+  saw.
+- New `updater.PersistLatest(rels)` helper centralises the
+  cache-write side effect; reused by `LatestCached` and by the
+  new `wyk update` post-fetch write.
+
+### Internals
+
+- `liveFetcher` package var seam in `cmd/wyk/update.go` lets the
+  channel-dispatch tests stub the live fetch without network I/O.
+  Tests no longer depend on the cache file as the source of
+  truth.
+
 ## [0.3.2] — 2026-05-29
 
 Research-driven TUI polish round. 12 commits since v0.3.1 — five new
@@ -708,7 +736,8 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.3
 [0.3.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.2
 [0.3.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.1
 [0.3.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0

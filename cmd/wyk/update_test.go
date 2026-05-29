@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -129,23 +130,26 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(b)
 }
 
+// stubLiveFetcher swaps liveFetcher for the duration of a test
+// and points XDG_CACHE_HOME at a per-test tempdir so PersistLatest
+// doesn't trample the user's real cache.
+func stubLiveFetcher(t *testing.T, rels []updater.Release) func() {
+	t.Helper()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	prev := liveFetcher
+	liveFetcher = func(_ context.Context) ([]updater.Release, error) { return rels, nil }
+	return func() { liveFetcher = prev }
+}
+
 func TestRunUpdate_ChannelStablePicksTheStable(t *testing.T) {
-	// Plant a cache page: prerelease at [0], stable beneath. The
+	// Stub the live fetch: prerelease at [0], stable beneath. The
 	// stable-channel dispatch must pick the stable, NOT abort with
-	// "latest is a prerelease" (the bug fixed in this commit).
-	cacheDir := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cacheDir)
-	path, _ := updater.CachePath()
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	entry := map[string]any{
-		"checked_at": time.Now().Format(time.RFC3339),
-		"releases": []map[string]any{
-			{"tag_name": "v0.9.9-alpha", "prerelease": true},
-			{"tag_name": "v0.9.0", "prerelease": false},
-		},
-	}
-	b, _ := json.Marshal(entry)
-	_ = os.WriteFile(path, b, 0o644)
+	// "latest is a prerelease".
+	restore := stubLiveFetcher(t, []updater.Release{
+		{TagName: "v0.9.9-alpha", Prerelease: true},
+		{TagName: "v0.9.0", Prerelease: false},
+	})
+	defer restore()
 
 	out := captureStdout(t, func() {
 		if code := runUpdate([]string{"-channel", "stable", "-dry-run"}); code != 0 {
@@ -163,19 +167,11 @@ func TestRunUpdate_ChannelStablePicksTheStable(t *testing.T) {
 func TestRunUpdate_ChannelAnyPicksThePrerelease(t *testing.T) {
 	// `-channel any` is the default. With a prerelease at [0],
 	// it should choose THAT (the absolute newest).
-	cacheDir := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cacheDir)
-	path, _ := updater.CachePath()
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	entry := map[string]any{
-		"checked_at": time.Now().Format(time.RFC3339),
-		"releases": []map[string]any{
-			{"tag_name": "v0.9.9-alpha", "prerelease": true},
-			{"tag_name": "v0.9.0", "prerelease": false},
-		},
-	}
-	b, _ := json.Marshal(entry)
-	_ = os.WriteFile(path, b, 0o644)
+	restore := stubLiveFetcher(t, []updater.Release{
+		{TagName: "v0.9.9-alpha", Prerelease: true},
+		{TagName: "v0.9.0", Prerelease: false},
+	})
+	defer restore()
 
 	out := captureStdout(t, func() {
 		if code := runUpdate([]string{"-channel", "any", "-dry-run"}); code != 0 {
@@ -191,22 +187,39 @@ func TestRunUpdate_ChannelStableAllPrereleasesExitsCleanly(t *testing.T) {
 	// All entries in the page are prereleases — `-channel stable`
 	// has nothing to install. Must exit 0 (not an error) with a
 	// stderr line pointing the user at `-channel any`.
-	cacheDir := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cacheDir)
-	path, _ := updater.CachePath()
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	entry := map[string]any{
-		"checked_at": time.Now().Format(time.RFC3339),
-		"releases": []map[string]any{
-			{"tag_name": "v0.9.9-alpha", "prerelease": true},
-			{"tag_name": "v0.9.9-beta1", "prerelease": true},
-		},
-	}
-	b, _ := json.Marshal(entry)
-	_ = os.WriteFile(path, b, 0o644)
+	restore := stubLiveFetcher(t, []updater.Release{
+		{TagName: "v0.9.9-alpha", Prerelease: true},
+		{TagName: "v0.9.9-beta1", Prerelease: true},
+	})
+	defer restore()
 
 	if code := runUpdate([]string{"-channel", "stable", "-dry-run"}); code != 0 {
 		t.Errorf("all-prereleases stable channel should exit 0 (informational), not an error; got %d", code)
+	}
+}
+
+func TestRunUpdate_LiveResultIsPersistedForNextNudge(t *testing.T) {
+	// Regression for cqq: runUpdate must write the fresh fetch
+	// back to the cache so the next TUI nudge reflects what the
+	// user just saw — without this, the user could install v0.3.2
+	// via wyk update, then open the TUI and still see a "↑ wyk
+	// v0.3.2 available" nudge against their old cached snapshot.
+	restore := stubLiveFetcher(t, []updater.Release{
+		{TagName: "v9.9.9", Prerelease: false},
+	})
+	defer restore()
+
+	if code := runUpdate([]string{"-dry-run"}); code != 0 {
+		t.Fatalf("runUpdate dry-run exit %d, want 0", code)
+	}
+
+	// Cache should now reflect the live result.
+	rels, _, err := updater.LatestCached(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("LatestCached after runUpdate: %v", err)
+	}
+	if len(rels) == 0 || rels[0].TagName != "v9.9.9" {
+		t.Errorf("expected cache to contain v9.9.9 after runUpdate; got %+v", rels)
 	}
 }
 

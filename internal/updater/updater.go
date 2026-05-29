@@ -130,6 +130,29 @@ func CachePath() (string, error) {
 	return filepath.Join(home, ".cache", "wyk", "update.json"), nil
 }
 
+// PersistLatest writes a fresh release-page snapshot to the cache
+// so subsequent reads (TUI nudge, doctor stanza, next LatestCached
+// within the TTL) see the up-to-date list. Used by callers that
+// did their own live fetch and want to share the result. Empty
+// slices are silently ignored; cache-path errors are returned but
+// callers typically swallow them — this is best-effort
+// enrichment, not load-bearing for the caller's flow.
+func PersistLatest(rels []Release) error {
+	if len(rels) == 0 {
+		return nil
+	}
+	path, err := CachePath()
+	if err != nil {
+		return err
+	}
+	entry := cacheEntry{
+		CheckedAt: time.Now(),
+		Latest:    rels[0],
+		Releases:  rels,
+	}
+	return writeCache(path, entry)
+}
+
 // LatestCached returns the page of recent releases wyk knows
 // about (newest-first), re-fetching live when the cache is
 // missing, malformed, or older than CacheTTL. The returned bool

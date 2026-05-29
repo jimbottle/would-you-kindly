@@ -42,10 +42,31 @@ func runUpdate(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	rels, _, err := updater.LatestCached(ctx, nil)
+	// Always live-fetch when the user explicitly asks. The 24h
+	// cache is fine for the TUI nudge and `wyk doctor` (advisory
+	// surfaces, latency-sensitive), but `wyk update` is the user
+	// asking "what's actually out there RIGHT NOW" — bypass the
+	// cache so a stale snapshot from earlier in the day can't lie.
+	// Fall back to the cache silently on network error: if GitHub
+	// is unreachable the user at least sees whatever the last
+	// successful check found.
+	//
+	// liveFetcher is a swappable seam so tests can plant a fixed
+	// release page without hitting api.github.com.
+	rels, err := liveFetcher(ctx)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "wyk update: cannot check for releases:", err)
-		return 1
+		cached, _, cerr := updater.LatestCached(ctx, nil)
+		if cerr != nil || len(cached) == 0 {
+			fmt.Fprintln(os.Stderr, "wyk update: cannot check for releases:", err)
+			return 1
+		}
+		rels = cached
+		fmt.Fprintf(os.Stderr, "wyk update: live check failed (%v); falling back to cached snapshot\n", err)
+	} else {
+		// Write the fresh result back so the next TUI nudge /
+		// doctor stanza reflects it immediately. Best-effort —
+		// the install still proceeds if the cache write fails.
+		_ = updater.PersistLatest(rels)
 	}
 	if len(rels) == 0 {
 		fmt.Fprintln(os.Stderr, "wyk update: no releases known")
@@ -108,6 +129,13 @@ func runUpdate(args []string) int {
 	}
 	fmt.Printf("wyk update: installed %s — open a new shell or rehash $PATH if `wyk --version` still reports the old version\n", rel.TagName)
 	return 0
+}
+
+// liveFetcher is the seam for runUpdate's live release fetch.
+// Production points at the real GitHub API call; tests swap it
+// out so they can return canned pages without network I/O.
+var liveFetcher = func(ctx context.Context) ([]updater.Release, error) {
+	return updater.LatestLive(ctx, nil)
 }
 
 // extractCurrentTag pulls the version token out of a versionString
