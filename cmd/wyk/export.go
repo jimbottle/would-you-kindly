@@ -32,12 +32,13 @@ func runExport(args []string) int {
 	// the full dump, matching the historical behavior.
 	since := fs.String("since", "", "filter issues to those updated within this duration (e.g. 24h, 168h)")
 	compact := fs.Bool("compact", false, "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)")
+	repoName := fs.String("repo", "", "restrict the dump to the registered repo with this name (empty = full registry)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-compact]")
+		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-compact] [-repo name]")
 		return 64
 	}
 	var cutoff time.Time
@@ -63,6 +64,15 @@ func runExport(args []string) int {
 	if len(reg.Repos) == 0 {
 		fmt.Fprintln(os.Stderr, "wyk export: no repos registered. Run `wyk init` in a bd workspace first.")
 		return 1
+	}
+
+	if *repoName != "" {
+		filtered, err := filterRegistryByName(reg, *repoName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk export:", err)
+			return 1
+		}
+		reg = filtered
 	}
 
 	dump, hadError := collectExport(reg, defaultExportClient)
@@ -166,6 +176,19 @@ func collectExport(reg *registry.Registry, mk func(dir string) exportClient) (ex
 	}
 	sort.Slice(dump.Repos, func(i, j int) bool { return dump.Repos[i].Name < dump.Repos[j].Name })
 	return dump, hadError
+}
+
+// filterRegistryByName returns a new *Registry containing only
+// the repo whose Name matches (case-sensitive). Empty if no
+// match — returns a typed error so the caller can render a
+// targeted message naming the requested repo.
+func filterRegistryByName(reg *registry.Registry, name string) (*registry.Registry, error) {
+	for _, r := range reg.Repos {
+		if r.Name == name {
+			return &registry.Registry{Repos: []registry.Repo{r}}, nil
+		}
+	}
+	return nil, fmt.Errorf("no registered repo named %q (run `wyk registry list` to see registered names)", name)
 }
 
 // filterDumpSince trims each repo's Issues slice to issues whose

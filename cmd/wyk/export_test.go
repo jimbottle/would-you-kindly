@@ -147,6 +147,23 @@ func TestFilterDumpSince_EmptyRepoStaysInDump(t *testing.T) {
 	}
 }
 
+func TestFilterRegistryByName(t *testing.T) {
+	reg := &registry.Registry{Repos: []registry.Repo{
+		{Name: "alpha", Path: "/tmp/a"},
+		{Name: "beta", Path: "/tmp/b"},
+	}}
+	got, err := filterRegistryByName(reg, "beta")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(got.Repos) != 1 || got.Repos[0].Name != "beta" {
+		t.Errorf("filtered Repos=%v, want [beta]", got.Repos)
+	}
+	if _, err := filterRegistryByName(reg, "ghost"); err == nil {
+		t.Error("missing name should error")
+	}
+}
+
 func TestEmitExportJSON_ShapeAndIndentation(t *testing.T) {
 	dump := exportDump{
 		ExportedAt: time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC),
