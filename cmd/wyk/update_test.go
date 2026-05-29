@@ -252,7 +252,7 @@ func TestRunUpdate_LiveFailureFallsBackToCacheWithWarning(t *testing.T) {
 	// advertise.
 	if err := updater.PersistLatest([]updater.Release{
 		{TagName: "v8.8.8", Prerelease: false},
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,5 +290,61 @@ func TestRunUpdate_LiveFailureNoCacheExitsOne(t *testing.T) {
 
 	if code := runUpdate([]string{"-dry-run"}); code != 1 {
 		t.Errorf("live failure with no cache should exit 1; got %d", code)
+	}
+}
+
+func TestReadUpdateNudge_StableChannelFiltersOutPrereleases(t *testing.T) {
+	// User who pinned -channel stable previously: cache holds
+	// both a prerelease at [0] and a stable at [1]. The nudge
+	// must advertise the stable, not the prerelease.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if err := updater.PersistLatest([]updater.Release{
+		{TagName: "v9.9.9-alpha", Prerelease: true},
+		{TagName: "v9.9.0", Prerelease: false},
+	}, "stable"); err != nil {
+		t.Fatal(err)
+	}
+	nudge := readUpdateNudge("wyk v0.3.0")
+	if !strings.Contains(nudge, "v9.9.0") {
+		t.Errorf("stable-channel nudge should advertise the stable; got %q", nudge)
+	}
+	if strings.Contains(nudge, "v9.9.9-alpha") {
+		t.Errorf("stable-channel nudge MUST NOT advertise the prerelease; got %q", nudge)
+	}
+}
+
+func TestReadUpdateNudge_AnyChannelAdvertisesAbsoluteNewest(t *testing.T) {
+	// Default ("any") and explicit "any" both surface the
+	// absolute newest, prerelease or not.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if err := updater.PersistLatest([]updater.Release{
+		{TagName: "v9.9.9-alpha", Prerelease: true},
+		{TagName: "v9.9.0", Prerelease: false},
+	}, "any"); err != nil {
+		t.Fatal(err)
+	}
+	nudge := readUpdateNudge("wyk v0.3.0")
+	if !strings.Contains(nudge, "v9.9.9-alpha") {
+		t.Errorf("any-channel nudge should advertise the absolute newest; got %q", nudge)
+	}
+}
+
+func TestPersistLatest_PreservesChannelWhenEmptyArg(t *testing.T) {
+	// Background update check should NOT clobber a previously-set
+	// channel preference. First call sets it; second call with
+	// channel="" leaves it intact.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if err := updater.PersistLatest([]updater.Release{{TagName: "v1.0.0"}}, "stable"); err != nil {
+		t.Fatal(err)
+	}
+	if got := updater.CachedChannel(); got != "stable" {
+		t.Fatalf("setup: expected channel=stable; got %q", got)
+	}
+	// Simulate a background check: pass channel="".
+	if err := updater.PersistLatest([]updater.Release{{TagName: "v1.0.1"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := updater.CachedChannel(); got != "stable" {
+		t.Errorf("background check should preserve stored channel; got %q", got)
 	}
 }

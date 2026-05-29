@@ -66,10 +66,12 @@ func runUpdate(args []string) int {
 		rels = cached
 		fmt.Fprintf(os.Stderr, "wyk update: live check failed (%v); falling back to cached snapshot\n", err)
 	} else {
-		// Write the fresh result back so the next TUI nudge /
-		// doctor stanza reflects it immediately. Best-effort —
-		// the install still proceeds if the cache write fails.
-		_ = updater.PersistLatest(rels)
+		// Write the fresh result AND remember the user's chosen
+		// channel so the next TUI nudge advertises a release in
+		// that channel (no prerelease nudges for a user who
+		// pinned -channel stable). Best-effort — the install
+		// still proceeds if the cache write fails.
+		_ = updater.PersistLatest(rels, *channel)
 	}
 	if len(rels) == 0 {
 		fmt.Fprintln(os.Stderr, "wyk update: no releases known")
@@ -173,17 +175,29 @@ func readUpdateNudge(currentVer string) string {
 	var entry struct {
 		Latest   updater.Release   `json:"latest"`
 		Releases []updater.Release `json:"releases"`
+		Channel  string            `json:"channel,omitempty"`
 	}
 	if err := json.Unmarshal(b, &entry); err != nil {
 		return ""
 	}
-	// Prefer Releases (new schema) but fall back to Latest so a
-	// cache written by an older wyk still produces a nudge.
+	// Pick the tag the nudge should advertise, respecting the
+	// user's last-used channel: "stable" → newest non-prerelease;
+	// anything else (empty/"any") → newest of any kind. Without
+	// this, a stable-channel user sees a nudge toward a release
+	// `wyk update` would then decline to install.
 	var tag string
 	switch {
 	case len(entry.Releases) > 0:
-		tag = entry.Releases[0].TagName
+		if entry.Channel == "stable" {
+			tag = updater.PickStable(entry.Releases).TagName
+		} else {
+			tag = entry.Releases[0].TagName
+		}
 	case entry.Latest.TagName != "":
+		// Legacy cache from v0.3.0 only carried Latest. We can't
+		// channel-filter it, so just surface what's there — the
+		// next `wyk update` call will rewrite the cache with a
+		// Releases slice the nudge can filter properly.
 		tag = entry.Latest.TagName
 	}
 	if tag == "" {

@@ -52,10 +52,15 @@ type Release struct {
 // so callers can pick the right one for a given channel without
 // re-hitting the network. Latest is preserved as a backwards-
 // compatible convenience for older readers — same as Releases[0].
+// Channel records the user's last-used `wyk update -channel` value
+// so the TUI/doctor nudge can advertise a release the user will
+// actually install (e.g. don't nudge toward a prerelease for a
+// user who pinned -channel stable).
 type cacheEntry struct {
 	CheckedAt time.Time `json:"checked_at"`
 	Latest    Release   `json:"latest"`
 	Releases  []Release `json:"releases"`
+	Channel   string    `json:"channel,omitempty"`
 }
 
 // LatestLive fetches the most recent releases from the GitHub API,
@@ -159,7 +164,13 @@ func CachedOnly() ([]Release, error) {
 // slices are silently ignored; cache-path errors are returned but
 // callers typically swallow them — this is best-effort
 // enrichment, not load-bearing for the caller's flow.
-func PersistLatest(rels []Release) error {
+//
+// channel records the user's preference so the TUI nudge can
+// advertise the right release on the next paint. Empty string
+// preserves whatever value the previous cache entry held (so the
+// background update-check path doesn't clobber a preference set
+// by an earlier explicit `wyk update -channel ...` call).
+func PersistLatest(rels []Release, channel string) error {
 	if len(rels) == 0 {
 		return nil
 	}
@@ -171,8 +182,33 @@ func PersistLatest(rels []Release) error {
 		CheckedAt: time.Now(),
 		Latest:    rels[0],
 		Releases:  rels,
+		Channel:   channel,
+	}
+	if channel == "" {
+		// Preserve the previously-saved preference instead of
+		// blanking it on a background check.
+		if prev, perr := readCache(path); perr == nil {
+			entry.Channel = prev.Channel
+		}
 	}
 	return writeCache(path, entry)
+}
+
+// CachedChannel returns the user's last-saved channel preference,
+// or "any" when no cache exists / no preference recorded.
+func CachedChannel() string {
+	path, err := CachePath()
+	if err != nil {
+		return "any"
+	}
+	entry, err := readCache(path)
+	if err != nil {
+		return "any"
+	}
+	if entry.Channel == "" {
+		return "any"
+	}
+	return entry.Channel
 }
 
 // LatestCached returns the page of recent releases wyk knows
