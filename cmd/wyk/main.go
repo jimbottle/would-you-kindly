@@ -342,6 +342,8 @@ func runHandoff(args []string) int {
 		"priority for the newly-created issue (only used with -create; 0-4 or P0-P4)")
 	issueType := fs.String("type", "task",
 		"issue type for the newly-created issue (only used with -create)")
+	note := fs.String("note", "",
+		"after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -437,6 +439,18 @@ func runHandoff(args []string) int {
 		return handoffErrExit(err, "wyk handoff:")
 	}
 	fmt.Printf("handed %s to human (%d-byte runbook)\n", id, len(runbook))
+
+	// -note posts a bd note AFTER the handoff lands so the timeline
+	// reads chronologically: runbook set → handed off → annotation.
+	// A note failure is reported but not fatal — the handoff itself
+	// succeeded, so exit 0 with a warning rather than 1.
+	if *note != "" {
+		if err := client.Note(context.Background(), id, *note); err != nil {
+			fmt.Fprintf(os.Stderr, "wyk handoff: note failed (handoff itself succeeded): %v\n", err)
+		} else {
+			fmt.Printf("noted %s: %s\n", id, *note)
+		}
+	}
 	return 0
 }
 
