@@ -308,10 +308,17 @@ type tickMsg struct{ gen int }
 // overwritten before the timer fired) can't wipe the current one.
 type flashClearMsg struct{ gen int }
 
-// flashClearDelay is how long a status banner sticks before
-// auto-clearing. Short enough not to feel stale on the next
-// glance; long enough to read.
-const flashClearDelay = 4 * time.Second
+// flashClearDelay is how long a SUCCESS status banner sticks
+// before auto-clearing. Short enough not to feel stale on the
+// next glance; long enough to read. var (not const) so tests can
+// lower it to keep `go test` snappy — tea.Tick blocks the
+// invoking goroutine for the full delay, and the test suite drains
+// these commands synchronously.
+//
+// Failure banners are NOT auto-cleared (see handleWriteResult's
+// error branch): a user who glances away during a bd write
+// shouldn't lose the error text before they can read it.
+var flashClearDelay = 4 * time.Second
 
 func flashClearCmd(gen int) tea.Cmd {
 	return tea.Tick(flashClearDelay, func(_ time.Time) tea.Msg {
@@ -852,7 +859,11 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setStatus(fmt.Sprintf("%s %s failed: %s", msg.action, msg.id, msg.err.Error()))
 		}
-		return m, flashClearCmd(m.statusGen)
+		// Errors stay until the next user action (any keystroke in
+		// updateList clears m.status). A 4s auto-wipe is too short
+		// for a user who glances away to read the full bd
+		// complaint.
+		return m, nil
 	}
 	switch msg.action {
 	case "close":

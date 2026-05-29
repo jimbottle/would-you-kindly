@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -626,6 +627,11 @@ func TestNote_EmptyInputCancels(t *testing.T) {
 }
 
 func TestWriteResult_SuccessTriggersRefetchAndSetsBanner(t *testing.T) {
+	// Shorten the auto-clear delay so synchronously invoking the
+	// returned cmd doesn't block on tea.Tick's underlying timer.
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
 	pre := s.calls
@@ -638,10 +644,9 @@ func TestWriteResult_SuccessTriggersRefetchAndSetsBanner(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("successful write should refetch")
 	}
-	// handleWriteResult now returns tea.Batch(fetchCmd, flashClearCmd).
-	// tea.Batch's resulting Cmd produces a tea.BatchMsg containing
-	// the inner cmds — drain them through Update so the fetch
-	// goroutine actually fires against the stub.
+	// handleWriteResult returns tea.Batch(fetchCmd, flashClearCmd).
+	// Drain the BatchMsg so the inner fetch cmd actually fires
+	// against the stub.
 	if msg := cmd(); msg != nil {
 		if bm, ok := msg.(tea.BatchMsg); ok {
 			for _, inner := range bm {
@@ -656,31 +661,33 @@ func TestWriteResult_SuccessTriggersRefetchAndSetsBanner(t *testing.T) {
 	}
 }
 
+// withFlashClearDelay shortens flashClearDelay for the duration of
+// a test so synchronously invoking the auto-clear cmd doesn't
+// block on tea.Tick's underlying time.NewTimer (~4s of dead air
+// per test that drains the batched cmd). Returns the restore
+// function; callers defer it.
+func withFlashClearDelay(t *testing.T, d time.Duration) func() {
+	t.Helper()
+	prev := flashClearDelay
+	flashClearDelay = d
+	return func() { flashClearDelay = prev }
+}
+
 func TestWriteResult_FailureSurfacesInBanner(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
-	preCalls := s.calls
 
 	model, cmd := m.Update(writeMsg{
 		action: "close", id: "wyk-42",
 		err: errors.New("bd: issue is pinned"),
 	})
 	m = model.(Model)
-	// Failed write returns ONLY the flashClearCmd (no refetch).
-	// Drain it to confirm the fetch path was NOT triggered.
+	// Failed writes intentionally return no cmd — errors stay
+	// sticky until the next keystroke so a user who glances away
+	// doesn't lose the error text before reading it. (Also
+	// happens to keep the test fast — no tea.Tick to drain.)
 	if cmd != nil {
-		if msg := cmd(); msg != nil {
-			if bm, ok := msg.(tea.BatchMsg); ok {
-				for _, inner := range bm {
-					if inner != nil {
-						_ = inner()
-					}
-				}
-			}
-		}
-	}
-	if s.calls != preCalls {
-		t.Errorf("failed write should NOT refetch; calls before=%d after=%d", preCalls, s.calls)
+		t.Errorf("failed write should NOT return a cmd (no refetch, no auto-clear); got %T", cmd)
 	}
 	if !strings.Contains(m.status, "close wyk-42 failed") {
 		t.Errorf("status should describe the failure; got %q", m.status)
@@ -1470,6 +1477,9 @@ func TestFlashAutoClear_ScheduledByWriteSuccess(t *testing.T) {
 	// produce a flashClearMsg tagged with the active statusGen.
 	// (The actual clear happens when Update receives that msg —
 	// we exercise that separately below.)
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
 	preGen := m.statusGen
