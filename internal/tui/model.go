@@ -91,9 +91,12 @@ type Mutator interface {
 	Note(ctx context.Context, issue beads.Issue, text string) error
 	// Create files a new issue with the given title in the named
 	// workspace. The repo arg is the BDSource/sub name; single-repo
-	// implementations ignore it. The new issue is labeled src:human
-	// (the user filed it) by convention. Returns the new ID.
-	Create(ctx context.Context, repo, title string) (string, error)
+	// implementations ignore it. assignee is the issue's owner —
+	// required to be non-empty by the caller (wyk's QuickAdd
+	// refuses to dispatch when m.me is empty) so every TUI-filed
+	// issue lands with an owner. The new issue is labeled
+	// src:human by convention. Returns the new ID.
+	Create(ctx context.Context, repo, title, assignee string) (string, error)
 	// Reopen sets a closed issue back to status=open. Backs the `u`
 	// undo-last-close key — paired with the Model's lastClosed*
 	// fields so the user gets a single-deep undo without the TUI
@@ -1054,8 +1057,19 @@ func (m Model) updateQuickAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "quick-add cancelled (empty title)"
 			return m, nil
 		}
+		// Refuse to file an orphan task. wyk's working assumption is
+		// every issue has an owner; the way to enforce that without
+		// putting up another prompt is to require the launcher pass
+		// -me (or have a defaultMe() result). The status banner
+		// names the fix so a user surprised by the refusal knows
+		// what to do.
+		if m.me == "" {
+			m.status = "quick-add cancelled: no owner. Re-launch with -me=you@example.com (or set git user.email / $USER)"
+			return m, nil
+		}
+		assignee := m.me
 		return m, runQuickAdd(func(ctx context.Context) (string, error) {
-			return mu.Create(ctx, repo, title)
+			return mu.Create(ctx, repo, title, assignee)
 		})
 	}
 	var cmd tea.Cmd
@@ -2078,27 +2092,16 @@ func paddedResponsibilityBadge(i beads.Issue) string {
 // responsibilityBadgeFor returns the badge for the "owner" column,
 // telling the reader whose move it is. Three branches in
 // precedence order:
-//   - has `human` label → one of the HUMAN variants (the
-//     human-needs-to-act signal trumps everything else)
-//   - has `src:agent` and no `human` → AGENT (the inbox case; the
-//     agent has the next move and the convention says they should
-//     be acting on it)
+//   - has `human` label → plain "HUMAN" (the human-needs-to-act
+//     signal trumps everything else; src distinction is dropped —
+//     a glance at the column should give a yes/no answer, not a
+//     three-way categorisation that buries the lede)
+//   - has `src:agent` and no `human` → AGENT or HUMAN-BLOCK
+//     depending on dep state
 //   - otherwise → empty (no responsibility signal applies)
-//
-// The HUMAN variants distinguish source: "← HUMAN" for agent-filed
-// (hot pink, the "needs your attention" hand-back), "· HUMAN" for
-// human-filed (muted blue), bare "HUMAN" for legacy issues with no
-// src label.
 func responsibilityBadgeFor(i beads.Issue) string {
 	if i.IsHuman() {
-		switch {
-		case i.HasLabel("src:agent"):
-			return humanBadgeAgent.Render("← HUMAN")
-		case i.HasLabel("src:human"):
-			return humanBadgeSelf.Render("· HUMAN")
-		default:
-			return humanBadge.Render("HUMAN")
-		}
+		return humanBadge.Render("HUMAN")
 	}
 	if i.HasLabel("src:agent") {
 		// HUMAN-BLOCK takes precedence over plain AGENT so a row

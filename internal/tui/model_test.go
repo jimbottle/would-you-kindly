@@ -36,12 +36,13 @@ func (s *stubSource) Fetch(_ context.Context, p filter.Preset) ([]beads.Issue, e
 // it through.
 type stubMutator struct {
 	stubSource
-	closed   []string
-	reopened []string
-	added    []labelOp
-	removed  []labelOp
-	notes    []labelOp // reuse the {id,label} shape for {id, text}
-	created  []labelOp // {repo, title} for quick-add
+	closed            []string
+	reopened          []string
+	added             []labelOp
+	removed           []labelOp
+	notes             []labelOp // reuse the {id,label} shape for {id, text}
+	created           []labelOp // {repo, title} for quick-add
+	createdAssignees  []string  // parallel slice to created, recording the assignee passed to Create
 }
 
 type labelOp struct{ id, label string }
@@ -62,8 +63,9 @@ func (s *stubMutator) Note(_ context.Context, i beads.Issue, text string) error 
 	s.notes = append(s.notes, labelOp{i.ID, text})
 	return nil
 }
-func (s *stubMutator) Create(_ context.Context, repo, title string) (string, error) {
+func (s *stubMutator) Create(_ context.Context, repo, title, assignee string) (string, error) {
 	s.created = append(s.created, labelOp{repo, title})
+	s.createdAssignees = append(s.createdAssignees, assignee)
 	return "new-id", nil
 }
 func (s *stubMutator) Reopen(_ context.Context, i beads.Issue) error {
@@ -240,19 +242,23 @@ func TestDisplayID_MultiRepoStripsPerRowRepo(t *testing.T) {
 	}
 }
 
-func TestHumanBadge_DistinguishesSource(t *testing.T) {
-	agent := beads.Issue{Labels: []string{"human", "src:agent"}}
-	self := beads.Issue{Labels: []string{"human", "src:human"}}
-	plain := beads.Issue{Labels: []string{"human"}}
-
-	if got := responsibilityBadgeFor(agent); !strings.Contains(got, "←") {
-		t.Errorf("src:agent badge should contain a left-arrow; got %q", got)
+func TestHumanBadge_AlwaysReadsHUMAN(t *testing.T) {
+	// All human-labeled issues render the same plain HUMAN badge
+	// regardless of src — the column is a yes/no signal, not a
+	// three-way categorisation.
+	cases := []beads.Issue{
+		{Labels: []string{"human", "src:agent"}},
+		{Labels: []string{"human", "src:human"}},
+		{Labels: []string{"human"}},
 	}
-	if got := responsibilityBadgeFor(self); !strings.Contains(got, "·") {
-		t.Errorf("src:human badge should contain a middle-dot; got %q", got)
-	}
-	if got := responsibilityBadgeFor(plain); strings.Contains(got, "←") || strings.Contains(got, "·") {
-		t.Errorf("unlabeled badge should be plain HUMAN; got %q", got)
+	for _, i := range cases {
+		got := responsibilityBadgeFor(i)
+		if !strings.Contains(got, "HUMAN") {
+			t.Errorf("badge should read HUMAN for %v; got %q", i.Labels, got)
+		}
+		if strings.Contains(got, "←") || strings.Contains(got, "·") {
+			t.Errorf("badge should be plain (no arrow/dot) for %v; got %q", i.Labels, got)
+		}
 	}
 }
 
@@ -866,7 +872,7 @@ func TestQuickAdd_DispatchesCreateWithCursorRepoAndTypedTitle(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
 		{ID: "a-1", Title: "alpha task", Repo: "alpha"},
 	}}}
-	m := applyMutatorFetched(New(s), s)
+	m := applyMutatorFetched(New(s).WithMe("ev"), s)
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
 	m = model.(Model)
@@ -895,6 +901,37 @@ func TestQuickAdd_DispatchesCreateWithCursorRepoAndTypedTitle(t *testing.T) {
 	}
 	if len(s.created) != 1 || s.created[0] != (labelOp{"alpha", "Fix the thing"}) {
 		t.Errorf("Mutator.Create not dispatched correctly; got %+v", s.created)
+	}
+	if len(s.createdAssignees) != 1 || s.createdAssignees[0] != "ev" {
+		t.Errorf("Create assignee should be m.me; got %v", s.createdAssignees)
+	}
+}
+
+func TestQuickAdd_RefusesWhenOwnerUnset(t *testing.T) {
+	// Owner enforcement: with m.me empty, quick-add should NOT
+	// dispatch a Create. The status banner names the fix (-me
+	// flag) so a user surprised by the refusal can recover.
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "alpha task", Repo: "alpha"},
+	}}}
+	m := applyMutatorFetched(New(s), s) // no WithMe → m.me == ""
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m = model.(Model)
+	for _, r := range "Orphan task" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if cmd != nil {
+		t.Errorf("quick-add with empty m.me should NOT dispatch; got cmd != nil")
+	}
+	if len(s.created) != 0 {
+		t.Errorf("Create should not have been called; got %v", s.created)
+	}
+	if !strings.Contains(m.status, "no owner") {
+		t.Errorf("status should explain the refusal; got %q", m.status)
 	}
 }
 

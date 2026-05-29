@@ -281,11 +281,15 @@ func (s *BDSource) Note(ctx context.Context, i beads.Issue, text string) error {
 // Create runs `bd create` with the given title and the src:human
 // label (this user filed it for themselves). The repo arg is ignored
 // in single-repo mode — BDSource only has one client to write to.
-func (s *BDSource) Create(ctx context.Context, _ /* repo */, title string) (string, error) {
+// assignee is the owner the new issue lands on; the caller is
+// responsible for refusing to dispatch when assignee is empty so
+// the orphan case never makes it to bd.
+func (s *BDSource) Create(ctx context.Context, _ /* repo */, title, assignee string) (string, error) {
 	return s.Client.Create(ctx, beads.CreateOptions{
 		Title:     title,
 		Labels:    []string{"src:human"},
 		IssueType: "task",
+		Assignee:  assignee,
 	})
 }
 
@@ -616,16 +620,16 @@ func (m *MultiBDSource) Detail(ctx context.Context, i beads.Issue) (beads.Issue,
 // empty, falls back to the first sub — the registry's first repo.
 // Empty repo is the multi-repo equivalent of "I'm not on any row
 // right now, just file it somewhere".
-func (m *MultiBDSource) Create(ctx context.Context, repo, title string) (string, error) {
+func (m *MultiBDSource) Create(ctx context.Context, repo, title, assignee string) (string, error) {
 	if repo == "" {
 		if len(m.subs) == 0 {
 			return "", fmt.Errorf("no registered workspaces to create in")
 		}
-		return m.subs[0].src.Create(ctx, "", title)
+		return m.subs[0].src.Create(ctx, "", title, assignee)
 	}
 	for _, sub := range m.subs {
 		if sub.name == repo {
-			return sub.src.Create(ctx, "", title)
+			return sub.src.Create(ctx, "", title, assignee)
 		}
 	}
 	return "", fmt.Errorf("repo %q not in subs", repo)

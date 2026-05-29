@@ -161,10 +161,16 @@ func (c *Client) Reopen(ctx context.Context, id string) error {
 
 // CreateOptions configures `bd create` invocations.
 type CreateOptions struct {
-	Title    string
-	Labels   []string // applied as --labels=a,b
-	Priority string   // empty means bd's default ("2")
-	IssueType string  // task / bug / feature / chore / epic / decision / spike / story / milestone
+	Title     string
+	Labels    []string // applied as --labels=a,b
+	Priority  string   // empty means bd's default ("2")
+	IssueType string   // task / bug / feature / chore / epic / decision / spike / story / milestone
+	// Assignee is the owner the new issue should land on (bd's
+	// `--assignee` flag). wyk enforces non-empty assignee for
+	// every TUI-filed issue — orphan tasks are the failure mode
+	// we want to make impossible at creation rather than chase
+	// down later.
+	Assignee string
 }
 
 // Create runs `bd create <title> --silent` with the given options
@@ -180,6 +186,9 @@ func (c *Client) Create(ctx context.Context, opts CreateOptions) (string, error)
 	}
 	if opts.IssueType != "" {
 		args = append(args, "--type="+opts.IssueType)
+	}
+	if opts.Assignee != "" {
+		args = append(args, "--assignee="+opts.Assignee)
 	}
 	out, err := c.run(ctx, nil, args...)
 	if err != nil {

@@ -29,24 +29,6 @@ var (
 			Bold(true).
 			Padding(0, 1)
 
-	// humanBadgeAgent renders the "agent handed this back" case —
-	// hot pink, the visual signal that something needs your attention.
-	// Reuses humanBadge's pink so the variant stays recognisable.
-	humanBadgeAgent = lipgloss.NewStyle().
-			Background(lipgloss.Color("212")).
-			Foreground(lipgloss.Color("232")).
-			Bold(true).
-			Padding(0, 1)
-
-	// humanBadgeSelf renders the "I filed this for myself" case —
-	// muted blue. Different enough at a glance that the eye can sort
-	// the two without reading the badge text.
-	humanBadgeSelf = lipgloss.NewStyle().
-			Background(lipgloss.Color("39")).
-			Foreground(lipgloss.Color("232")).
-			Bold(true).
-			Padding(0, 1)
-
 	// agentBadge renders the "agent's responsibility" case — green
 	// to read as "in flight / on it", distinct from the pink/blue
 	// HUMAN variants which read as "needs your attention". Surfaces

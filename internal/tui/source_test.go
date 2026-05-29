@@ -88,9 +88,11 @@ func (f *fakeRepoSource) Note(_ context.Context, i beads.Issue, text string) err
 	f.notes = append(f.notes, labelOp{i.ID, text})
 	return nil
 }
-func (f *fakeRepoSource) Create(_ context.Context, _, title string) (string, error) {
+func (f *fakeRepoSource) Create(_ context.Context, _, title, _ string) (string, error) {
 	// Stub returns a fake ID derived from the title so tests can
 	// assert which sub got routed to without wiring a real bd.
+	// The assignee arg is preserved in production but tests that
+	// care about it use the stubMutator's `created` slice.
 	return "new-" + title, nil
 }
 func (f *fakeRepoSource) Detail(_ context.Context, i beads.Issue) (beads.Issue, error) {
