@@ -608,7 +608,9 @@ func TestToggleHuman_AddsThenRemovesLabel(t *testing.T) {
 	}
 }
 
-func TestNote_PromptsAndDispatchesOnEnter(t *testing.T) {
+func TestNote_PromptsAndDispatchesOnCtrlS(t *testing.T) {
+	// modeNote now uses a multi-line textarea; submit is ctrl+s
+	// (enter inserts a newline so multi-line content survives).
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
 
@@ -618,37 +620,37 @@ func TestNote_PromptsAndDispatchesOnEnter(t *testing.T) {
 		t.Fatalf("`n` should enter modeNote; got %v", m.mode)
 	}
 
-	// type a note
-	for _, r := range "rotated 2026-05-28" {
-		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		m = model.(Model)
-	}
+	// Seed body directly — bubbles/textarea's character-input
+	// pipeline is exercised by the bubbles package's own tests;
+	// pinning every keystroke here would just couple us to its
+	// implementation. The behavior we care about is "submit
+	// sends Value() through".
+	m.noteArea.SetValue("rotated 2026-05-28\nfollowup step")
 
-	// enter dispatches the write and exits modeNote
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	m = model.(Model)
 	if m.mode != modeList {
-		t.Errorf("enter should return to list mode; got %v", m.mode)
+		t.Errorf("ctrl+s should return to list mode; got %v", m.mode)
 	}
 	if cmd == nil {
-		t.Fatal("enter with non-empty note should dispatch a write")
+		t.Fatal("ctrl+s with non-empty note should dispatch a write")
 	}
 	wm := cmd().(writeMsg)
 	if wm.action != "note" || wm.id != s.issues[0].ID {
 		t.Errorf("writeMsg: action=%q id=%q", wm.action, wm.id)
 	}
-	if len(s.notes) != 1 || s.notes[0] != (labelOp{s.issues[0].ID, "rotated 2026-05-28"}) {
-		t.Errorf("Note not dispatched correctly; got %+v", s.notes)
+	if len(s.notes) != 1 || s.notes[0] != (labelOp{s.issues[0].ID, "rotated 2026-05-28\nfollowup step"}) {
+		t.Errorf("multi-line Note not dispatched correctly; got %+v", s.notes)
 	}
 }
 
-func TestNote_EmptyInputCancels(t *testing.T) {
+func TestNote_EmptyInputCancelsOnCtrlS(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	m = model.(Model)
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	m = model.(Model)
 	if cmd != nil {
 		t.Error("empty note should not dispatch a write")
@@ -658,6 +660,27 @@ func TestNote_EmptyInputCancels(t *testing.T) {
 	}
 	if !strings.Contains(m.status, "cancelled") {
 		t.Errorf("empty note should set a status banner; got %q", m.status)
+	}
+}
+
+func TestNote_EnterInsertsNewlineInsteadOfSubmitting(t *testing.T) {
+	// Regression: enter used to submit; now it must just buffer
+	// a newline so multi-line content can be drafted. Pin both
+	// that the mode stays modeNote AND that the textarea grew a
+	// newline char.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = model.(Model)
+
+	preLen := len(m.noteArea.Value())
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeNote {
+		t.Errorf("enter in modeNote must NOT submit; mode=%v", m.mode)
+	}
+	if len(m.noteArea.Value()) <= preLen {
+		t.Errorf("enter should buffer a newline; before=%d after=%d", preLen, len(m.noteArea.Value()))
 	}
 }
 

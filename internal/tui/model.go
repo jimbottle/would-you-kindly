@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -354,6 +355,13 @@ type Model struct {
 	// a time — so a single field is enough; Prompt/Placeholder are
 	// reconfigured on entry.
 	input textinput.Model
+
+	// noteArea is the multi-line editor used by modeNote so a
+	// long-form note (steps, context, dated entries) doesn't
+	// have to be shoved into a single-line textinput. ctrl+s
+	// submits; esc cancels; enter inserts a newline. Width/height
+	// are set on WindowSizeMsg alongside the other components.
+	noteArea textarea.Model
 }
 
 // New constructs a Model with the given Source and a sensible default
@@ -364,6 +372,12 @@ func New(src Source) Model {
 	ti.Prompt = "/ "
 	ti.Placeholder = "fuzzy filter…"
 	ti.CharLimit = 200
+
+	na := textarea.New()
+	na.Placeholder = "append a note (ctrl+s submit, esc cancel; enter inserts a newline)"
+	na.SetWidth(80)
+	na.SetHeight(6)
+	na.ShowLineNumbers = false
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -385,6 +399,7 @@ func New(src Source) Model {
 		mode:        modeList,
 		preset:      filter.PresetAll,
 		input:       ti,
+		noteArea:    na,
 		loading:     true, // first paint shows "loading…" until Init's fetch returns
 		detailVP:    viewport.New(80, 20),
 		outputVP:    viewport.New(80, 20),
@@ -623,6 +638,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// extra row.
 		m.outputVP.Width = msg.Width
 		m.outputVP.Height = bodyH
+		// Resize the note textarea so a long line wraps inside
+		// the terminal width. Height stays at its default (6
+		// rows) so the textarea doesn't crowd the underlying
+		// row list while in modeNote.
+		m.noteArea.SetWidth(msg.Width)
 		return m, nil
 
 	case fetchedMsg:
@@ -1295,33 +1315,37 @@ func (m Model) beginNote() (tea.Model, tea.Cmd) {
 	}
 	m.mode = modeNote
 	m.pendingTarget = m.visible[m.cursor]
-	m.input.SetValue("")
-	m.input.Prompt = "note ▸ "
-	m.input.Placeholder = "append a note to this issue"
-	m.input.Focus()
+	m.noteArea.Reset()
+	m.noteArea.Focus()
 	m.ensureCursorVisible()
-	return m, textinput.Blink
+	return m, textarea.Blink
 }
 
+// updateNote drives the multi-line textarea. enter inserts a
+// newline (so a long-form note can span multiple lines); ctrl+s
+// submits; esc cancels. Empty submission is treated as a cancel
+// with a status banner. The pendingTarget snapshot guards against
+// a concurrent refetch shifting the cursor — issueExists() check
+// matches the close/defer/assign flows.
 func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
-	switch msg.String() {
-	case "esc":
+	if msg.Type == tea.KeyEsc {
 		m.mode = modeList
-		m.input.Blur()
-		m.restoreFilterPrompt()
+		m.noteArea.Blur()
 		m.pendingTarget = beads.Issue{}
 		return m, nil
-	case "enter":
-		text := strings.TrimSpace(m.input.Value())
+	}
+	// ctrl+s submits. (Most other terminals send the literal
+	// 0x13 byte; bubbletea normalizes to "ctrl+s".)
+	if msg.String() == "ctrl+s" {
+		text := strings.TrimSpace(m.noteArea.Value())
 		target := m.pendingTarget
 		m.pendingTarget = beads.Issue{}
 		mu := m.mutator()
 		m.mode = modeList
-		m.input.Blur()
-		m.restoreFilterPrompt()
+		m.noteArea.Blur()
 		if text == "" {
 			m.status = "note cancelled (empty)"
 			return m, nil
@@ -1335,7 +1359,7 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 	}
 	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
+	m.noteArea, cmd = m.noteArea.Update(msg)
 	return m, cmd
 }
 
@@ -3108,9 +3132,12 @@ func (m Model) viewList() string {
 
 	// modal prompts live just above the status bar
 	switch m.mode {
-	case modeFilter, modeNote, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
+	case modeFilter, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
 		b.WriteString("\n")
 		b.WriteString(m.input.View())
+	case modeNote:
+		b.WriteString("\n")
+		b.WriteString(m.noteArea.View())
 	case modeConfirmClose:
 		// Render the captured ID, not the cursor's current target —
 		// a refetch may have shifted things since the prompt opened.
@@ -3864,8 +3891,13 @@ func (m Model) chromeExtra() int {
 	// the viewList switch is the only way bodyHeight stays
 	// accurate; an under-count pushes the title/last rows past the
 	// terminal edge while a prompt is open.
-	case modeFilter, modeNote, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
-		n += 2 // blank + textinput
+	case modeFilter, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
+		n += 2 // blank + single-line textinput
+	case modeNote:
+		// blank separator + textarea body height. noteArea
+		// height is fixed (6 by default) but read it from the
+		// component so a future SetHeight call stays in sync.
+		n += 1 + m.noteArea.Height()
 	case modeConfirmClose:
 		if m.pendingTarget.ID != "" || len(m.marked) > 0 {
 			n += 2 // blank + confirm prompt
