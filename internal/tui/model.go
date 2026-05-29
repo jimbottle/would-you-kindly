@@ -1220,25 +1220,35 @@ func (m *Model) restoreFilterPrompt() {
 }
 
 // handleBulkWriteResult formats a status banner from a bulk
-// dispatch. Total success → "<action>ed N rows"; partial failure
-// → "<action>ed K of N (M failed: <first failure>)"; total
-// failure → "<action> failed for all N rows (<first failure>)".
-// The list refetches after the bulk so the new state is visible
-// immediately, same as the single-write path.
+// dispatch. Total success → "closed/flagged/deferred N rows";
+// partial failure → "<verb> K of N (M failed: <first failure>)";
+// total failure → "<action> failed for all N rows (<first
+// failure>)". On any failure, marks are restored for the failed
+// rows so the user can retry without re-marking (dispatch sites
+// optimistically clear m.marked; this is the rollback). Refetches
+// after a non-total-failure outcome so the new state is visible.
 func (m Model) handleBulkWriteResult(msg bulkWriteMsg) (tea.Model, tea.Cmd) {
-	succeeded := msg.total - len(msg.failures)
-	verb := msg.action + "ed"
-	if msg.action == "flag" {
-		verb = "flagged"
+	succeeded := msg.total - len(msg.failed)
+	verb := bulkVerbs[msg.action]
+	if verb == "" {
+		verb = msg.action
+	}
+	if len(msg.failed) > 0 {
+		if m.marked == nil {
+			m.marked = make(map[string]bool, len(msg.failed))
+		}
+		for _, t := range msg.failed {
+			m.marked[issueKey(t)] = true
+		}
 	}
 	switch {
-	case len(msg.failures) == 0:
+	case len(msg.failed) == 0:
 		m.setStatus(fmt.Sprintf("%s %d rows", verb, succeeded))
 	case succeeded == 0:
-		m.setStatus(fmt.Sprintf("%s failed for all %d rows (%s)", msg.action, msg.total, msg.failures[0]))
+		m.setStatus(fmt.Sprintf("%s failed for all %d rows (%s)", msg.action, msg.total, msg.errs[0]))
 		return m, nil // sticky banner on total failure
 	default:
-		m.setStatus(fmt.Sprintf("%s %d of %d (%d failed: %s)", verb, succeeded, msg.total, len(msg.failures), msg.failures[0]))
+		m.setStatus(fmt.Sprintf("%s %d of %d (%d failed: %s)", verb, succeeded, msg.total, len(msg.failed), msg.errs[0]))
 	}
 	return m, tea.Batch(m.fetchCmd(), flashClearCmd(m.statusGen))
 }
@@ -1265,7 +1275,7 @@ func runWriteWithIssue(action string, issue beads.Issue, fn func(ctx context.Con
 }
 
 // runBulkWrite fires fn against each target sequentially and
-// reports a single bulkWriteMsg with success/failure counts. We
+// reports a single bulkWriteMsg with success/failure detail. We
 // run sequentially (not in parallel) so the bd subprocess load
 // stays the same as the single-target path — the multi-repo
 // HUMAN-BLOCK semaphore already caps fanout, but parallel bulk
@@ -1275,25 +1285,39 @@ func runWriteWithIssue(action string, issue beads.Issue, fn func(ctx context.Con
 // acceptable.
 func runBulkWrite(action string, targets []beads.Issue, fn func(ctx context.Context, i beads.Issue) error) tea.Cmd {
 	return func() tea.Msg {
-		var failures []string
+		var failed []beads.Issue
+		var errs []string
 		for _, t := range targets {
 			if err := fn(context.Background(), t); err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", t.ID, err))
+				failed = append(failed, t)
+				errs = append(errs, fmt.Sprintf("%s: %v", t.ID, err))
 			}
 		}
-		return bulkWriteMsg{action: action, total: len(targets), failures: failures}
+		return bulkWriteMsg{action: action, total: len(targets), failed: failed, errs: errs}
 	}
 }
 
 // bulkWriteMsg carries the result of a runBulkWrite back to the
-// model. action describes what was attempted (close/flag/defer);
-// total is the number of targets in this batch; failures lists the
-// per-target error strings for those that didn't succeed (empty on
-// total success).
+// model. action is what was attempted (close/flag/defer); total is
+// the batch size; failed lists the issues that errored (parallel
+// to errs which holds per-target error strings). Carrying the full
+// issues — not just IDs — lets handleBulkWriteResult restore marks
+// for failed rows so the user can retry without re-marking.
 type bulkWriteMsg struct {
-	action   string
-	total    int
-	failures []string
+	action string
+	total  int
+	failed []beads.Issue
+	errs   []string
+}
+
+// bulkVerbs maps each bulk-capable action to its past-tense form
+// for the status banner. A naive `action + "ed"` produced
+// "closeed" and "defered"; this explicit map matches what
+// handleWriteResult uses for the single-target path.
+var bulkVerbs = map[string]string{
+	"close": "closed",
+	"flag":  "flagged",
+	"defer": "deferred",
 }
 
 // handleWriteResult sets the status banner and triggers a refetch so
@@ -1550,8 +1574,10 @@ func (m *Model) recomputeVisible() {
 		// Capture rune-index positions so renderRow can style
 		// each matched rune. fuzzy.MatchedIndexes are byte
 		// offsets into the source string; convert here once so
-		// renderRow stays a fast formatter.
-		m.titleMatches[pool[mt.Index].ID] = byteToRuneIdxs(pool[mt.Index].Title, mt.MatchedIndexes)
+		// renderRow stays a fast formatter. Key by issueKey (not
+		// bare ID) so two cross-repo issues with colliding IDs
+		// don't overwrite each other's match indices.
+		m.titleMatches[issueKey(pool[mt.Index])] = byteToRuneIdxs(pool[mt.Index].Title, mt.MatchedIndexes)
 	}
 	for _, mt := range fuzzy.FindFrom(m.query, descSource(pool)) {
 		if s, ok := best[mt.Index]; !ok || mt.Score > s {
@@ -1681,6 +1707,19 @@ func (m Model) handleUndo() (tea.Model, tea.Cmd) {
 	})
 }
 
+// issueKey is the composite key the model uses to address an
+// Issue in the marked / titleMatches maps. Bare Issue.ID can
+// collide in multi-repo mode (two workspaces using the same ID
+// scheme), so we prefix with Repo when set. Single-repo mode has
+// Repo=="" and falls back to plain ID — preserving the existing
+// behaviour where there's no collision to disambiguate.
+func issueKey(i beads.Issue) string {
+	if i.Repo == "" {
+		return i.ID
+	}
+	return i.Repo + "/" + i.ID
+}
+
 // toggleMark flips the multi-select state on the cursor row.
 // First mark allocates m.marked lazily; removing the last mark
 // drops the map back to nil so len(m.marked)>0 stays the
@@ -1691,14 +1730,14 @@ func (m Model) toggleMark() (tea.Model, tea.Cmd) {
 	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
 		return m, nil
 	}
-	id := m.visible[m.cursor].ID
+	key := issueKey(m.visible[m.cursor])
 	if m.marked == nil {
 		m.marked = map[string]bool{}
 	}
-	if m.marked[id] {
-		delete(m.marked, id)
+	if m.marked[key] {
+		delete(m.marked, key)
 	} else {
-		m.marked[id] = true
+		m.marked[key] = true
 	}
 	if len(m.marked) == 0 {
 		m.marked = nil
@@ -1709,16 +1748,20 @@ func (m Model) toggleMark() (tea.Model, tea.Cmd) {
 	return m, flashClearCmd(m.statusGen)
 }
 
-// markedIssues returns the snapshot subset of m.visible whose IDs
-// are in m.marked. Stable ordering (visible order) so a bulk
-// dispatch fires writes in the same order the user sees them.
+// markedIssues returns every row in m.all whose composite key is
+// in m.marked. We scan m.all rather than m.visible so a fuzzy
+// filter that hides part of the selection doesn't silently drop
+// rows from a bulk dispatch — marks survive filter changes by
+// design, and "close 5 rows" should mean five even if only three
+// are on screen. Stable ordering follows m.all (bd's native
+// order, mirrored by the visible list when no sort is active).
 func (m Model) markedIssues() []beads.Issue {
 	if len(m.marked) == 0 {
 		return nil
 	}
 	out := make([]beads.Issue, 0, len(m.marked))
-	for _, i := range m.visible {
-		if m.marked[i.ID] {
+	for _, i := range m.all {
+		if m.marked[issueKey(i)] {
 			out = append(out, i)
 		}
 	}
@@ -1792,6 +1835,14 @@ func (m Model) updateDefer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, runBulkWrite("defer", targets, func(ctx context.Context, i beads.Issue) error {
 				return mu.SetDefer(ctx, i, when)
 			})
+		}
+		// Mirror the close/note handlers: if a refetch deleted
+		// the target while the prompt was open, surface the same
+		// friendly cancellation banner instead of shelling out a
+		// stale ID to bd and exposing a raw error.
+		if !m.issueExists(target.ID) {
+			m.setStatus("defer cancelled: " + target.ID + " was removed from the workspace by a refresh")
+			return m, flashClearCmd(m.statusGen)
 		}
 		return m, runWriteWithIssue("defer", target, func(ctx context.Context) error {
 			return mu.SetDefer(ctx, target, when)
@@ -2231,7 +2282,7 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	// leading space) so the multi-select is visible at a glance.
 	// Selected-and-marked shows ▶ (cursor wins; the user knows
 	// they're on a marked row from the context).
-	if !selected && m.marked[i.ID] {
+	if !selected && m.marked[issueKey(i)] {
 		cursor = cursorStyle.Render("✓ ")
 	}
 	var b strings.Builder
@@ -2279,16 +2330,27 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	// the right edge — most existing rows in real use spill past
 	// the terminal. Detail view (enter) still shows the full text.
 	title := i.Title
+	origLen := utf8.RuneCountInString(title)
 	if avail := m.titleBudget(); avail > 0 {
 		title = trunc(title, avail)
 	}
-	// Apply fuzzy-match highlighting after truncation: matched
-	// rune indices that fall past the truncated length are
-	// silently dropped (truncated runes can't be highlighted),
-	// which is the behaviour the user expects — the visible
-	// portion lights up, off-screen runes don't generate
-	// invisible ANSI noise.
-	if idxs := m.titleMatches[i.ID]; len(idxs) > 0 {
+	// Apply fuzzy-match highlighting after truncation. When trunc
+	// inserts an ellipsis (`runes[:n-1] + "…"`), drop any match at
+	// or after the ellipsis position so we don't style the `…`
+	// glyph itself — the prior version styled the ellipsis when
+	// a match index happened to land there. Matches past the
+	// truncated tail are silently dropped (no off-screen ANSI).
+	if idxs := m.titleMatches[issueKey(i)]; len(idxs) > 0 {
+		if visibleLen := utf8.RuneCountInString(title); visibleLen < origLen {
+			ceiling := visibleLen - 1
+			filtered := make([]int, 0, len(idxs))
+			for _, ix := range idxs {
+				if ix < ceiling {
+					filtered = append(filtered, ix)
+				}
+			}
+			idxs = filtered
+		}
 		title = highlightRunes(title, idxs, fuzzyMatchStyle)
 	}
 	b.WriteString(title)

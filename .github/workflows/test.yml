@@ -28,11 +28,12 @@ jobs:
         run: go mod download
 
       - name: gofmt
-        # `gofmt -l` prints any non-conforming file and exits 0; the
-        # `! -s` flag inversion fails the step when output is
-        # non-empty so unformatted code can't reland. Previous rounds
-        # accumulated drift across 9 files; pinning this in CI keeps
-        # the tree clean without relying on local pre-commit hooks.
+        # Capture `gofmt -l .` output (the list of non-conforming
+        # files) and fail when it's non-empty. Previous rounds
+        # accumulated drift across 9 files; pinning this in CI
+        # keeps the tree clean without relying on local pre-commit
+        # hooks. The error message names the fix so a contributor
+        # who hits this can resolve it in one command.
         run: |
           out=$(gofmt -l .)
           if [ -n "$out" ]; then

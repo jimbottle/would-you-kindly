@@ -2021,6 +2021,91 @@ func TestRenderStatsLine_MineSlotShowsZeroWhenMeSet(t *testing.T) {
 	}
 }
 
+func TestHandleBulkWriteResult_TotalSuccessUsesPastTenseVerb(t *testing.T) {
+	// "close" → "closed", "defer" → "deferred", "flag" → "flagged".
+	// A naive `action + "ed"` produced "closeed"/"defered"; this
+	// test pins the per-action verb map so a regression surfaces.
+	cases := []struct {
+		action   string
+		wantVerb string
+	}{
+		{"close", "closed"},
+		{"defer", "deferred"},
+		{"flag", "flagged"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.action, func(t *testing.T) {
+			src := &stubSource{issues: sampleIssues()}
+			m := applyFetched(New(src), src)
+			model, _ := m.Update(bulkWriteMsg{action: tc.action, total: 3})
+			m = model.(Model)
+			if !strings.Contains(m.status, tc.wantVerb) {
+				t.Errorf("status %q should contain %q", m.status, tc.wantVerb)
+			}
+			if !strings.Contains(m.status, "3 rows") {
+				t.Errorf("status %q should report row count", m.status)
+			}
+		})
+	}
+}
+
+func TestHandleBulkWriteResult_PartialFailureRestoresFailedMarks(t *testing.T) {
+	// One target succeeded, one failed. The failed row's mark
+	// should be restored so the user can retry without
+	// re-marking the entire selection.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	// Dispatch site clears marks pre-emptively; simulate post-dispatch state.
+	m.marked = nil
+
+	model, _ := m.Update(bulkWriteMsg{
+		action: "close",
+		total:  2,
+		failed: []beads.Issue{{ID: "a-2"}},
+		errs:   []string{"a-2: bd refused"},
+	})
+	m = model.(Model)
+	if !m.marked["a-2"] {
+		t.Errorf("failed row's mark should be restored; got %v", m.marked)
+	}
+	if m.marked["a-1"] {
+		t.Errorf("succeeded row's mark should NOT be restored; got %v", m.marked)
+	}
+	if !strings.Contains(m.status, "1 of 2") {
+		t.Errorf("status should report partial failure; got %q", m.status)
+	}
+}
+
+func TestHandleBulkWriteResult_TotalFailureRestoresAllMarks(t *testing.T) {
+	// Every target failed. The user lost the selection at
+	// dispatch time; the handler should rebuild it so retrying is
+	// one keystroke (c) away.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m.marked = nil
+
+	failed := []beads.Issue{{ID: "a-1"}, {ID: "a-2"}}
+	model, cmd := m.Update(bulkWriteMsg{
+		action: "close",
+		total:  2,
+		failed: failed,
+		errs:   []string{"a-1: oops", "a-2: oops"},
+	})
+	m = model.(Model)
+	if cmd != nil {
+		// Total failure path explicitly returns nil so the banner
+		// stays sticky. A non-nil cmd here would refetch + clear
+		// the banner — exactly the wrong UX for a total miss.
+		t.Errorf("total failure should NOT trigger a refetch; got cmd != nil")
+	}
+	if !m.marked["a-1"] || !m.marked["a-2"] {
+		t.Errorf("all marks should be restored on total failure; got %v", m.marked)
+	}
+	if !strings.Contains(m.status, "failed for all 2") {
+		t.Errorf("status should explain total failure; got %q", m.status)
+	}
+}
+
 func TestMark_TogglesAndClearsOnEsc(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)
