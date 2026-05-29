@@ -105,6 +105,55 @@ func TestRunVersionCheck_NewerAvailableReturns1(t *testing.T) {
 	}
 }
 
+func TestRunVersionCheck_UpToDateReturns0(t *testing.T) {
+	// `go test` builds report "(devel)" as the current tag,
+	// which IsNewer always treats as out-of-date. Substitute a
+	// real tag via the currentTagForCheck seam so the up-to-date
+	// branch is reachable.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	prev := liveFetcher
+	prevTag := currentTagForCheck
+	liveFetcher = func(_ context.Context) ([]updater.Release, error) {
+		return []updater.Release{{TagName: "v1.0.0", Prerelease: false}}, nil
+	}
+	currentTagForCheck = func() string { return "v1.0.0" }
+	defer func() { liveFetcher = prev; currentTagForCheck = prevTag }()
+
+	out := captureStdout(t, func() {
+		if code := runVersionCheck(); code != 0 {
+			t.Errorf("up-to-date exit %d, want 0", code)
+		}
+	})
+	if !strings.Contains(out, "is current") {
+		t.Errorf("expected 'is current' message; got %q", out)
+	}
+}
+
+func TestRunVersionCheck_StableChannelPrereleaseOnlyFeedReturns0(t *testing.T) {
+	// Stable-pinned + feed contains only prereleases: must NOT
+	// nudge to the prerelease (the regression this guards).
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if err := updater.PersistLatest([]updater.Release{
+		{TagName: "v0.0.1", Prerelease: false},
+	}, "stable"); err != nil {
+		t.Fatalf("PersistLatest: %v", err)
+	}
+	prev := liveFetcher
+	liveFetcher = func(_ context.Context) ([]updater.Release, error) {
+		return []updater.Release{{TagName: "v999.9.9-alpha", Prerelease: true}}, nil
+	}
+	defer func() { liveFetcher = prev }()
+
+	out := captureStdout(t, func() {
+		if code := runVersionCheck(); code != 0 {
+			t.Errorf("prerelease-only feed must exit 0 for stable channel; got %d", code)
+		}
+	})
+	if strings.Contains(out, "alpha") {
+		t.Errorf("must not name the prerelease in stable-channel output; got %q", out)
+	}
+}
+
 func TestRunVersionCheck_StableChannelSkipsPrerelease(t *testing.T) {
 	// Stable-pinned user with a prerelease at [0] and older stable
 	// below: must compare against the stable, not the prerelease.

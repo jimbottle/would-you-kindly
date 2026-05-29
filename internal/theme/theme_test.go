@@ -59,6 +59,26 @@ func TestLoadDefault_FindsFileInXDG(t *testing.T) {
 	}
 }
 
+func TestLoadDefault_MalformedFileReturnsError(t *testing.T) {
+	// Wiring contract: main.go's err != nil branch logs and
+	// falls back to defaults. This test guards that LoadDefault
+	// actually surfaces a malformed-JSON error so the log fires
+	// (instead of silently launching with defaults and leaving
+	// the user wondering why their theme didn't apply).
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	dir := filepath.Join(cfg, "wyk")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "theme.json"), []byte(`{not json`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := LoadDefault(); err == nil {
+		t.Error("expected non-nil error from malformed theme.json at default path")
+	}
+}
+
 func TestLoadFile_MalformedJSONReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "theme.json")

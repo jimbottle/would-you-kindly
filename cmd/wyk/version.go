@@ -40,6 +40,12 @@ func runVersion(args []string) int {
 	return runVersionCheck()
 }
 
+// currentTagForCheck is the seam tests use to substitute a stable
+// tag for the runtime's "(devel)" marker. Production reads
+// versionString() through extractCurrentTag; tests override the
+// var directly.
+var currentTagForCheck = func() string { return extractCurrentTag(versionString()) }
+
 // runVersionCheck does the live-fetch comparison. Honors a short
 // timeout so a pre-commit hook doesn't hang on a flaky network.
 // Honors the channel preference cached on disk via
@@ -58,16 +64,21 @@ func runVersionCheck() int {
 		return 2
 	}
 	channel := updater.CachedChannel()
+	current := currentTagForCheck()
 	var rel updater.Release
 	if channel == "stable" {
 		rel = updater.PickStable(rels)
+		// Stable-pinned + feed has no stable: report current and exit
+		// 0. Falling back to rels[0] would nudge the user toward a
+		// prerelease, defeating the exact guarantee the stable
+		// channel promises.
 		if rel.TagName == "" {
-			rel = rels[0]
+			fmt.Printf("wyk %s is current (no stable release in feed)\n", current)
+			return 0
 		}
 	} else {
 		rel = rels[0]
 	}
-	current := extractCurrentTag(versionString())
 	if updater.IsNewer(current, rel.TagName) {
 		fmt.Printf("wyk %s → %s available — run `wyk update`\n", current, rel.TagName)
 		return 1

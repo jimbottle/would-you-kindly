@@ -103,7 +103,10 @@ func LoadFile(path string) (Theme, error) {
 func LoadDefault() (Theme, error) {
 	path, err := DefaultPath()
 	if err != nil {
-		return Theme{}, nil
+		// Surface this rather than swallow it: the doc comment
+		// promises non-missing-file failures land in the caller's
+		// log, and an unresolvable home dir is exactly that.
+		return Theme{}, err
 	}
 	t, err := LoadFile(path)
 	if errors.Is(err, os.ErrNotExist) {

@@ -15,8 +15,17 @@ import (
 // this the test environment (CI, dumb terminals, even tmpdir test
 // runs in some shells) falls through to the Ascii profile and
 // every Render() returns the unstyled string.
-func forceColor() {
+//
+// The default renderer is package-global; restoring the prior
+// profile via t.Cleanup prevents bleed into other tests in this
+// package (Go does not guarantee cross-file test ordering, so any
+// later assertion that depends on the host profile must see the
+// pre-test value).
+func forceColor(t *testing.T) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 }
 
 // TestApplyTheme_OverridesAndDefaults exercises the partial-override
@@ -32,7 +41,7 @@ func forceColor() {
 // substring-checking the output is the supported way to verify a
 // color landed.
 func TestApplyTheme_OverridesAndDefaults(t *testing.T) {
-	forceColor()
+	forceColor(t)
 
 	defaultBadge := humanBadge.Render("X")
 	defaultAgent := agentBadge.Render("X")
@@ -60,7 +69,7 @@ func TestApplyTheme_OverridesAndDefaults(t *testing.T) {
 // failure mode after a missing theme.json — startup falls
 // through with no color drift.
 func TestApplyTheme_EmptyThemeIsNoOp(t *testing.T) {
-	forceColor()
+	forceColor(t)
 	before := titleStyle.Render("title")
 	ApplyTheme(theme.Theme{})
 	after := titleStyle.Render("title")
@@ -74,7 +83,7 @@ func TestApplyTheme_EmptyThemeIsNoOp(t *testing.T) {
 // the color profile so we settle for "render is non-empty and
 // changed" rather than naming a specific ANSI sequence.
 func TestApplyTheme_HexColorAccepted(t *testing.T) {
-	forceColor()
+	forceColor(t)
 	ApplyTheme(theme.Theme{Cursor: "#ff00aa"})
 	after := cursorStyle.Render("▶")
 	if !strings.Contains(after, "▶") {

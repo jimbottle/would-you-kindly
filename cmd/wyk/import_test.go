@@ -106,6 +106,111 @@ func TestRunImportPlan_UpdatesExistingAndCreatesMissing(t *testing.T) {
 	}
 }
 
+func TestRunImportPlan_LabelAndOwnerDiffs(t *testing.T) {
+	// Existing test only varies priority+description; this one
+	// proves the label add/remove and assignee paths fire on a
+	// real (non-dry-run) plan, covering the wiring labelDiff
+	// drives.
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "repo-a", Path: "/tmp/a"}}}
+	dump := exportDump{Repos: []exportRepo{{
+		Name: "repo-a",
+		Issues: []beads.Issue{
+			{ID: "a-1", Status: "open", Owner: "bob", Labels: []string{"keep", "new"}},
+		},
+	}}}
+	fake := &fakeImportClient{existing: []beads.Issue{
+		{ID: "a-1", Owner: "alice", Labels: []string{"keep", "old"}},
+	}}
+	mk := func(_ string) importClient { return fake }
+
+	s := runImportPlan(reg, dump, false, mk)
+	if s.HadError {
+		t.Fatalf("HadError true: %v", s.Repos[0].Err)
+	}
+	if fake.SetAssCalls != 1 {
+		t.Errorf("SetAssignee=%d, want 1", fake.SetAssCalls)
+	}
+	if fake.AddLabelCalls != 1 {
+		t.Errorf("AddLabel=%d, want 1 (new)", fake.AddLabelCalls)
+	}
+	if fake.RemoveLabelCalls != 1 {
+		t.Errorf("RemoveLabel=%d, want 1 (old)", fake.RemoveLabelCalls)
+	}
+	if got := len(s.Repos[0].Updated); got != 1 {
+		t.Errorf("updated=%d, want 1", got)
+	}
+}
+
+func TestRunImportPlan_EmptyDescriptionDoesNotClobber(t *testing.T) {
+	// Dump issue carries no description; local has one. The
+	// reconcile must NOT wipe the local description (the guard
+	// added in roborev-fix for 1372).
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "repo-a", Path: "/tmp/a"}}}
+	dump := exportDump{Repos: []exportRepo{{
+		Name: "repo-a",
+		Issues: []beads.Issue{
+			{ID: "a-1", Status: "open", Description: ""},
+		},
+	}}}
+	fake := &fakeImportClient{existing: []beads.Issue{
+		{ID: "a-1", Description: "do-not-clear"},
+	}}
+	mk := func(_ string) importClient { return fake }
+
+	s := runImportPlan(reg, dump, false, mk)
+	if s.HadError {
+		t.Fatalf("HadError true: %v", s.Repos[0].Err)
+	}
+	if fake.SetDescCalls != 0 {
+		t.Errorf("UpdateDescription called %d times for empty-dump-description; want 0", fake.SetDescCalls)
+	}
+	if got := len(s.Repos[0].Unchanged); got != 1 {
+		t.Errorf("unchanged=%d, want 1 (no diff applied)", got)
+	}
+}
+
+// fakeImportClientPartial fails on SetDescription so the partial-
+// write accounting path is exercised: SetPriority succeeds,
+// SetDescription errors, and the row should still land in
+// `Updated` (with the error noted) rather than vanishing from the
+// summary entirely.
+type fakeImportClientPartial struct {
+	*fakeImportClient
+	descErr error
+}
+
+func (f *fakeImportClientPartial) UpdateDescription(_ context.Context, _, _ string) error {
+	f.SetDescCalls++
+	return f.descErr
+}
+
+func TestRunImportPlan_PartialFailureCountedAsUpdated(t *testing.T) {
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "repo-a", Path: "/tmp/a"}}}
+	dump := exportDump{Repos: []exportRepo{{
+		Name: "repo-a",
+		Issues: []beads.Issue{
+			{ID: "a-1", Status: "open", Priority: 1, Description: "new body"},
+		},
+	}}}
+	base := &fakeImportClient{existing: []beads.Issue{
+		{ID: "a-1", Priority: 2, Description: "old body"},
+	}}
+	mk := func(_ string) importClient {
+		return &fakeImportClientPartial{fakeImportClient: base, descErr: errors.New("bd timeout")}
+	}
+
+	s := runImportPlan(reg, dump, false, mk)
+	if !s.HadError {
+		t.Errorf("partial failure should set HadError")
+	}
+	if got := len(s.Repos[0].Updated); got != 1 {
+		t.Errorf("updated=%d, want 1 (partial change still counts)", got)
+	}
+	if !strings.Contains(s.Repos[0].Err, "bd timeout") {
+		t.Errorf("err should name underlying cause; got %q", s.Repos[0].Err)
+	}
+}
+
 func TestRunImportPlan_DryRunSkipsWrites(t *testing.T) {
 	reg := &registry.Registry{Repos: []registry.Repo{{Name: "repo-a", Path: "/tmp/a"}}}
 	dump := exportDump{Repos: []exportRepo{{

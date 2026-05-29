@@ -182,15 +182,21 @@ func runImportPlan(reg *registry.Registry, dump exportDump, dryRun bool, mk func
 			}
 			if existing, ok := localByID[in.ID]; ok {
 				changed, perr := applyImportUpdate(c, existing, in, dryRun)
+				// Count the issue in Updated whenever at least one
+				// write fired, even on partial failure, so the
+				// summary's create+update+unchanged+skipped still
+				// adds up to the input total. The error string
+				// names the ID separately so an operator can
+				// reconcile per-row.
+				switch {
+				case changed:
+					row.Updated = append(row.Updated, in.ID)
+				case perr == nil:
+					row.Unchanged = append(row.Unchanged, in.ID)
+				}
 				if perr != nil {
 					row.Err = appendErr(row.Err, in.ID+": "+perr.Error())
 					out.HadError = true
-					continue
-				}
-				if changed {
-					row.Updated = append(row.Updated, in.ID)
-				} else {
-					row.Unchanged = append(row.Unchanged, in.ID)
 				}
 				continue
 			}
@@ -237,7 +243,13 @@ func applyImportUpdate(c importClient, existing, in beads.Issue, dryRun bool) (b
 		}
 		changed = true
 	}
-	if existing.Description != in.Description {
+	// Guard the description diff the same way as owner: an empty
+	// value in the dump represents "the source didn't carry one"
+	// (e.g. a freshly-created bd issue without a body), not "clear
+	// the local description." Without this guard, a restore from a
+	// dump that pre-dates a description being added would silently
+	// wipe it.
+	if existing.Description != in.Description && in.Description != "" {
 		if !dryRun {
 			if err := c.UpdateDescription(ctx, in.ID, in.Description); err != nil {
 				return changed, err
