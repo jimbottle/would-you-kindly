@@ -2266,8 +2266,54 @@ func (m Model) dispatchFilterCommand(rest string) (tea.Model, tea.Cmd) {
 		}
 		m.setStatus("saved @" + args)
 		return m, flashClearCmd(m.statusGen)
+	case "list":
+		// Show every saved alias in a sorted plain-text overlay
+		// (reuses modeOutput's viewport so a registry of 50+
+		// aliases stays scrollable). Empty registry shows a
+		// status banner instead of an empty overlay — saves a
+		// keystroke for the common "I haven't saved any" case.
+		if len(m.filterAliases.Aliases) == 0 {
+			m.setStatus(":filter list: no aliases saved (use :filter save <name>)")
+			return m, flashClearCmd(m.statusGen)
+		}
+		names := make([]string, 0, len(m.filterAliases.Aliases))
+		for k := range m.filterAliases.Aliases {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		var b strings.Builder
+		b.WriteString("saved filter aliases\n\n")
+		for _, name := range names {
+			fmt.Fprintf(&b, "  @%-12s  %s\n", name, m.filterAliases.Aliases[name])
+		}
+		m.outputText = b.String()
+		m.outputVP.SetContent(m.outputText)
+		m.outputVP.GotoTop()
+		m.mode = modeOutput
+		return m, nil
+	case "remove":
+		if args == "" {
+			m.setStatus(":filter remove: missing alias name")
+			return m, flashClearCmd(m.statusGen)
+		}
+		if _, ok := m.filterAliases.Aliases[args]; !ok {
+			m.setStatus(":filter remove: no alias @" + args)
+			return m, flashClearCmd(m.statusGen)
+		}
+		delete(m.filterAliases.Aliases, args)
+		path, err := filters.DefaultPath()
+		if err != nil {
+			m.setStatus(":filter remove failed: " + err.Error())
+			return m, nil
+		}
+		if err := filters.Save(path, m.filterAliases); err != nil {
+			m.setStatus(":filter remove failed: " + err.Error())
+			return m, nil
+		}
+		m.setStatus("removed @" + args)
+		return m, flashClearCmd(m.statusGen)
 	default:
-		m.setStatus(":filter: unknown subcommand. Try: save <name>")
+		m.setStatus(":filter: unknown subcommand. Try: save <name>, list, remove <name>")
 		return m, flashClearCmd(m.statusGen)
 	}
 }

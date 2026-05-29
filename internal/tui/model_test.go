@@ -3149,6 +3149,114 @@ func TestCommandPalette_SortReverseAndAxes(t *testing.T) {
 	})
 }
 
+func TestCommandPalette_FilterListShowsSorted(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	aliases := filters.Aliases{Aliases: map[string]string{
+		"zeta":  "z",
+		"alpha": "a",
+	}}
+	m := applyFetched(New(src).WithFilterAliases(aliases), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "filter list" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeOutput {
+		t.Fatalf(":filter list should enter modeOutput; got %v", m.mode)
+	}
+	// Alphabetical: alpha before zeta.
+	alphaIdx := strings.Index(m.outputText, "@alpha")
+	zetaIdx := strings.Index(m.outputText, "@zeta")
+	if alphaIdx < 0 || zetaIdx < 0 {
+		t.Errorf("both aliases should appear; got %q", m.outputText)
+	}
+	if alphaIdx > zetaIdx {
+		t.Errorf("aliases should be sorted alphabetically; got %q", m.outputText)
+	}
+}
+
+func TestCommandPalette_FilterListEmptyShowsHint(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src).WithFilterAliases(filters.Aliases{}), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "filter list" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode == modeOutput {
+		t.Errorf("empty alias list should NOT open the overlay; got modeOutput")
+	}
+	if !strings.Contains(m.status, "no aliases saved") {
+		t.Errorf("status should explain the empty list; got %q", m.status)
+	}
+}
+
+func TestCommandPalette_FilterRemoveDeletesAndPersists(t *testing.T) {
+	// Persist to a tempdir so the test doesn't touch the user's
+	// real filters.json. filters.Save resolves DefaultPath at
+	// the call site.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	src := &stubSource{issues: sampleIssues()}
+	aliases := filters.Aliases{Aliases: map[string]string{"blocked": "status=blocked"}}
+	m := applyFetched(New(src).WithFilterAliases(aliases), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "filter remove blocked" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if _, ok := m.filterAliases.Aliases["blocked"]; ok {
+		t.Errorf("alias should be removed from in-memory map; got %v", m.filterAliases.Aliases)
+	}
+	// Confirm persistence: load from disk.
+	path, _ := filters.DefaultPath()
+	a, err := filters.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := a.Aliases["blocked"]; ok {
+		t.Errorf("alias should be removed from disk; got %v", a.Aliases)
+	}
+}
+
+func TestCommandPalette_FilterRemoveMissingNameUsage(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src).WithFilterAliases(filters.Aliases{Aliases: map[string]string{"x": "y"}}), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "filter remove" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if !strings.Contains(m.status, "missing alias name") {
+		t.Errorf("status should explain usage; got %q", m.status)
+	}
+	if _, ok := m.filterAliases.Aliases["x"]; !ok {
+		t.Errorf("missing-name remove should not touch existing aliases; got %v", m.filterAliases.Aliases)
+	}
+}
+
 func TestCommandPalette_FilterSavePersistsAlias(t *testing.T) {
 	// :filter save <name> should persist m.query as @name. Point
 	// XDG at a tempdir so the test doesn't touch the user's
