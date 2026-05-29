@@ -31,25 +31,45 @@ func runUpdate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
+	// Validate channel up front so a typo (`-channel stabel`)
+	// doesn't silently fall through to "any" and surprise a user
+	// who specifically asked for stable-only.
+	switch *channel {
+	case "any", "stable":
+	default:
+		fmt.Fprintf(os.Stderr, "wyk update: unknown -channel value %q; valid choices are: any, stable\n", *channel)
+		return 64
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	rel, _, err := updater.LatestCached(ctx, nil)
+	rels, _, err := updater.LatestCached(ctx, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk update: cannot check for releases:", err)
 		return 1
 	}
-	if rel.TagName == "" {
+	if len(rels) == 0 {
 		fmt.Fprintln(os.Stderr, "wyk update: no releases known")
 		return 1
 	}
-	if *channel == "stable" && rel.Prerelease {
-		fmt.Fprintf(os.Stderr, "wyk update: latest release is a prerelease (%s); pass -channel any to install it anyway\n", rel.TagName)
-		return 0
+	// Pick the right entry for the channel: the absolute newest
+	// when channel=any (Releases[0]) or the most recent
+	// non-prerelease when channel=stable. The stable branch can
+	// legitimately come back empty if every entry in the fetched
+	// page is a prerelease — explain rather than silently aborting.
+	var rel updater.Release
+	if *channel == "stable" {
+		rel = updater.PickStable(rels)
+		if rel.TagName == "" {
+			fmt.Fprintf(os.Stderr, "wyk update: no non-prerelease versions in the most recent %d releases; pass -channel any to install the latest prerelease (%s)\n", len(rels), rels[0].TagName)
+			return 0
+		}
+	} else {
+		rel = rels[0]
 	}
 	current := versionString()
 	currentTag := extractCurrentTag(current)
 	if !updater.IsNewer(currentTag, rel.TagName) {
-		fmt.Printf("wyk update: already on %s (latest is %s)\n", currentTag, rel.TagName)
+		fmt.Printf("wyk update: already on %s (latest %s is %s)\n", currentTag, *channel, rel.TagName)
 		return 0
 	}
 	cmd := updater.InstallCommand(rel.TagName)
@@ -120,12 +140,21 @@ func readUpdateNudge(currentVer string) string {
 		return ""
 	}
 	var entry struct {
-		Latest updater.Release `json:"latest"`
+		Latest   updater.Release   `json:"latest"`
+		Releases []updater.Release `json:"releases"`
 	}
 	if err := json.Unmarshal(b, &entry); err != nil {
 		return ""
 	}
-	tag := entry.Latest.TagName
+	// Prefer Releases (new schema) but fall back to Latest so a
+	// cache written by an older wyk still produces a nudge.
+	var tag string
+	switch {
+	case len(entry.Releases) > 0:
+		tag = entry.Releases[0].TagName
+	case entry.Latest.TagName != "":
+		tag = entry.Latest.TagName
+	}
 	if tag == "" {
 		return ""
 	}

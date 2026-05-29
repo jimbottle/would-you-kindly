@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,13 +86,73 @@ func TestLatestLive_ReturnsFirstEntry(t *testing.T) {
 			return http.DefaultTransport.RoundTrip(req)
 		}),
 	}
-	rel, err := LatestLive(t.Context(), hijack)
+	rels, err := LatestLive(t.Context(), hijack)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rel.TagName != "v0.4.0-alpha" {
-		t.Errorf("first release should be returned; got %q", rel.TagName)
+	if len(rels) != 2 {
+		t.Fatalf("expected both releases in the page; got %d", len(rels))
 	}
+	if rels[0].TagName != "v0.4.0-alpha" {
+		t.Errorf("newest entry should come first; got %q", rels[0].TagName)
+	}
+	if rels[1].TagName != "v0.3.0" {
+		t.Errorf("second entry should be the stable; got %q", rels[1].TagName)
+	}
+}
+
+func TestPickStable_ReturnsNewestNonPrerelease(t *testing.T) {
+	// The stable-channel branch of `wyk update` lives or dies by
+	// PickStable. Three cases worth pinning: newest-is-prerelease
+	// falls through to the next non-prerelease; newest-is-stable
+	// returns it directly; all-prereleases returns the zero
+	// Release so callers can surface "no stable version known".
+	cases := []struct {
+		name string
+		in   []Release
+		want string
+	}{
+		{
+			name: "newest-is-prerelease-falls-through",
+			in: []Release{
+				{TagName: "v0.4.0-alpha", Prerelease: true},
+				{TagName: "v0.3.0", Prerelease: false},
+				{TagName: "v0.2.3", Prerelease: false},
+			},
+			want: "v0.3.0",
+		},
+		{
+			name: "newest-is-stable-returns-it",
+			in: []Release{
+				{TagName: "v0.3.0", Prerelease: false},
+				{TagName: "v0.2.3", Prerelease: false},
+			},
+			want: "v0.3.0",
+		},
+		{
+			name: "all-prereleases-returns-empty",
+			in: []Release{
+				{TagName: "v0.4.0-alpha", Prerelease: true},
+				{TagName: "v0.4.0-beta1", Prerelease: true},
+			},
+			want: "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := PickStable(c.in).TagName; got != c.want {
+				t.Errorf("PickStable(%v).TagName = %q, want %q", tagNames(c.in), got, c.want)
+			}
+		})
+	}
+}
+
+func tagNames(rels []Release) []string {
+	out := make([]string, len(rels))
+	for i, r := range rels {
+		out[i] = r.TagName
+	}
+	return out
 }
 
 func TestLatestCached_UsesCacheWithinTTL(t *testing.T) {
@@ -109,6 +170,7 @@ func TestLatestCached_UsesCacheWithinTTL(t *testing.T) {
 	entry := cacheEntry{
 		CheckedAt: time.Now().Add(-1 * time.Hour), // 1h old, well within TTL
 		Latest:    Release{TagName: "v0.9.9-cached"},
+		Releases:  []Release{{TagName: "v0.9.9-cached"}},
 	}
 	b, _ := json.Marshal(entry)
 	if err := os.WriteFile(path, b, 0o644); err != nil {
@@ -120,15 +182,47 @@ func TestLatestCached_UsesCacheWithinTTL(t *testing.T) {
 		t.Error("LatestCached must NOT hit the network when cache is fresh")
 		return nil, nil
 	})}
-	rel, fresh, err := LatestCached(t.Context(), noNet)
+	rels, fresh, err := LatestCached(t.Context(), noNet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fresh {
 		t.Error("fresh==true means a live fetch happened; cache was supposed to win")
 	}
-	if rel.TagName != "v0.9.9-cached" {
-		t.Errorf("got %q, want the cached tag", rel.TagName)
+	if len(rels) != 1 || rels[0].TagName != "v0.9.9-cached" {
+		t.Errorf("got %v, want a single-element slice with the cached tag", tagNames(rels))
+	}
+}
+
+func TestLatestCached_LegacySingleLatestCacheBackCompat(t *testing.T) {
+	// Caches written by v0.3.0 only carry the `latest` field
+	// (single Release). New code must still surface that as a
+	// one-element slice so the upgrade path is smooth — without
+	// this, every user's first run after upgrading to v0.3.1
+	// would silently re-fetch instead of using the existing
+	// cache.
+	cacheDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheDir)
+	path, _ := CachePath()
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	legacy := struct {
+		CheckedAt time.Time `json:"checked_at"`
+		Latest    Release   `json:"latest"`
+	}{
+		CheckedAt: time.Now().Add(-2 * time.Hour),
+		Latest:    Release{TagName: "v0.3.0", Prerelease: false},
+	}
+	b, _ := json.Marshal(legacy)
+	_ = os.WriteFile(path, b, 0o644)
+	rels, _, err := LatestCached(t.Context(), &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("legacy-format cache should still satisfy the read; no live fetch expected")
+		return nil, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rels) != 1 || rels[0].TagName != "v0.3.0" {
+		t.Errorf("legacy cache should produce a one-element slice with the latest tag; got %v", tagNames(rels))
 	}
 }
 
@@ -143,18 +237,55 @@ func TestLatestCached_FallsBackToStaleOnNetworkError(t *testing.T) {
 	stale := cacheEntry{
 		CheckedAt: time.Now().Add(-72 * time.Hour), // way past TTL
 		Latest:    Release{TagName: "v0.1.1-stale"},
+		Releases:  []Release{{TagName: "v0.1.1-stale"}},
 	}
 	b, _ := json.Marshal(stale)
 	_ = os.WriteFile(path, b, 0o644)
 	fail := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, &netErr{}
 	})}
-	rel, _, err := LatestCached(t.Context(), fail)
+	rels, _, err := LatestCached(t.Context(), fail)
 	if err != nil {
 		t.Errorf("expected silent fall-back to stale cache, got error: %v", err)
 	}
-	if rel.TagName != "v0.1.1-stale" {
-		t.Errorf("got %q, want the stale-cache fallback", rel.TagName)
+	if len(rels) != 1 || rels[0].TagName != "v0.1.1-stale" {
+		t.Errorf("got %v, want the stale-cache fallback", tagNames(rels))
+	}
+}
+
+func TestWriteCache_IsAtomic_NoPartialFileLeaksToReader(t *testing.T) {
+	// Write a cache snapshot; then read it. The write must use
+	// temp+rename so a reader concurrent with the write can never
+	// observe a half-written file — we can't easily race the
+	// goroutines deterministically, but we CAN assert no
+	// `.update.*.json.tmp` file is left behind and the final
+	// file decodes as the full entry.
+	cacheDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheDir)
+	path, _ := CachePath()
+	entry := cacheEntry{
+		CheckedAt: time.Now(),
+		Latest:    Release{TagName: "v9.9.9"},
+		Releases:  []Release{{TagName: "v9.9.9"}, {TagName: "v9.8.0"}},
+	}
+	if err := writeCache(path, entry); err != nil {
+		t.Fatalf("writeCache: %v", err)
+	}
+	// Re-read and confirm it's the full entry.
+	got, err := readCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Releases) != 2 || got.Latest.TagName != "v9.9.9" {
+		t.Errorf("round-tripped entry corrupted; got %+v", got)
+	}
+	// No leftover temp files in the cache dir — rename-into-place
+	// is the contract.
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".update.") && strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("leftover temp file: %s", e.Name())
+		}
 	}
 }
 

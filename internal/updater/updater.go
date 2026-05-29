@@ -48,55 +48,71 @@ type Release struct {
 }
 
 // cacheEntry is the on-disk snapshot. CheckedAt drives the TTL;
-// Latest is the most-recent release the last live fetch saw.
+// Releases holds the page the last live fetch saw (newest-first),
+// so callers can pick the right one for a given channel without
+// re-hitting the network. Latest is preserved as a backwards-
+// compatible convenience for older readers — same as Releases[0].
 type cacheEntry struct {
 	CheckedAt time.Time `json:"checked_at"`
 	Latest    Release   `json:"latest"`
+	Releases  []Release `json:"releases"`
 }
 
-// LatestLive fetches the most recent release from the GitHub API,
-// including prereleases. Returns the absolute newest (sorted by
-// publish time) — distinct from /releases/latest, which skips
-// prereleases and is the exact behaviour that bit users hitting
-// the "@latest pulls v0.2.3" trap.
+// LatestLive fetches the most recent releases from the GitHub API,
+// including prereleases. Returns the page newest-first (per the
+// API's ordering) so callers can pick by channel: Releases[0] is
+// the absolute newest including prereleases; PickStable picks the
+// newest with Prerelease == false. Five entries is enough headroom
+// for any realistic prerelease-burst (e.g. -alpha → -beta → -rc1 →
+// -rc2 → final) without paginating.
 //
 // Times out after 5s so a TUI startup doesn't stall on a slow
 // network. Errors don't include the underlying response body
 // because the caller treats any error as "skip the nudge" — no
 // need to spam logs.
-func LatestLive(ctx context.Context, client *http.Client) (Release, error) {
+func LatestLive(ctx context.Context, client *http.Client) ([]Release, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=5", githubOwner, githubRepo)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return Release{}, err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return Release{}, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		// Drain so the connection can be reused; ignore the body
 		// content — we won't surface it to the user.
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return Release{}, fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("github releases: HTTP %d", resp.StatusCode)
 	}
 	var rels []Release
 	if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
-		return Release{}, err
+		return nil, err
 	}
 	if len(rels) == 0 {
-		return Release{}, errors.New("no releases published")
+		return nil, errors.New("no releases published")
 	}
-	// GitHub returns newest-first; first entry is the absolute
-	// most recent regardless of prerelease flag. Caller decides
-	// whether to honour prereleases via the channel option in
-	// the update command.
-	return rels[0], nil
+	return rels, nil
+}
+
+// PickStable returns the newest release in the slice whose
+// Prerelease flag is false, or the zero value if the slice
+// contains only prereleases. Callers in the "stable" channel use
+// this to fall through to the most recent final release rather
+// than aborting on a prerelease-at-HEAD scenario.
+func PickStable(rels []Release) Release {
+	for _, r := range rels {
+		if !r.Prerelease {
+			return r
+		}
+	}
+	return Release{}
 }
 
 // CachePath returns the on-disk location for the update-check
@@ -114,37 +130,55 @@ func CachePath() (string, error) {
 	return filepath.Join(home, ".cache", "wyk", "update.json"), nil
 }
 
-// LatestCached returns the most recent release wyk knows about,
-// re-fetching live when the cache is missing, malformed, or older
-// than CacheTTL. The returned bool is true when the data came from
-// a live fetch (vs. cache hit) — useful for telemetry but ignored
-// by most callers.
+// LatestCached returns the page of recent releases wyk knows
+// about (newest-first), re-fetching live when the cache is
+// missing, malformed, or older than CacheTTL. The returned bool
+// is true when the data came from a live fetch (vs. cache hit) —
+// useful for telemetry but ignored by most callers.
 //
 // Failures fall through silently: a network error returns the
-// stale cache if present, or the empty Release if not. The caller
+// stale cache page if present, or nil if not. The caller
 // distinguishes "no update available" from "couldn't check" by
-// inspecting the returned Release.TagName.
-func LatestCached(ctx context.Context, client *http.Client) (Release, bool, error) {
+// inspecting whether the returned slice is non-empty.
+func LatestCached(ctx context.Context, client *http.Client) ([]Release, bool, error) {
 	path, perr := CachePath()
 	if perr == nil {
 		if entry, err := readCache(path); err == nil && time.Since(entry.CheckedAt) < CacheTTL {
-			return entry.Latest, false, nil
+			return entryReleases(entry), false, nil
 		}
 	}
-	rel, err := LatestLive(ctx, client)
+	rels, err := LatestLive(ctx, client)
 	if err != nil {
 		// Fall back to stale cache if we have one.
 		if path != "" {
 			if entry, cerr := readCache(path); cerr == nil {
-				return entry.Latest, false, nil
+				return entryReleases(entry), false, nil
 			}
 		}
-		return Release{}, false, err
+		return nil, false, err
 	}
 	if path != "" {
-		_ = writeCache(path, cacheEntry{CheckedAt: time.Now(), Latest: rel})
+		entry := cacheEntry{CheckedAt: time.Now(), Releases: rels}
+		if len(rels) > 0 {
+			entry.Latest = rels[0]
+		}
+		_ = writeCache(path, entry)
 	}
-	return rel, true, nil
+	return rels, true, nil
+}
+
+// entryReleases prefers Releases (the new schema) but falls back
+// to wrapping Latest in a single-element slice so caches written
+// by older wyk versions still resolve. Newer wyk writes both, so
+// fresh caches always populate Releases.
+func entryReleases(e cacheEntry) []Release {
+	if len(e.Releases) > 0 {
+		return e.Releases
+	}
+	if e.Latest.TagName != "" {
+		return []Release{e.Latest}
+	}
+	return nil
 }
 
 func readCache(path string) (cacheEntry, error) {
@@ -159,15 +193,51 @@ func readCache(path string) (cacheEntry, error) {
 	return entry, nil
 }
 
+// writeCache writes the snapshot atomically (temp file + rename)
+// so a concurrent reader in another wyk process — either the TUI
+// reading the nudge or `wyk doctor` consulting it — can never
+// observe a half-written file. Matches the pattern used by
+// internal/registry.Save. Returns the first error encountered;
+// callers ignore failures (cache is best-effort).
 func writeCache(path string, entry cacheEntry) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	b = append(b, '\n')
+	tmp, err := os.CreateTemp(dir, ".update.*.json.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 // IsNewer reports whether latestTag represents a strictly newer
