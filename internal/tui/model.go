@@ -210,6 +210,13 @@ type Model struct {
 	// via the source-of-truth swap in statusBar.
 	help help.Model
 
+	// priorityCap caps the visible rows at "<= Pn" so the most
+	// common triage move ('show me only the urgent stuff') is a
+	// single keystroke. -1 means no cap (the default; all rows
+	// pass). 0..3 maps to the digit keys 1..4 (1 → P0 only, 2 →
+	// P0..P1, etc.); the "0" key clears the cap.
+	priorityCap int
+
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
 	// overwritten) can't wipe the current one.
@@ -245,15 +252,16 @@ func New(src Source) Model {
 	h.Styles.ShortSeparator = helpStyle.Copy()
 
 	return Model{
-		src:      src,
-		keys:     defaultKeyMap(),
-		mode:     modeList,
-		preset:   filter.PresetAll,
-		input:    ti,
-		loading:  true, // first paint shows "loading…" until Init's fetch returns
-		detailVP: viewport.New(80, 20),
-		spinner:  sp,
-		help:     h,
+		src:         src,
+		keys:        defaultKeyMap(),
+		mode:        modeList,
+		preset:      filter.PresetAll,
+		input:       ti,
+		loading:     true, // first paint shows "loading…" until Init's fetch returns
+		detailVP:    viewport.New(80, 20),
+		spinner:     sp,
+		help:        h,
+		priorityCap: -1,
 	}
 }
 
@@ -560,6 +568,16 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switchPreset(filter.PresetHuman)
 	case keyHit(msg, m.keys.Cycle):
 		return m.switchPreset(filter.NextPreset(m.preset))
+	case keyHit(msg, m.keys.FilterP0):
+		return m.setPriorityCap(0)
+	case keyHit(msg, m.keys.FilterP1):
+		return m.setPriorityCap(1)
+	case keyHit(msg, m.keys.FilterP2):
+		return m.setPriorityCap(2)
+	case keyHit(msg, m.keys.FilterP3):
+		return m.setPriorityCap(3)
+	case keyHit(msg, m.keys.FilterPAll):
+		return m.setPriorityCap(-1)
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
 		// suspended after a terminal error. Bumping tickGen retires
@@ -1005,19 +1023,33 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // max score, which avoids letting a query span the title→description
 // boundary (a query "xy" must hit "x" and "y" in the same field).
 func (m *Model) recomputeVisible() {
+	// Apply the priority cap first so the fuzzy ranking only ever
+	// runs over rows the user actually wants to see. -1 means "no
+	// cap"; the test below short-circuits.
+	pool := m.all
+	if m.priorityCap >= 0 {
+		filtered := make([]beads.Issue, 0, len(m.all))
+		for _, i := range m.all {
+			if i.Priority <= m.priorityCap {
+				filtered = append(filtered, i)
+			}
+		}
+		pool = filtered
+	}
+
 	if m.query == "" {
-		m.visible = m.all
+		m.visible = pool
 		if m.cursor >= len(m.visible) {
 			m.cursor = max(0, len(m.visible)-1)
 		}
 		return
 	}
 
-	best := make(map[int]int, len(m.all))
-	for _, mt := range fuzzy.FindFrom(m.query, titleSource(m.all)) {
+	best := make(map[int]int, len(pool))
+	for _, mt := range fuzzy.FindFrom(m.query, titleSource(pool)) {
 		best[mt.Index] = mt.Score
 	}
-	for _, mt := range fuzzy.FindFrom(m.query, descSource(m.all)) {
+	for _, mt := range fuzzy.FindFrom(m.query, descSource(pool)) {
 		if s, ok := best[mt.Index]; !ok || mt.Score > s {
 			best[mt.Index] = mt.Score
 		}
@@ -1036,13 +1068,26 @@ func (m *Model) recomputeVisible() {
 	})
 	out := make([]beads.Issue, 0, len(list))
 	for _, s := range list {
-		out = append(out, m.all[s.idx])
+		out = append(out, pool[s.idx])
 	}
 	m.visible = out
 
 	if m.cursor >= len(m.visible) {
 		m.cursor = max(0, len(m.visible)-1)
 	}
+}
+
+// setPriorityCap updates the priority filter and re-runs the
+// visible-row pipeline. Cursor resets to 0 since the previous
+// position is meaningless against a different filter; scroll
+// re-clamps so the (now smaller or larger) list doesn't leave the
+// cursor offscreen.
+func (m Model) setPriorityCap(cap int) (tea.Model, tea.Cmd) {
+	m.priorityCap = cap
+	m.cursor = 0
+	m.recomputeVisible()
+	m.ensureCursorVisible()
+	return m, nil
 }
 
 // View dispatches to the per-mode renderer.
@@ -1122,6 +1167,14 @@ func (m Model) viewList() string {
 	b.WriteString("\n")
 	if m.setupHint != "" {
 		b.WriteString(setupHintStyle.Render(m.setupHint))
+		b.WriteString("\n")
+	}
+	// Filter chip strip — preset always shown; priority chip only
+	// when the user has set a cap. Renders blank for the default
+	// state (preset=all, no priority) so a fresh view stays
+	// chrome-free.
+	if chips := renderFilterChips(m.preset, m.priorityCap); chips != "" {
+		b.WriteString(chips)
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
@@ -1741,6 +1794,9 @@ func (m Model) chromeExtra() int {
 		// setupHint can wrap; count newlines + 1.
 		n += 1 + strings.Count(m.setupHint, "\n")
 	}
+	if m.preset != filter.PresetAll || m.priorityCap >= 0 {
+		n++ // filter chip strip
+	}
 	if m.lastErr != nil && len(m.all) > 0 {
 		n++ // refresh-failed banner
 	}
@@ -1809,6 +1865,29 @@ func (m *Model) ensureCursorVisible() {
 	if m.scroll < 0 {
 		m.scroll = 0
 	}
+}
+
+// renderFilterChips builds the filter-strip line shown above the
+// table. Returns the empty string when nothing is filtered (preset
+// is the default `all` AND no priority cap) so a fresh view stays
+// chrome-free. The non-default preset chip + priority chip both
+// use chipStyle for visual coherence.
+func renderFilterChips(p filter.Preset, priorityCap int) string {
+	var parts []string
+	if p != filter.PresetAll {
+		parts = append(parts, chipActiveStyle.Render(" "+string(p)+" "))
+	}
+	if priorityCap >= 0 {
+		label := fmt.Sprintf(" ≤P%d ", priorityCap)
+		if priorityCap == 0 {
+			label = " P0 only "
+		}
+		parts = append(parts, chipActiveStyle.Render(label))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
 }
 
 // emptyMatchCopy returns the preset-aware "no rows match this

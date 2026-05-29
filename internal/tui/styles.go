@@ -135,6 +135,15 @@ var (
 	// "this is configured correctly" at a glance.
 	wykIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84"))
 
+	// chipActiveStyle renders an active filter chip above the
+	// table (e.g. "human" preset, "≤P1" priority cap). Bright
+	// background + dark text so it reads as a pill the eye can
+	// land on, distinct from the muted header row below.
+	chipActiveStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("214")).
+			Foreground(lipgloss.Color("232")).
+			Bold(true)
+
 	// fetchErrorStyle renders the multi-repo per-sub failure banner.
 	// Amber (not red) so an erroring sub reads as "needs attention"
 	// without screaming over the rest of the table — distinct from

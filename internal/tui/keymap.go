@@ -38,6 +38,16 @@ type keyMap struct {
 
 	// Help overlay (Phase 3.B.3).
 	Help key.Binding // ? — modal listing every binding
+
+	// Priority quick-filters. Cap the visible rows at "<= Pn"
+	// without dropping into the / fuzzy prompt — the most common
+	// triage move ("show me P0/P1 only") becomes one keystroke.
+	// FilterPAll clears the cap.
+	FilterP0   key.Binding // 1 — only P0 (highest)
+	FilterP1   key.Binding // 2 — P0 and P1
+	FilterP2   key.Binding // 3 — P0..P2
+	FilterP3   key.Binding // 4 — P0..P3
+	FilterPAll key.Binding // 0 — clear the priority cap
 }
 
 func defaultKeyMap() keyMap {
@@ -63,6 +73,12 @@ func defaultKeyMap() keyMap {
 		JumpPrevHuman: key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev human")),
 
 		Help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+
+		FilterP0:   key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "P0 only")),
+		FilterP1:   key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "≤P1")),
+		FilterP2:   key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "≤P2")),
+		FilterP3:   key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "≤P3")),
+		FilterPAll: key.NewBinding(key.WithKeys("0"), key.WithHelp("0", "all P")),
 	}
 }
 
@@ -99,7 +115,7 @@ func (k keyMap) shortHelpReadOnly() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
-		{k.Filter, k.Human, k.Cycle},
+		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll},
 		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd},
 		{k.Refresh, k.Help, k.Quit},
 	}

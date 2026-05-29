@@ -1556,3 +1556,60 @@ func TestEmptyState_HumanPresetCelebrates(t *testing.T) {
 		t.Errorf("human-preset empty state should be celebratory; got:\n%s", out)
 	}
 }
+
+func TestPriorityCap_FiltersToCapAndBelow(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "P0", Priority: 0, Labels: []string{}},
+		{ID: "a-2", Title: "P1", Priority: 1, Labels: []string{}},
+		{ID: "a-3", Title: "P2", Priority: 2, Labels: []string{}},
+		{ID: "a-4", Title: "P3", Priority: 3, Labels: []string{}},
+		{ID: "a-5", Title: "P4", Priority: 4, Labels: []string{}},
+	}}
+	m := applyFetched(New(src), src)
+
+	// Pressing 1 should cap to P0 only.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = model.(Model)
+	if len(m.visible) != 1 || m.visible[0].Priority != 0 {
+		t.Errorf("'1' should cap to P0; got %d rows", len(m.visible))
+	}
+
+	// Pressing 3 should expand to P0..P2.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = model.(Model)
+	if len(m.visible) != 3 {
+		t.Errorf("'3' should expand to P0..P2 (3 rows); got %d", len(m.visible))
+	}
+
+	// Pressing 0 should clear the cap.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'0'}})
+	m = model.(Model)
+	if len(m.visible) != 5 {
+		t.Errorf("'0' should clear the cap (5 rows); got %d", len(m.visible))
+	}
+}
+
+func TestFilterChip_RendersWhenActiveOnlyOnNonDefaultPresetOrCap(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	// Default state — no chip line.
+	if got := renderFilterChips(m.preset, m.priorityCap); got != "" {
+		t.Errorf("default preset + no cap should produce no chip; got %q", got)
+	}
+
+	// After a priority cap — chip appears.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = model.(Model)
+	if got := renderFilterChips(m.preset, m.priorityCap); !strings.Contains(got, "P1") {
+		t.Errorf("expected ≤P1 chip after pressing '2'; got %q", got)
+	}
+
+	// After preset switch + cap — both chips appear.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = model.(Model)
+	chips := renderFilterChips(m.preset, m.priorityCap)
+	if !strings.Contains(chips, "human") || !strings.Contains(chips, "P1") {
+		t.Errorf("expected both human + P1 chips; got %q", chips)
+	}
+}
