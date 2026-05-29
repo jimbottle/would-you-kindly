@@ -6,7 +6,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(nothing yet)
+Largest round since v0.1.0 — `wyk` graduates from "TUI over the inbox" to
+a CLI-driven toolkit around the same contract. New top-level subcommands
+(`activity`, `export`, `import`, `dashboard`, `doctor`, `help`,
+`completion`, `update`, `version`) plus a much bigger TUI keymap.
+
+### Added — CLI subcommands
+
+- **`wyk activity`** — recently-touched issues across registered repos.
+  Flags: `-since 24h`, `-json`, `-priority N`, `-repo <name>`,
+  `-status open|closed|all`.
+- **`wyk export`** — JSON dump of every registered repo's full issue
+  list + ready IDs. Flags: `-since <dur>` (incremental), `-compact`
+  (non-indented), `-repo <name>`.
+- **`wyk import`** — restore from a `wyk export` dump. Reads stdin or
+  `-file`. Per-repo reconcile: closed-in-dump skipped, open issues
+  diff-applied if the ID matches locally, created fresh if not. Flags:
+  `-file <path>`, `-dry-run`, `-repo <name>`.
+- **`wyk dashboard`** — per-repo rollup of open/human/closed counts.
+  Flags: `-json`, `-days N`, `-repo <name>`.
+- **`wyk doctor`** — checks bd/wyk on PATH, `$EDITOR`, audit-trail
+  actor, XDG paths, and per-repo `.git` / `.beads` / hook state.
+  Flag: `-json` for CI-gatable structured output.
+- **`wyk help [--markdown]`** — pointer to the in-TUI `?` overlay;
+  `--markdown` emits the generated keymap reference for docs.
+- **`wyk completion <bash|zsh|fish>`** — shell completion scripts.
+- **`wyk version --check`** — polls the release feed; exit 0 current,
+  1 newer available, 2 network failure. Honors the stable/any channel
+  cached by `wyk update`.
+
+### Added — CLI flags on existing subcommands
+
+- **`wyk inbox`** gains `-priority N` (cap at priority N or higher) and
+  `-repo <name>` (alternative to `-C <dir>`).
+- **`wyk handoff`** gains `-note <text>` (post a `bd note` after the
+  handoff lands).
+- **`wyk -preset <name>`** — top-level flag launches the TUI into a
+  specific preset (`all`/`ready`/`human`/`mine`/`blocked`).
+
+### Added — TUI
+
+- **Writes:** `u` undo last close, `e` edit description in `$EDITOR`,
+  `L` toggle arbitrary label, `O` change owner, `d` defer, `v`
+  multi-select with bulk close/flag/defer, `+`/`-` bump priority,
+  `.` repeat last write action.
+- **Clipboard:** `y` yank ID, `Y` yank "ID — title", `*` yank every
+  visible ID, `M` yank cursor as markdown task line (`- [ ] ID —
+  title`), `_` yank every visible row as markdown task list.
+- **View:** `o` column-visibility overlay (persisted to
+  `~/.config/wyk/ui.json`), `C` toggle show-closed across presets,
+  `S` reverse sort, `s` cycle sort key, fuzzy-match highlight in the
+  Title column, per-preset empty-state copy.
+- **Prompts:** `n` multi-line note (textarea), `@name` expand a saved
+  fuzzy filter, `:` command palette with `:assign` / `:priority` /
+  `:label` / `:filter list` / `:filter remove` / `:bd <args>` (raw bd
+  in a scrollable overlay).
+- **Background:** fsnotify watch mode (instant refresh on bd writes),
+  channel-aware update nudge, mouse-click row selection + wheel scroll,
+  stats line in status bar (`· N human · M mine`), help overlay Status
+  column legend.
+
+### Added — TUI customization
+
+- **`~/.config/wyk/theme.json`** — optional color overlay. Empty /
+  missing keys fall through to the built-in lipgloss styles. Accepts
+  ANSI 256 codes (`"212"`) or hex literals (`"#ff66cc"`).
+- **`NO_COLOR` / `WYK_NO_COLOR`** — disable styling without rebuilding.
+
+### Changed
+
+- HUMAN badge is always rendered plain (no `← HUMAN` variant); QuickAdd
+  now refuses to file an issue without an owner so the audit trail
+  doesn't carry blanks.
+- `wyk doctor` refactored to share a single `[]check` slice between the
+  text and `-json` paths.
+
+### Internal
+
+- `internal/theme/`, `internal/filter/`, `internal/filters/`,
+  `internal/uiconfig/`, `internal/watch/`, `internal/clipboard/`,
+  `internal/registry/`, `pkg/handoff/` packages.
+- Swappable test seams: `clipboardCopy`, `liveFetcher`,
+  `currentTagForCheck`, `defaultExportClient`, `defaultImportClient`,
+  `defaultActivityClient`.
+- golangci-lint v2 with `std-error-handling` exclusions; gofmt drift
+  check in CI.
+- `CONTRIBUTING.md` covers dev setup, tests, conventions.
 
 ## [0.3.3] — 2026-05-29
 
