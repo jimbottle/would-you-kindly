@@ -100,6 +100,68 @@ func TestRunDoctorFix_DryRunSkipsWrites(t *testing.T) {
 	}
 }
 
+func TestRunDoctorFix_PartialFailureExits1(t *testing.T) {
+	// Two repos missing hooks; the stubbed installer fails the
+	// first one and succeeds on the second. Exit 1 reflects the
+	// aggregated failure; the second install still ran (no
+	// short-circuit on first error).
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	a := gitInit(t)
+	b := gitInit(t)
+	regPath, _ := registry.DefaultPath()
+	reg := &registry.Registry{Repos: []registry.Repo{
+		{Name: "a", Path: a},
+		{Name: "b", Path: b},
+	}}
+	if err := reg.Save(regPath); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	var attempted []string
+	prev := installHookIn
+	installHookIn = func(dir string, _ ...string) int {
+		attempted = append(attempted, dir)
+		if dir == a {
+			return 1 // fail the first
+		}
+		return 0
+	}
+	defer func() { installHookIn = prev }()
+
+	// Swallow stderr so the failure message doesn't clutter the test log.
+	old := os.Stderr
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	os.Stderr = devnull
+	defer func() {
+		os.Stderr = old
+		_ = devnull.Close()
+	}()
+
+	if code := runDoctorFix(false); code != 1 {
+		t.Errorf("partial-failure exit %d, want 1", code)
+	}
+	if len(attempted) != 2 {
+		t.Errorf("installHookIn called %d times, want 2 (no short-circuit on first error)", len(attempted))
+	}
+}
+
+func TestRunDoctor_FlagCombinationGuards(t *testing.T) {
+	old := os.Stderr
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	os.Stderr = devnull
+	defer func() {
+		os.Stderr = old
+		_ = devnull.Close()
+	}()
+	if code := runDoctor([]string{"-json", "-fix"}); code != 64 {
+		t.Errorf("-json+-fix exit %d, want 64", code)
+	}
+	if code := runDoctor([]string{"-dry-run"}); code != 64 {
+		t.Errorf("-dry-run without -fix exit %d, want 64", code)
+	}
+}
+
 func TestRunDoctorFix_NoRegistryReturns2(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)

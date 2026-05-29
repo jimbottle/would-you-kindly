@@ -222,20 +222,25 @@ func runDoctorFix(dryRun bool) int {
 	}
 
 	prefix := "doctor -fix"
+	verb := "installed"
 	if dryRun {
 		prefix += " (dry-run)"
+		verb = "to install"
 	}
-	fmt.Printf("%s: %d to install, %d skipped (already-wyk or foreign)\n", prefix, fixed, skipped)
+	fmt.Printf("%s: %d %s, %d skipped (already-wyk or foreign)\n", prefix, fixed, verb, skipped)
 	if hadError {
 		return 1
 	}
 	return 0
 }
 
-// installHookIn shells out to runInit in a child directory by
-// constructing an args slice and a goroutine-local cwd switch.
-// Implemented as a package-level var so the fix tests can stub
-// the install side effect without spawning real bd.
+// installHookIn shells out to runInit in a child directory via a
+// process-level cwd switch (restored via defer). os.Chdir is
+// process-global, not goroutine-local — fine here because
+// runDoctorFix is the only caller and runs single-threaded, but
+// callers that introduce concurrency would race. Implemented as a
+// package-level var so the fix tests can stub the install side
+// effect without spawning real bd.
 var installHookIn = func(dir string, extraArgs ...string) int {
 	prev, err := os.Getwd()
 	if err != nil {

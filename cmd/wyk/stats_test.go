@@ -1,11 +1,73 @@
 package main
 
 import (
+	"os"
 	"testing"
 	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
+
+func TestStatsSubs_RepoNameSelectsOneRegisteredEntry(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	regPath, _ := registry.DefaultPath()
+	reg := &registry.Registry{Repos: []registry.Repo{
+		{Name: "alpha", Path: "/tmp/a"},
+		{Name: "beta", Path: "/tmp/b"},
+	}}
+	if err := reg.Save(regPath); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	subs, code := statsSubs("", "beta")
+	if code != 0 {
+		t.Errorf("statsSubs exit %d, want 0", code)
+	}
+	if len(subs) != 1 || subs[0].name != "beta" {
+		t.Errorf("subs=%v, want [beta]", subs)
+	}
+}
+
+func TestStatsSubs_MissingRepoNameExits1(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	regPath, _ := registry.DefaultPath()
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "alpha", Path: "/tmp/a"}}}
+	if err := reg.Save(regPath); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Swallow the stderr error message so the test log stays
+	// clean — filterRegistryByName writes to stderr in the
+	// no-match branch.
+	old := os.Stderr
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	os.Stderr = devnull
+	defer func() {
+		os.Stderr = old
+		_ = devnull.Close()
+	}()
+
+	_, code := statsSubs("", "ghost")
+	if code != 1 {
+		t.Errorf("missing-name exit %d, want 1", code)
+	}
+}
+
+func TestRunStats_CAndRepoMutuallyExclusive(t *testing.T) {
+	old := os.Stderr
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	os.Stderr = devnull
+	defer func() {
+		os.Stderr = old
+		_ = devnull.Close()
+	}()
+	if code := runStats([]string{"-C", "/tmp/a", "-repo", "alpha"}); code != 64 {
+		t.Errorf("-C+-repo exit %d, want 64", code)
+	}
+}
 
 func TestComputeStats_BasicAggregations(t *testing.T) {
 	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)

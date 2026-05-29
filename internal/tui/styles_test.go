@@ -83,7 +83,7 @@ func TestApplyTheme_EmptyThemeIsNoOp(t *testing.T) {
 // path lipgloss supports natively. The exact SGR varies with
 // the color profile so we settle for "render is non-empty and
 // changed" rather than naming a specific ANSI sequence.
-func TestClosedRowStyle_RendersWhenStatusClosed(t *testing.T) {
+func TestClosedRowStyle_DimsTheTitleBody(t *testing.T) {
 	forceColor(t)
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "a-1", Title: "still going", Status: "open"},
@@ -93,14 +93,34 @@ func TestClosedRowStyle_RendersWhenStatusClosed(t *testing.T) {
 	m.width = 200 // wide enough for the title not to truncate
 	openRow := m.renderRow(m.visible[0], false)
 	closedRow := m.renderRow(m.visible[1], false)
-	// closedRowStyle wraps with a foreground SGR escape; assert the
-	// closed row carries it and the open row does not. The exact
-	// color code (240 → 38;5;240) is the smoking gun — pinning it
-	// is more robust than checking "any escape," which would also
-	// match the per-column styles already in both rows.
 	closedSGR := "\x1b[38;5;240m"
-	if !strings.Contains(closedRow, closedSGR) {
-		t.Errorf("closed row should carry the closedRowStyle SGR %q; got:\n%q", closedSGR, closedRow)
+	// The closed-row dim must reach the title body — otherwise the
+	// stated UX cue ("metadata stays bright, body dims") doesn't
+	// hold. An earlier envelope-wrapping implementation passed a
+	// "SGR appears somewhere" assertion but didn't actually dim
+	// the title because inner column resets cleared the envelope.
+	// Pin the *title* itself as the property that matters: every
+	// run of title text in the closed row must be immediately
+	// preceded (no other content between) by the dim SGR.
+	idx := strings.Index(closedRow, "wrapped up")
+	if idx < 0 {
+		t.Fatalf("closed row missing the title; got:\n%q", closedRow)
+	}
+	// Walk backwards until we hit an ANSI escape. The most recent
+	// SGR before the title text must be the dim color.
+	preceding := closedRow[:idx]
+	lastEsc := strings.LastIndex(preceding, "\x1b[")
+	if lastEsc < 0 {
+		t.Fatalf("no ANSI escape precedes the title; got:\n%q", closedRow)
+	}
+	// Slice from the escape to the end-of-SGR (`m`) and compare.
+	endIdx := strings.Index(preceding[lastEsc:], "m")
+	if endIdx < 0 {
+		t.Fatalf("malformed SGR before title; got:\n%q", preceding[lastEsc:])
+	}
+	got := preceding[lastEsc : lastEsc+endIdx+1]
+	if got != closedSGR {
+		t.Errorf("title preceded by %q, want %q (dim should reach the title body)", got, closedSGR)
 	}
 	if strings.Contains(openRow, closedSGR) {
 		t.Errorf("open row should NOT carry closedRowStyle; got:\n%q", openRow)

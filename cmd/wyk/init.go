@@ -533,10 +533,6 @@ func defaultProbeBD(ctx context.Context, dir string) error {
 	return err
 }
 
-// runScanAndRegister walks the filesystem under root, finds every
-// .beads/ directory, probes each unregistered candidate with bd to
-// confirm it's a usable workspace, then registers the survivors
-// into ~/.config/wyk/repos.json. Candidates that fail the probe
 // runUninstall is the inverse of the per-repo install path: remove
 // wyk's post-commit hook. If a post-commit.pre-wyk file exists
 // (chained install), restore it so the original tool's hook
@@ -603,6 +599,10 @@ func runUninstall(dryRun bool) int {
 	return 0
 }
 
+// runScanAndRegister walks the filesystem under root, finds every
+// .beads/ directory, probes each unregistered candidate with bd to
+// confirm it's a usable workspace, then registers the survivors
+// into ~/.config/wyk/repos.json. Candidates that fail the probe
 // (bd errors, jsonl-only export, abandoned shell) are SKIPPED with
 // a stderr line — the alternative was silently registering duds
 // that the user then has to clean up via `wyk registry remove`.

@@ -3589,11 +3589,31 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	if !selected && m.marked[issueKey(i)] {
 		cursor = cursorStyle.Render("✓ ")
 	}
+	// For closed rows, swap the "default" cell styles (id, type,
+	// updated — all currently lipgloss.NewStyle() no-ops) for the
+	// muted closedRowStyle, and pre-dim the bare column separator
+	// + priority text. An earlier version of this code wrapped the
+	// whole pre-built b.String() in a single foreground envelope,
+	// but lipgloss/termenv emit a `\x1b[0m` reset at the end of
+	// every inner Render, which cleared the envelope's color
+	// before reaching most of the unstyled output — only the
+	// leading whitespace inherited the dim. Painting per-cell
+	// here is the design that actually works.
+	idC, typeC, updatedC := idStyle, typeStyle, updatedStyle
+	sep := "  "
+	dim := func(s string) string { return s }
+	if i.Status == "closed" {
+		idC = closedRowStyle
+		typeC = closedRowStyle
+		updatedC = closedRowStyle
+		sep = closedRowStyle.Render("  ")
+		dim = func(s string) string { return closedRowStyle.Render(s) }
+	}
 	var b strings.Builder
 	b.WriteString(cursor)
 	if m.colVisible(colIDOwner) {
 		b.WriteString(paddedResponsibilityBadge(i))
-		b.WriteString("  ")
+		b.WriteString(sep)
 	}
 	if m.isMultiRepo() {
 		if m.colVisible(colIDWyk) {
@@ -3602,32 +3622,32 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 				w = " " + wykIndicatorStyle.Render("✓") + " "
 			}
 			b.WriteString(w)
-			b.WriteString("  ")
+			b.WriteString(sep)
 		}
 		if m.colVisible(colIDRepo) {
-			b.WriteString(typeStyle.Render(fmt.Sprintf("%-*s", colRepo, trunc(i.Repo, colRepo))))
-			b.WriteString("  ")
+			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colRepo, trunc(i.Repo, colRepo))))
+			b.WriteString(sep)
 		}
 		if m.colVisible(colIDBranch) {
-			b.WriteString(typeStyle.Render(fmt.Sprintf("%-*s", colBranch, trunc(i.Branch, colBranch))))
-			b.WriteString("  ")
+			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colBranch, trunc(i.Branch, colBranch))))
+			b.WriteString(sep)
 		}
 	}
-	b.WriteString(idStyle.Render(fmt.Sprintf("%-*s", colID, trunc(m.displayID(i), colID))))
-	b.WriteString("  ")
+	b.WriteString(idC.Render(fmt.Sprintf("%-*s", colID, trunc(m.displayID(i), colID))))
+	b.WriteString(sep)
 	if m.colVisible(colIDType) {
-		b.WriteString(typeStyle.Render(fmt.Sprintf("%-*s", colType, abbrevType(i.IssueType))))
-		b.WriteString("  ")
+		b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colType, abbrevType(i.IssueType))))
+		b.WriteString(sep)
 	}
 	if m.colVisible(colIDStatus) {
 		b.WriteString(statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status))))
-		b.WriteString("  ")
+		b.WriteString(sep)
 	}
-	fmt.Fprintf(&b, "P%d", i.Priority)
-	b.WriteString("  ")
+	b.WriteString(dim(fmt.Sprintf("P%d", i.Priority)))
+	b.WriteString(sep)
 	if m.colVisible(colIDUpdated) {
-		b.WriteString(updatedStyle.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt))))
-		b.WriteString("  ")
+		b.WriteString(updatedC.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt))))
+		b.WriteString(sep)
 	}
 	// Truncate the title to whatever space remains after every
 	// preceding column. Without this, long titles wrap or overflow
@@ -3660,16 +3680,12 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		}
 		title = highlightRunes(title, idxs, fuzzyMatchStyle)
 	}
-	b.WriteString(title)
-	// Closed rows render with a muted envelope so the eye still
-	// tracks open work first when 'C' (show-closed) is on. The
-	// inner styles (status color, badges, fuzzy-match highlight,
-	// strikethrough on Status) keep their colors — lipgloss
-	// foreground only applies to runes the inner styles didn't
-	// already paint — so the cue is "metadata stays, body dims."
-	if i.Status == "closed" {
-		return closedRowStyle.Render(b.String())
-	}
+	// Wrap the title in the same dim style for closed rows.
+	// Fuzzy-match highlights keep their amber color — they're
+	// already wrapped in fuzzyMatchStyle.Render which carries
+	// its own foreground; the dim only applies to the runes
+	// between the highlights.
+	b.WriteString(dim(title))
 	return b.String()
 }
 
