@@ -10,6 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -123,6 +125,11 @@ type Mutator interface {
 	// pre-existing issue can be hand-edited back to un-owned via
 	// `bd update` and we respect that).
 	SetAssignee(ctx context.Context, issue beads.Issue, assignee string) error
+	// SetDescription rewrites the issue's description. Multi-line
+	// content survives because the underlying bd call uses
+	// --description-file rather than a shell-escaped flag. Empty
+	// body is honored as a deliberate clear.
+	SetDescription(ctx context.Context, issue beads.Issue, body string) error
 }
 
 // Detailer is the "fetch the full issue for the detail view"
@@ -686,6 +693,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case writeMsg:
 		return m.handleWriteResult(msg)
 
+	case editFinishedMsg:
+		return m.handleEditFinished(msg)
+
 	case bulkWriteMsg:
 		return m.handleBulkWriteResult(msg)
 
@@ -924,6 +934,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.beginAssign()
 	case keyHit(msg, m.keys.Label):
 		return m.beginLabel()
+	case keyHit(msg, m.keys.Editor):
+		return m.beginEdit()
 	case keyHit(msg, m.keys.ShowClosed):
 		return m.toggleShowClosed()
 	case keyHit(msg, m.keys.Columns):
@@ -1469,6 +1481,8 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 		m.setStatus("deferred " + msg.id)
 	case "assign":
 		m.setStatus("reassigned " + msg.id)
+	case "edit":
+		m.setStatus("edited " + msg.id)
 	case "flag":
 		m.setStatus("flagged " + msg.id + " for human")
 	case "unflag":
@@ -2381,6 +2395,100 @@ func parseSortKey(s string) (sortKey, bool) {
 		return sortID, true
 	}
 	return sortNone, false
+}
+
+// beginEdit suspends the TUI, opens $EDITOR on a temp file
+// seeded with the cursor row's description, and on return
+// dispatches Mutator.SetDescription if the body changed.
+// Multi-line and arbitrary-character editing that the textinput
+// modes can't do. Uses Detailer (when available) to pull the
+// full description rather than the slim list-row copy.
+func (m Model) beginEdit() (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus("nothing to edit")
+		return m, flashClearCmd(m.statusGen)
+	}
+	target := m.visible[m.cursor]
+	body := target.Description
+	if d, ok := m.src.(Detailer); ok {
+		if full, err := d.Detail(context.Background(), target); err == nil {
+			body = full.Description
+		}
+	}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	f, err := os.CreateTemp("", "wyk-edit-*.md")
+	if err != nil {
+		m.setStatus("edit failed: " + err.Error())
+		return m, flashClearCmd(m.statusGen)
+	}
+	if _, err := f.WriteString(body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		m.setStatus("edit failed: " + err.Error())
+		return m, flashClearCmd(m.statusGen)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		m.setStatus("edit failed: " + err.Error())
+		return m, flashClearCmd(m.statusGen)
+	}
+	cmd := exec.Command(editor, f.Name())
+	path := f.Name()
+	originalBody := body
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return editFinishedMsg{target: target, path: path, originalBody: originalBody, err: err}
+	})
+}
+
+// editFinishedMsg lands after $EDITOR exits. The handler reads
+// the temp file and dispatches SetDescription if the body
+// changed; either way the temp is removed before the message is
+// fully consumed.
+type editFinishedMsg struct {
+	target       beads.Issue
+	path         string
+	originalBody string
+	err          error
+}
+
+// handleEditFinished processes the ExecProcess callback: if the
+// editor exited cleanly AND the body changed AND the target row
+// still exists, dispatch SetDescription. Otherwise surface an
+// appropriate status banner. Temp file is removed regardless so
+// /tmp doesn't fill up with abandoned drafts.
+func (m Model) handleEditFinished(msg editFinishedMsg) (tea.Model, tea.Cmd) {
+	defer func() { _ = os.Remove(msg.path) }()
+	if msg.err != nil {
+		m.setStatus("edit aborted: " + msg.err.Error())
+		return m, flashClearCmd(m.statusGen)
+	}
+	b, err := os.ReadFile(msg.path)
+	if err != nil {
+		m.setStatus("edit read failed: " + err.Error())
+		return m, flashClearCmd(m.statusGen)
+	}
+	newBody := string(b)
+	if newBody == msg.originalBody {
+		m.setStatus("edit: no change")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if !m.issueExists(msg.target.ID) {
+		m.setStatus("edit cancelled: " + msg.target.ID + " was removed by a refresh")
+		return m, flashClearCmd(m.statusGen)
+	}
+	target := msg.target
+	mu := m.mutator()
+	return m, runWriteWithIssue("edit", target, func(ctx context.Context) error {
+		return mu.SetDescription(ctx, target, newBody)
+	})
 }
 
 // beginLabel opens the arbitrary-label prompt. The cursor row's

@@ -43,6 +43,7 @@ type stubMutator struct {
 	deferred         []labelOp    // {id, when} for SetDefer
 	priorities       []priorityOp // {id, priority} for SetPriority
 	assignees        []labelOp    // {id, owner} for SetAssignee
+	descriptions     []labelOp    // {id, body} for SetDescription
 	added            []labelOp
 	removed          []labelOp
 	notes            []labelOp // reuse the {id,label} shape for {id, text}
@@ -87,6 +88,10 @@ func (s *stubMutator) SetPriority(_ context.Context, i beads.Issue, p int) error
 }
 func (s *stubMutator) SetAssignee(_ context.Context, i beads.Issue, assignee string) error {
 	s.assignees = append(s.assignees, labelOp{i.ID, assignee})
+	return nil
+}
+func (s *stubMutator) SetDescription(_ context.Context, i beads.Issue, body string) error {
+	s.descriptions = append(s.descriptions, labelOp{i.ID, body})
 	return nil
 }
 
@@ -2233,6 +2238,117 @@ func TestBulkFlag_AddsHumanToMarked(t *testing.T) {
 	_ = cmd()
 	if len(s.added) != 1 || s.added[0] != (labelOp{"a-2", "human"}) {
 		t.Errorf("bulk flag should add human only to a-2 (a-1 already flagged); got %+v", s.added)
+	}
+}
+
+// editTempFile creates a temp file containing body and returns
+// its path; the test owns cleanup via t.Cleanup.
+func editTempFile(t *testing.T, body string) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "wyk-edit-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return f.Name()
+}
+
+func TestEditFinished_DispatchesSetDescriptionOnChange(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Description: "old body"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	path := editTempFile(t, "NEW BODY")
+
+	_, cmd := m.Update(editFinishedMsg{
+		target:       beads.Issue{ID: "a-1"},
+		path:         path,
+		originalBody: "old body",
+	})
+	if cmd == nil {
+		t.Fatal("a real body change should dispatch SetDescription")
+	}
+	if msg := cmd().(writeMsg); msg.action != "edit" || msg.id != "a-1" {
+		t.Errorf("writeMsg action=%q id=%q; want edit/a-1", msg.action, msg.id)
+	}
+	if len(s.descriptions) != 1 || s.descriptions[0] != (labelOp{"a-1", "NEW BODY"}) {
+		t.Errorf("SetDescription should land the typed body; got %+v", s.descriptions)
+	}
+}
+
+func TestEditFinished_NoChangeIsNoOp(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Description: "same body"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	path := editTempFile(t, "same body")
+
+	model, _ := m.Update(editFinishedMsg{
+		target:       beads.Issue{ID: "a-1"},
+		path:         path,
+		originalBody: "same body",
+	})
+	m = model.(Model)
+	if len(s.descriptions) != 0 {
+		t.Errorf("no-change should NOT dispatch SetDescription; got %+v", s.descriptions)
+	}
+	if !strings.Contains(m.status, "no change") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
+func TestEditFinished_EditorErrorSurfaces(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	path := editTempFile(t, "anything")
+
+	model, _ := m.Update(editFinishedMsg{
+		target:       beads.Issue{ID: "a-1"},
+		path:         path,
+		originalBody: "anything",
+		err:          errors.New("editor exit 1"),
+	})
+	m = model.(Model)
+	if len(s.descriptions) != 0 {
+		t.Errorf("editor error should NOT dispatch SetDescription; got %+v", s.descriptions)
+	}
+	if !strings.Contains(m.status, "aborted") {
+		t.Errorf("status should announce the abort; got %q", m.status)
+	}
+}
+
+func TestEditFinished_CancelsWhenTargetVanishes(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	// applyMutatorFetched gives m a populated m.all; deliberately
+	// pick an ID NOT in the issue list so issueExists() misses.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	path := editTempFile(t, "different body")
+
+	model, _ := m.Update(editFinishedMsg{
+		target:       beads.Issue{ID: "ghost-99"},
+		path:         path,
+		originalBody: "old body",
+	})
+	m = model.(Model)
+	if len(s.descriptions) != 0 {
+		t.Errorf("vanished target should NOT dispatch SetDescription; got %+v", s.descriptions)
+	}
+	if !strings.Contains(m.status, "removed by a refresh") {
+		t.Errorf("status should announce the cancellation; got %q", m.status)
 	}
 }
 

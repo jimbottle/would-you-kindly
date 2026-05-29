@@ -129,6 +129,13 @@ type keyMap struct {
 	// specifically. Empty submission cancels. Bulk path is add-
 	// only (matches H's bulk behavior).
 	Label key.Binding // L — toggle an arbitrary label
+
+	// Editor suspends the TUI (tea.ExecProcess), opens the cursor
+	// issue's description in $EDITOR (fallback `vi`), and on
+	// return dispatches Mutator.SetDescription if the body
+	// changed. Multi-line editing for descriptions that the
+	// single-line textinput modes can't handle.
+	Editor key.Binding // e — edit description in $EDITOR
 }
 
 func defaultKeyMap() keyMap {
@@ -174,6 +181,7 @@ func defaultKeyMap() keyMap {
 		PriorityDown: key.NewBinding(key.WithKeys("-"), key.WithHelp("-", "↓prio")),
 		AssignOwner:  key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "owner")),
 		Label:        key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "label")),
+		Editor:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 	}
 }
 
@@ -211,7 +219,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label, k.Editor},
 		{k.Refresh, k.Help, k.Quit, k.Command},
 	}
 }

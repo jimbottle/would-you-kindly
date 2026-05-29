@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -175,6 +176,30 @@ func (c *Client) SetDefer(ctx context.Context, id, when string) error {
 // value is rejected by bd.
 func (c *Client) SetPriority(ctx context.Context, id string, priority int) error {
 	_, err := c.run(ctx, nil, "update", id, "--priority", fmt.Sprintf("%d", priority), autoCommitFlag)
+	return err
+}
+
+// SetDescription rewrites the issue's description via `bd update
+// --description-file <tmp>`. Multi-line content + arbitrary
+// characters (quotes, backticks, $()) flow through unescaped
+// because the body is read from a file, not parsed as a shell
+// arg. The caller is responsible for cleaning up the temp file
+// — actually we own it here so the caller has no leakage
+// surface. Empty body is honored as a deliberate clear.
+func (c *Client) SetDescription(ctx context.Context, id, body string) error {
+	f, err := os.CreateTemp("", "wyk-desc-*.md")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+	if _, err := f.WriteString(body); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temp: %w", err)
+	}
+	_, err = c.run(ctx, nil, "update", id, "--description-file", f.Name(), autoCommitFlag)
 	return err
 }
 

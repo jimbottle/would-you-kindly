@@ -282,6 +282,10 @@ func (s *BDSource) SetAssignee(ctx context.Context, i beads.Issue, assignee stri
 	return s.Client.SetAssignee(ctx, i.ID, assignee)
 }
 
+func (s *BDSource) SetDescription(ctx context.Context, i beads.Issue, body string) error {
+	return s.Client.SetDescription(ctx, i.ID, body)
+}
+
 func (s *BDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {
 	return s.Client.AddLabel(ctx, i.ID, label)
 }
@@ -620,6 +624,14 @@ func (m *MultiBDSource) SetAssignee(ctx context.Context, i beads.Issue, assignee
 		return err
 	}
 	return sub.SetAssignee(ctx, i, assignee)
+}
+
+func (m *MultiBDSource) SetDescription(ctx context.Context, i beads.Issue, body string) error {
+	sub, err := m.repoForIssue(i)
+	if err != nil {
+		return err
+	}
+	return sub.SetDescription(ctx, i, body)
 }
 
 // RawBD routes a raw bd invocation to the named workspace. Empty
