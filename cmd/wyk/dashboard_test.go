@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
 func TestEmitDashboardTable_ColumnsAndTotals(t *testing.T) {
@@ -33,6 +35,41 @@ func TestEmitDashboardTable_ColumnsAndTotals(t *testing.T) {
 	// Header includes the window from the days flag.
 	if !strings.Contains(out, "CLOSED ↓ 7d") {
 		t.Errorf("header should include window days; got\n%s", out)
+	}
+}
+
+func TestTallyIssues_ClassifiesAllBranches(t *testing.T) {
+	cutoff := time.Date(2026, 5, 22, 0, 0, 0, 0, time.UTC)
+	// Boundary: inside window (closed at cutoff+1s) vs. outside
+	// (closed at cutoff-1s). Inside should count, outside should
+	// not — pins the After-not-AtOrAfter contract.
+	inside := cutoff.Add(time.Second)
+	outside := cutoff.Add(-time.Second)
+	issues := []beads.Issue{
+		// open non-human → open++, human stays put.
+		{Status: "open"},
+		// open human → both open and human++.
+		{Status: "open", Labels: []string{"human"}},
+		// closed inside window → closedInWindow++.
+		{Status: "closed", ClosedAt: inside},
+		// closed outside window → no counter.
+		{Status: "closed", ClosedAt: outside},
+		// closed inside window but human-labeled — closed paths
+		// never increment human regardless of label.
+		{Status: "closed", ClosedAt: inside, Labels: []string{"human"}},
+		// closed with zero ClosedAt — shouldn't happen, but if it
+		// does we drop silently rather than counting.
+		{Status: "closed"},
+	}
+	open, human, closedInWindow := tallyIssues(issues, cutoff)
+	if open != 2 {
+		t.Errorf("open = %d, want 2", open)
+	}
+	if human != 1 {
+		t.Errorf("human = %d, want 1 (closed rows must not contribute)", human)
+	}
+	if closedInWindow != 2 {
+		t.Errorf("closedInWindow = %d, want 2 (inside-window closed counts; zero-ClosedAt drops)", closedInWindow)
 	}
 }
 

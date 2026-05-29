@@ -767,6 +767,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// - modeList: wheel scrolls the cursor; left-click sets it
 		// - modeDetail: wheel scrolls the viewport body so a long
 		//   description doesn't force the user to hunt for j/k
+		// - modeOutput: wheel scrolls the :bd output viewport so
+		//   the overlay's footer hint matches behaviour
 		// - other modes (help, modals, prompts): keyboard-focused,
 		//   mouse is dropped
 		switch m.mode {
@@ -775,6 +777,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeDetail:
 			var cmd tea.Cmd
 			m.detailVP, cmd = m.detailVP.Update(msg)
+			return m, cmd
+		case modeOutput:
+			var cmd tea.Cmd
+			m.outputVP, cmd = m.outputVP.Update(msg)
 			return m, cmd
 		default:
 			return m, nil

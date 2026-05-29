@@ -2275,6 +2275,56 @@ func TestAssign_EmptyValueClearsOwner(t *testing.T) {
 	}
 }
 
+func TestAssign_CancelsWhenTargetVanishes(t *testing.T) {
+	// Mirror the close/note/defer pattern: a concurrent refetch
+	// that drops the targeted row should produce the friendly
+	// "removed from the workspace by a refresh" cancellation
+	// instead of dispatching a stale-ID SetAssignee.
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Owner: "alice"},
+	}}}
+	m := applyMutatorFetched(New(s), s)
+	// Enter the prompt — pendingTarget is captured here.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}})
+	m = model.(Model)
+	// Simulate a refetch that drops a-1 entirely.
+	model, _ = m.Update(fetchedMsg{preset: m.preset, issues: nil})
+	m = model.(Model)
+	// Submit a new value — guard should refuse to dispatch.
+	for _, r := range "bob" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		// flashClearCmd is fine; only a write cmd would record.
+		_ = cmd()
+	}
+	if len(s.assignees) != 0 {
+		t.Errorf("stale target should NOT dispatch SetAssignee; got %+v", s.assignees)
+	}
+}
+
+func TestAssign_ReadOnlyShowsHint(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src) // not a Mutator
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("O on read-only source should NOT enter modeAssign; got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "read-only") {
+		t.Errorf("status should explain the read-only hint; got %q", m.status)
+	}
+}
+
 func TestAssign_BulkAppliesToAllMarked(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
 		{ID: "a-1", Owner: "alice"},
@@ -2780,6 +2830,53 @@ func TestCommandPalette_BDEmptyArgsIsUsageError(t *testing.T) {
 	if !strings.Contains(m.status, "args required") {
 		t.Errorf("status should explain the usage; got %q", m.status)
 	}
+}
+
+func TestCommandPalette_BDOutputFooterShowsScrollPercent(t *testing.T) {
+	// Pin the overflow / no-overflow branches of viewOutput's
+	// footer. Short output → no percent prefix; long output that
+	// exceeds the viewport height → percent prefix appears.
+	t.Run("no overflow", func(t *testing.T) {
+		src := &stubRawBD{
+			stubSource: stubSource{issues: sampleIssues()},
+			out:        []byte("just one line\n"),
+		}
+		m := New(src)
+		mod, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+		m = mod.(Model)
+		mod, _ = m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+		m = mod.(Model)
+		mod, _ = m.Update(rawBDMsg{args: "ready", out: src.out})
+		m = mod.(Model)
+		out := m.viewOutput()
+		if strings.Contains(out, "%") {
+			t.Errorf("short output should NOT show scroll percent; got %q", out)
+		}
+	})
+
+	t.Run("overflow shows percent", func(t *testing.T) {
+		// 100 lines into a viewport of height ~8 (40 - chrome)
+		// guarantees overflow.
+		var body strings.Builder
+		for i := 0; i < 100; i++ {
+			fmt.Fprintf(&body, "line %d\n", i)
+		}
+		src := &stubRawBD{
+			stubSource: stubSource{issues: sampleIssues()},
+			out:        []byte(body.String()),
+		}
+		m := New(src)
+		mod, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+		m = mod.(Model)
+		mod, _ = m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+		m = mod.(Model)
+		mod, _ = m.Update(rawBDMsg{args: "ready", out: src.out})
+		m = mod.(Model)
+		out := m.viewOutput()
+		if !strings.Contains(out, "%") {
+			t.Errorf("long output should surface scroll percent; got %q", out)
+		}
+	})
 }
 
 func TestCommandPalette_BDOutputUsesViewport(t *testing.T) {

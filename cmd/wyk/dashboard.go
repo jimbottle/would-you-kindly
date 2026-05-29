@@ -108,23 +108,37 @@ func collectDashboard(reg *registry.Registry, cutoff time.Time) ([]dashboardRow,
 			rows = append(rows, row)
 			continue
 		}
-		for _, i := range issues {
-			if i.Status != "closed" {
-				row.Open++
-				for _, l := range i.Labels {
-					if l == "human" {
-						row.Human++
-						break
-					}
-				}
-			} else if !i.ClosedAt.IsZero() && i.ClosedAt.After(cutoff) {
-				row.ClosedInWindow++
-			}
-		}
+		row.Open, row.Human, row.ClosedInWindow = tallyIssues(issues, cutoff)
 		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	return rows, hadError
+}
+
+// tallyIssues classifies a slice of bd Issues into the three
+// dashboard buckets. Extracted as a pure function so the
+// counting branches — open vs. closed, the human-label flag,
+// and the closed-in-window boundary — can be unit-tested
+// without a real bd binary. Uses beads.Issue.IsHuman() to
+// match the convention used everywhere else in the codebase
+// (rather than re-implementing a Labels scan).
+//
+// A closed issue with a zero ClosedAt is dropped silently —
+// shouldn't happen in practice (bd sets ClosedAt on every
+// close), but a clock-skew or migration artifact shouldn't
+// pollute the recent-closes count.
+func tallyIssues(issues []beads.Issue, cutoff time.Time) (open, human, closedInWindow int) {
+	for _, i := range issues {
+		if i.Status != "closed" {
+			open++
+			if i.IsHuman() {
+				human++
+			}
+		} else if !i.ClosedAt.IsZero() && i.ClosedAt.After(cutoff) {
+			closedInWindow++
+		}
+	}
+	return open, human, closedInWindow
 }
 
 // emitDashboardTable prints the human-facing summary. tabwriter
@@ -138,7 +152,12 @@ func emitDashboardTable(w io.Writer, rows []dashboardRow, days int) {
 	var totOpen, totHuman, totClosed int
 	for _, r := range rows {
 		if r.Err != "" {
-			fmt.Fprintf(tw, "%s\t—\t—\t—\t(%s)\n", r.Name, r.Err)
+			// Keep the cell count consistent with normal rows
+			// (4 tab-separated cells) so tabwriter aligns the
+			// columns the same way; fold the error message into
+			// the trailing cell so the CLOSED column doesn't
+			// drift between errored and non-errored rows.
+			fmt.Fprintf(tw, "%s\t—\t—\t— (%s)\n", r.Name, r.Err)
 			continue
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\n", r.Name, r.Open, r.Human, r.ClosedInWindow)
