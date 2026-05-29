@@ -977,6 +977,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keyHit(msg, m.keys.Yank):
 		return m.handleYank()
+	case keyHit(msg, m.keys.YankRich):
+		return m.handleYankRich()
 	case keyHit(msg, m.keys.Undo):
 		return m.handleUndo()
 	case keyHit(msg, m.keys.Defer):
@@ -1989,6 +1991,28 @@ func (m Model) handleYank() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setStatus("copied " + id)
+	return m, flashClearCmd(m.statusGen)
+}
+
+// handleYankRich copies "ID — title" (em-dash separator) so a
+// reference pasted into a commit message or chat reads naturally
+// without re-typing. Same clipboard path as handleYank; same
+// guards and status banner shape.
+func (m Model) handleYankRich() (tea.Model, tea.Cmd) {
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		m.setStatus("nothing to yank")
+		return m, flashClearCmd(m.statusGen)
+	}
+	row := m.visible[m.cursor]
+	payload := row.ID
+	if title := strings.TrimSpace(row.Title); title != "" {
+		payload = row.ID + " — " + title
+	}
+	if err := clipboardCopy(payload); err != nil {
+		m.setStatus("yank failed: " + err.Error())
+		return m, nil
+	}
+	m.setStatus("copied " + payload)
 	return m, flashClearCmd(m.statusGen)
 }
 

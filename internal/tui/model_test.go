@@ -2958,6 +2958,45 @@ func TestUndo_NoLastClosedShowsStatus(t *testing.T) {
 	}
 }
 
+func TestYankRich_CopiesIDDashTitle(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "rotate password"},
+	}}
+	m := applyFetched(New(src), src)
+
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
+	m = model.(Model)
+	if copied != "a-1 — rotate password" {
+		t.Errorf("Y should yank 'ID — title'; got %q", copied)
+	}
+	if !strings.Contains(m.status, "a-1 — rotate password") {
+		t.Errorf("status should echo the copied payload; got %q", m.status)
+	}
+}
+
+func TestYankRich_EmptyTitleFallsBackToBareID(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "   "}, // whitespace-only title
+	}}
+	m := applyFetched(New(src), src)
+
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
+	_ = model
+	if copied != "a-1" {
+		t.Errorf("whitespace-only title should fall back to bare ID; got %q", copied)
+	}
+}
+
 func TestYank_CopiesCursorIssueID(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)
