@@ -3096,6 +3096,49 @@ func TestYankMarkdown_EmptyTitleFallsBackToBareID(t *testing.T) {
 	}
 }
 
+func TestYankAllMarkdown_MixesOpenAndClosed(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "first", Status: "open"},
+		{ID: "a-2", Title: "done", Status: "closed"},
+		{ID: "a-3", Title: "  ", Status: "open"}, // whitespace title → bare ID
+	}}
+	m := applyFetched(New(src), src)
+
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'_'}})
+	m = model.(Model)
+	want := "- [ ] a-1 — first\n- [x] a-2 — done\n- [ ] a-3"
+	if copied != want {
+		t.Errorf("_ yank markdown mismatch\n  got:  %q\n  want: %q", copied, want)
+	}
+	if !strings.Contains(m.status, "3 rows") {
+		t.Errorf("status should report 3-row count; got %q", m.status)
+	}
+}
+
+func TestYankAllMarkdown_EmptyListNoOp(t *testing.T) {
+	src := &stubSource{issues: nil}
+	m := applyFetched(New(src), src)
+
+	called := false
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { called = true; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'_'}})
+	m = model.(Model)
+	if called {
+		t.Error("empty list must not touch the clipboard")
+	}
+	if !strings.Contains(m.status, "nothing to yank") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
 func TestYank_CopiesCursorIssueID(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

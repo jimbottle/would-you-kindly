@@ -95,6 +95,12 @@ type keyMap struct {
 	// rows without retyping IDs and titles.
 	YankMarkdown key.Binding // M — copy as markdown task line
 
+	// YankAllMarkdown copies every visible row as a newline-joined
+	// markdown task list — the multi-row sibling of YankMarkdown,
+	// useful for turning a filtered TUI view into a progress
+	// report or todo block.
+	YankAllMarkdown key.Binding // _ — copy all visible rows as markdown
+
 	// Undo reopens the most-recently-closed issue from this
 	// session. One-deep only — vim-style single-step undo, not a
 	// stack. Cleared once the reopen lands so a second press is a
@@ -200,7 +206,8 @@ func defaultKeyMap() keyMap {
 		Yank:         key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank ID")),
 		YankRich:     key.NewBinding(key.WithKeys("Y"), key.WithHelp("Y", "yank ID — title")),
 		YankAll:      key.NewBinding(key.WithKeys("*"), key.WithHelp("*", "yank all visible IDs")),
-		YankMarkdown: key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "yank as markdown task")),
+		YankMarkdown:    key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "yank as markdown task")),
+		YankAllMarkdown: key.NewBinding(key.WithKeys("_"), key.WithHelp("_", "yank all as markdown")),
 		Undo:         key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo close")),
 		Defer:        key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
 		Mark:         key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
@@ -268,7 +275,7 @@ func DocsKeymap() []HelpGroup {
 			k.AssignOwner, k.Label, k.Editor, k.PriorityUp, k.PriorityDown,
 			k.Mark, k.Undo, k.Repeat,
 		}},
-		{"Clipboard / command", []key.Binding{k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.Command}},
+		{"Clipboard / command", []key.Binding{k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.YankAllMarkdown, k.Command}},
 		{"Meta", []key.Binding{k.Refresh, k.Help, k.Quit}},
 	}
 }
@@ -310,7 +317,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label, k.Editor, k.Repeat},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.YankAllMarkdown, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label, k.Editor, k.Repeat},
 		{k.Refresh, k.Help, k.Quit, k.Command},
 	}
 }

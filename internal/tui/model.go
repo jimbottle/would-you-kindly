@@ -995,6 +995,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleYankAll()
 	case keyHit(msg, m.keys.YankMarkdown):
 		return m.handleYankMarkdown()
+	case keyHit(msg, m.keys.YankAllMarkdown):
+		return m.handleYankAllMarkdown()
 	case keyHit(msg, m.keys.Undo):
 		return m.handleUndo()
 	case keyHit(msg, m.keys.Defer):
@@ -2079,6 +2081,37 @@ func (m Model) handleYankMarkdown() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setStatus("copied " + payload)
+	return m, flashClearCmd(m.statusGen)
+}
+
+// handleYankAllMarkdown copies every visible row as a newline-
+// joined markdown task list — multi-row sibling of
+// handleYankMarkdown. Each row gets "- [ ]" or "- [x]" depending
+// on Status, and a whitespace-only title falls back to bare ID
+// (same fallback as the single-row variants).
+func (m Model) handleYankAllMarkdown() (tea.Model, tea.Cmd) {
+	if len(m.visible) == 0 {
+		m.setStatus("nothing to yank")
+		return m, flashClearCmd(m.statusGen)
+	}
+	lines := make([]string, len(m.visible))
+	for i, row := range m.visible {
+		box := "[ ]"
+		if row.Status == "closed" {
+			box = "[x]"
+		}
+		line := "- " + box + " " + row.ID
+		if title := strings.TrimSpace(row.Title); title != "" {
+			line += " — " + title
+		}
+		lines[i] = line
+	}
+	payload := strings.Join(lines, "\n")
+	if err := clipboardCopy(payload); err != nil {
+		m.setStatus("yank failed: " + err.Error())
+		return m, nil
+	}
+	m.setStatus(fmt.Sprintf("copied %d rows as markdown", len(lines)))
 	return m, flashClearCmd(m.statusGen)
 }
 
