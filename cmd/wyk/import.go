@@ -34,12 +34,13 @@ func runImport(args []string) int {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	filePath := fs.String("file", "", "path to JSON dump (default: read from stdin)")
 	dryRun := fs.Bool("dry-run", false, "print the plan without touching bd")
+	repoName := fs.String("repo", "", "restrict the reconcile to the dump entry with this name (empty = every entry)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk import [-file path] [-dry-run]")
+		fmt.Fprintln(os.Stderr, "usage: wyk import [-file path] [-dry-run] [-repo name]")
 		return 64
 	}
 
@@ -55,6 +56,15 @@ func runImport(args []string) int {
 	if err := dec.Decode(&dump); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk import: parse JSON:", err)
 		return 1
+	}
+
+	if *repoName != "" {
+		filtered, err := filterDumpByName(dump, *repoName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk import:", err)
+			return 1
+		}
+		dump = filtered
 	}
 
 	regPath, err := registry.DefaultPath()
@@ -78,6 +88,25 @@ func runImport(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// filterDumpByName returns a copy of dump containing only the
+// repo whose Name matches. Missing name errors out with a hint
+// listing the names that ARE in the dump — same shape as
+// filterRegistryByName but operating on the JSON side.
+func filterDumpByName(dump exportDump, name string) (exportDump, error) {
+	for _, r := range dump.Repos {
+		if r.Name == name {
+			out := dump
+			out.Repos = []exportRepo{r}
+			return out, nil
+		}
+	}
+	names := make([]string, len(dump.Repos))
+	for i, r := range dump.Repos {
+		names[i] = r.Name
+	}
+	return exportDump{}, fmt.Errorf("no dump entry named %q (names in dump: %v)", name, names)
 }
 
 // openImportSource picks stdin or the -file path. Returns a closer

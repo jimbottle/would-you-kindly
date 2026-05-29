@@ -288,6 +288,25 @@ func TestEmitImportSummary_DryRunBanner(t *testing.T) {
 	}
 }
 
+func TestFilterDumpByName(t *testing.T) {
+	dump := exportDump{Repos: []exportRepo{
+		{Name: "alpha", Issues: []beads.Issue{{ID: "a-1"}}},
+		{Name: "beta", Issues: []beads.Issue{{ID: "b-1"}}},
+	}}
+	got, err := filterDumpByName(dump, "beta")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(got.Repos) != 1 || got.Repos[0].Name != "beta" {
+		t.Errorf("filtered Repos=%v, want [beta]", got.Repos)
+	}
+	if _, err := filterDumpByName(dump, "ghost"); err == nil {
+		t.Error("missing name should error")
+	} else if !strings.Contains(err.Error(), "alpha") {
+		t.Errorf("error should list available names; got %v", err)
+	}
+}
+
 func TestRunImport_StdinHappyPath(t *testing.T) {
 	// End-to-end through runImport: feed a tiny dump on stdin
 	// against a populated registry. Needs XDG_CONFIG_HOME pointed
