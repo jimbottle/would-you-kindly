@@ -126,12 +126,22 @@ func main() {
 		}
 	}
 	// Load filter aliases (~/.config/wyk/filters.json) so @name
-	// expansion is available from the / prompt. Missing or
-	// unreadable file falls back to no-aliases silently — we don't
-	// want a corrupt filters.json to block launch.
+	// expansion is available from the / prompt. A missing or
+	// corrupt file silently falls back to no-aliases; a FUTURE
+	// schema version surfaces a startup banner so the user knows
+	// their newer file isn't being honored (and we don't risk
+	// overwriting it on a `:filter save`). The latter distinction
+	// is exactly what filters.ErrUnsupportedVersion exists for.
 	if fpath, err := filters.DefaultPath(); err == nil {
-		if a, err := filters.Load(fpath); err == nil {
+		a, err := filters.Load(fpath)
+		switch {
+		case err == nil:
 			model = model.WithFilterAliases(a)
+		case errors.Is(err, filters.ErrUnsupportedVersion):
+			fmt.Fprintf(os.Stderr, "wyk: %s declares a newer schema; aliases disabled this session. Update wyk or move the file aside to re-enable.\n", fpath)
+		default:
+			// Corrupt JSON / I/O — silent fallback so a
+			// transient read error doesn't block launch.
 		}
 	}
 
@@ -463,10 +473,7 @@ func versionString() string {
 // the discoverability gap that produced wrong-labelled bd issues.
 func printTopLevelUsage() {
 	w := flag.CommandLine.Output()
-	// errcheck: writes to flag.CommandLine.Output() (stderr) — if
-	// the user closed stderr we have nothing useful to report
-	// anywhere else, so swallow.
-	_, _ = fmt.Fprint(w, `wyk — terminal UI over the bd issue tracker, with a handoff convention
+	fmt.Fprint(w, `wyk — terminal UI over the bd issue tracker, with a handoff convention
                 for the agent ↔ human round-trip.
 
 Usage:
@@ -488,7 +495,7 @@ Subcommands:
 Top-level flags (TUI / --probe mode):
 `)
 	flag.PrintDefaults()
-	_, _ = fmt.Fprint(w, `
+	fmt.Fprint(w, `
 For the agent-facing labels (`+"`human`"+`, `+"`src:agent`"+`) and the inbox
 query, run: wyk conventions
 `)

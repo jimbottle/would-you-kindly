@@ -51,8 +51,9 @@ jobs:
         # staticcheck, errcheck, ineffassign, unused. Pinned to a
         # specific version so a CI flake from a new linter release
         # is impossible — bump deliberately when a new check would
-        # be valuable.
-        uses: golangci/golangci-lint-action@v6
+        # be valuable. action@v7 pairs with golangci-lint v2.x;
+        # the older v6 ran a v1-era binary by default.
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
 

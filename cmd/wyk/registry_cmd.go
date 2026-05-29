@@ -51,7 +51,7 @@ func runRegistry(args []string) int {
 }
 
 func registryUsage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `usage: wyk registry <subcommand>
+	fmt.Fprint(w, `usage: wyk registry <subcommand>
 
 Subcommands:
   list             print registered repos (-json for structured output)

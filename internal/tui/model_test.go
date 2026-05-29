@@ -2447,6 +2447,133 @@ func TestCommandPalette_UnknownCommandSurfacesStatus(t *testing.T) {
 	}
 }
 
+func TestCommandPalette_EscRestoresFilterPrompt(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	if m.input.Prompt != ":" {
+		t.Errorf("setup: expected ':' prompt; got %q", m.input.Prompt)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("esc should return to modeList; got %v", m.mode)
+	}
+	// Pressing / next should land in the filter prompt — its
+	// label/placeholder must be the fuzzy-filter ones again, not
+	// the ":" leftover.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	if m.input.Prompt != "/ " {
+		t.Errorf("/ after :-cancel should restore filter prompt; got %q", m.input.Prompt)
+	}
+}
+
+func TestCommandPalette_FilterSaveGuards(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	cases := []struct {
+		name     string
+		cmd      string
+		query    string
+		wantText string
+	}{
+		{"missing name", "filter save", "rotate", "missing alias name"},
+		{"no active query", "filter save myalias", "", "no active query to save"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := &stubSource{issues: sampleIssues()}
+			m := applyFetched(New(src), src)
+			m.query = tc.query
+
+			model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+			m = model.(Model)
+			for _, r := range tc.cmd {
+				model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+				m = model.(Model)
+			}
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = model.(Model)
+			if !strings.Contains(m.status, tc.wantText) {
+				t.Errorf("status %q should contain %q", m.status, tc.wantText)
+			}
+		})
+	}
+}
+
+func TestCommandPalette_SortReverseAndAxes(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Priority: 2},
+		{ID: "a-2", Priority: 0},
+		{ID: "a-3", Priority: 1},
+	}}
+
+	t.Run("sort priority sets axis", func(t *testing.T) {
+		m := applyFetched(New(src), src)
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+		m = model.(Model)
+		for _, r := range "sort priority" {
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = model.(Model)
+		}
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = model.(Model)
+		if m.sortBy != sortPriority {
+			t.Errorf(":sort priority should set sortPriority; got %v", m.sortBy)
+		}
+	})
+
+	t.Run("bare sort is usage error", func(t *testing.T) {
+		m := applyFetched(New(src), src)
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+		m = model.(Model)
+		for _, r := range "sort" {
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = model.(Model)
+		}
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = model.(Model)
+		if !strings.Contains(m.status, "axis required") {
+			t.Errorf("bare :sort should surface a usage error; got %q", m.status)
+		}
+		if m.sortBy != sortNone {
+			t.Errorf("bare :sort should NOT change axis; got %v", m.sortBy)
+		}
+	})
+
+	t.Run("reverse flips active direction", func(t *testing.T) {
+		m := applyFetched(New(src), src)
+		// First set an axis via :sort.
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+		m = model.(Model)
+		for _, r := range "sort priority" {
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = model.(Model)
+		}
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = model.(Model)
+		// Then :reverse.
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+		m = model.(Model)
+		for _, r := range "reverse" {
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = model.(Model)
+		}
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = model.(Model)
+		if !m.sortDesc {
+			t.Errorf(":reverse should set sortDesc=true; got %v", m.sortDesc)
+		}
+	})
+}
+
 func TestCommandPalette_FilterSavePersistsAlias(t *testing.T) {
 	// :filter save <name> should persist m.query as @name. Point
 	// XDG at a tempdir so the test doesn't touch the user's

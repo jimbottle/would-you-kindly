@@ -14,10 +14,6 @@ version: "2"
 
 run:
   timeout: 5m
-  # Skip generated files and the .beads working tree (Dolt blobs
-  # that aren't Go anyway, but skip explicitly so a future bd
-  # release that drops .go fixtures doesn't surprise us).
-  build-tags: []
 
 linters:
   default: standard
@@ -43,6 +39,14 @@ linters:
     - unused
 
   exclusions:
+    # std-error-handling is golangci-lint v2's default preset of
+    # "errors that almost nobody checks": fmt.Fprintf/Fprint/Println
+    # to arbitrary writers (the print family already prints
+    # whatever error happens), bytes.Buffer.Write, etc. Without
+    # it errcheck flags every fmt.Fprintf(&b, …) in our render
+    # path — which is noise that obscures real findings.
+    presets:
+      - std-error-handling
     # Test files routinely have ignored errors (closing tempfiles,
     # stubbed Mutators returning nil, etc.). Allowing errcheck to
     # be relaxed on _test.go means real production code stays

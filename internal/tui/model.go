@@ -839,23 +839,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyHit(msg, m.keys.Mark):
 		return m.toggleMark()
 	case keyHit(msg, m.keys.Refresh):
-		// Manual refresh also restarts the auto-tick if it was
-		// suspended after a terminal error. Bumping tickGen retires
-		// any older tick that's still in-flight, so the new chain is
-		// the only one alive.
-		//
-		// We do NOT set m.loading here: the existing rows stay on
-		// screen while the refresh runs in the background, and a
-		// small ↻ glyph appears in the status bar (see statusBar).
-		// Replacing the table with "loading…" on every keypress
-		// produced a jarring full-canvas blank.
-		m.refreshing = true
-		cmds := []tea.Cmd{m.fetchCmd()}
-		if isTerminalErr(m.lastErr) {
-			m.tickGen++
-			cmds = append(cmds, tickCmd(m.tickGen))
-		}
-		return m, tea.Batch(cmds...)
+		return m.manualRefresh()
 
 	case keyHit(msg, m.keys.Close):
 		return m.beginClose()
@@ -1544,7 +1528,11 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		return m, nil
 	case "enter":
-		raw := m.input.Value()
+		// Trim once so the lookup key, the applied query, and the
+		// status banner all agree — a stray trailing space on
+		// "@nope " used to keep the raw value as the literal
+		// query while the banner reported the trimmed form.
+		raw := strings.TrimSpace(m.input.Value())
 		// Alias expansion: a value of `@name` swaps the query
 		// for the saved alias before applying. A miss keeps the
 		// raw `@name` as a literal fuzzy query (so a row with
@@ -1553,12 +1541,12 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// resolve. Multi-word values starting with `@` (e.g.
 		// "@blocked something") are not expanded — keeps the
 		// rule narrow and predictable.
-		if q, ok := m.filterAliases.Lookup(strings.TrimSpace(raw)); ok {
+		if q, ok := m.filterAliases.Lookup(raw); ok {
 			m.query = q
 		} else {
 			m.query = raw
-			if strings.HasPrefix(strings.TrimSpace(raw), "@") {
-				m.setStatus("no filter alias for " + strings.TrimSpace(raw))
+			if strings.HasPrefix(raw, "@") {
+				m.setStatus("no filter alias for " + raw)
 			}
 		}
 		m.mode = modeList
@@ -1841,6 +1829,28 @@ func (m Model) markedIssues() []beads.Issue {
 	return out
 }
 
+// manualRefresh is the shared body of the `r` key and the
+// `:refresh` command. Triggers a fetch and, if a prior fetch
+// landed us in a terminal-error state (so the auto-tick chain
+// suspended itself), restarts the tick with a fresh generation
+// so the old in-flight tick — if any — gets retired by the
+// generation check in Update's tickMsg handler.
+//
+// We do NOT set m.loading here: the existing rows stay on screen
+// while the refresh runs in the background, and a small ↻ glyph
+// appears in the status bar (see statusBar). Replacing the table
+// with "loading…" on every keypress produced a jarring
+// full-canvas blank.
+func (m Model) manualRefresh() (tea.Model, tea.Cmd) {
+	m.refreshing = true
+	cmds := []tea.Cmd{m.fetchCmd()}
+	if isTerminalErr(m.lastErr) {
+		m.tickGen++
+		cmds = append(cmds, tickCmd(m.tickGen))
+	}
+	return m, tea.Batch(cmds...)
+}
+
 // beginCommand opens the `:` command-palette prompt. Empty
 // submission cancels; otherwise updateCommand dispatches through
 // commandTable.
@@ -1892,8 +1902,7 @@ func (m Model) dispatchCommand(raw string) (tea.Model, tea.Cmd) {
 	rest = strings.TrimSpace(rest)
 	switch name {
 	case "refresh":
-		m.refreshing = true
-		return m, m.fetchCmd()
+		return m.manualRefresh()
 	case "preset":
 		p := filter.Preset(rest)
 		// Reject unknown presets early — silently switching to a
@@ -1912,9 +1921,17 @@ func (m Model) dispatchCommand(raw string) (tea.Model, tea.Cmd) {
 		}
 		return m.switchPreset(p)
 	case "sort":
+		// Bare `:sort` lands here with rest == "" — treat as a
+		// usage error so the user sees the expected axes
+		// instead of silently switching to no-sort. The explicit
+		// way to clear is `:sort none`.
+		if rest == "" {
+			m.setStatus(":sort: axis required (one of none, priority, updated, repo, id)")
+			return m, flashClearCmd(m.statusGen)
+		}
 		k, ok := parseSortKey(rest)
 		if !ok {
-			m.setStatus(":sort: axis must be one of none, priority, updated, repo, id")
+			m.setStatus(":sort: unknown axis. Try one of none, priority, updated, repo, id")
 			return m, flashClearCmd(m.statusGen)
 		}
 		return m.setSortKey(k)
@@ -1974,10 +1991,12 @@ func (m Model) dispatchFilterCommand(rest string) (tea.Model, tea.Cmd) {
 
 // parseSortKey maps a string axis name to its sortKey constant.
 // Used by `:sort` so the command palette can drive the same
-// rotation the `s` key cycles through.
+// rotation the `s` key cycles through. Empty input is rejected
+// here — `:sort` with no args is a usage error, handled in the
+// caller before reaching this helper.
 func parseSortKey(s string) (sortKey, bool) {
 	switch strings.ToLower(s) {
-	case "none", "":
+	case "none":
 		return sortNone, true
 	case "priority", "p":
 		return sortPriority, true
