@@ -692,14 +692,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// (or in the palette finishing the command). A slow `:bd`
 		// completing while the user has navigated into the
 		// detail view, help, or another modal would otherwise
-		// yank them back to the bd output unexpectedly. A status
-		// banner names the fix in that case so they can ':bd
-		// last' (or similar — currently they re-run).
+		// yank them back to the bd output unexpectedly. There's
+		// no UI today for re-surfacing a stashed output from
+		// another mode, so be honest in the banner: the result is
+		// discarded and the user needs to re-run.
 		if m.mode == modeList || m.mode == modeCommand {
 			m.mode = modeOutput
 			return m, nil
 		}
-		m.setStatus("bd output ready — esc your current view to see it (lost; re-run :bd)")
+		m.outputText = "" // clear so a stale body doesn't leak through future paths
+		m.setStatus("bd output discarded — you navigated away mid-run; re-run :bd from the list to view")
 		return m, flashClearCmd(m.statusGen)
 
 	case spinner.TickMsg:
@@ -2098,28 +2100,39 @@ func (m Model) runRawBD(rest string) (tea.Model, tea.Cmd) {
 // $() — wyk is a TUI launcher for bd commands, not a shell, and
 // the simpler grammar is easier to reason about. Mixed quoting
 // inside a single token (e.g. foo"bar") is preserved as-is.
+//
+// An explicitly-empty quoted argument is preserved: `--desc ""`
+// emits ["--desc", ""] so a user can clear a bd field that
+// accepts an empty value. Without the `started` flag this would
+// silently drop the empty token (no runes written).
 func shellFields(s string) []string {
 	var out []string
 	var cur strings.Builder
 	inDouble, inSingle := false, false
+	started := false // true once the current token has any content (including an empty quoted span)
+	flush := func() {
+		if started {
+			out = append(out, cur.String())
+			cur.Reset()
+			started = false
+		}
+	}
 	for _, r := range s {
 		switch {
 		case r == '"' && !inSingle:
 			inDouble = !inDouble
+			started = true
 		case r == '\'' && !inDouble:
 			inSingle = !inSingle
+			started = true
 		case (r == ' ' || r == '\t') && !inDouble && !inSingle:
-			if cur.Len() > 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			}
+			flush()
 		default:
 			cur.WriteRune(r)
+			started = true
 		}
 	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
+	flush()
 	return out
 }
 

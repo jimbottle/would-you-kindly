@@ -2488,6 +2488,12 @@ func TestShellFields(t *testing.T) {
 		{`mixed "double" 'single'`, []string{"mixed", "double", "single"}},
 		{`  multiple   spaces  `, []string{"multiple", "spaces"}},
 		{``, nil},
+		// Empty quoted arg — `bd update <id> --desc ""` clears a
+		// field. Without the started-flag preservation, the
+		// empty token silently disappeared and bd received the
+		// flag with no value.
+		{`a ""`, []string{"a", ""}},
+		{`--desc '' next`, []string{"--desc", "", "next"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -2739,8 +2745,11 @@ func TestCommandPalette_BDDoesNotYankFromDetailMode(t *testing.T) {
 	if m.mode != modeDetail {
 		t.Errorf("rawBDMsg arriving in modeDetail should not switch modes; got %v", m.mode)
 	}
-	if !strings.Contains(m.status, "bd output ready") {
-		t.Errorf("status should announce the buffered output; got %q", m.status)
+	if !strings.Contains(m.status, "bd output discarded") {
+		t.Errorf("status should announce the discarded output; got %q", m.status)
+	}
+	if m.outputText != "" {
+		t.Errorf("outputText should be cleared when result is discarded; got %q", m.outputText)
 	}
 }
 
