@@ -99,8 +99,7 @@ func main() {
 		case "completion":
 			os.Exit(runCompletion(os.Args[2:]))
 		case "version", "--version", "-v":
-			fmt.Println(versionString())
-			os.Exit(0)
+			os.Exit(runVersion(os.Args[2:]))
 		}
 	}
 
@@ -530,7 +529,7 @@ Subcommands:
   registry     list / remove / prune registered workspaces
   conventions  print the agent-facing label convention (–json for structured)
   update       check for and install a newer wyk release
-  version      print the version string
+  version      print the version string (--check polls the release feed)
   hook         internal: invoked by the installed post-commit hook
 
 Top-level flags (TUI / --probe mode):
