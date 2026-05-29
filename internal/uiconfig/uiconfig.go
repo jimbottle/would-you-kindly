@@ -24,6 +24,16 @@ import (
 // a future wyk's preferences.
 const CurrentVersion = 1
 
+// ErrUnsupportedVersion is returned when the on-disk file
+// declares a schema version this binary doesn't understand. It's
+// a distinct sentinel so callers (specifically main, hydrating
+// the model) can keep persistence DISABLED rather than
+// auto-repairing — overwriting a future schema with the current
+// one would silently downgrade a forward-compatible file. Other
+// parse errors (corrupt JSON, I/O) don't carry this sentinel, so
+// the caller can safely allow Save to overwrite and repair.
+var ErrUnsupportedVersion = errors.New("uiconfig: unsupported file version")
+
 // Config is the on-disk shape. HiddenColumns is the list of column
 // IDs the user has turned off via the `o` overlay. Stored as a
 // list-of-strings (rather than a map[string]bool) so a hand-edited
@@ -66,7 +76,7 @@ func Load(path string) (Config, error) {
 		// Pre-v1 file written before the field existed. Treat as v1.
 		c.Version = CurrentVersion
 	} else if c.Version != CurrentVersion {
-		return Config{}, fmt.Errorf("%s: unsupported version %d (this wyk understands version %d)", path, c.Version, CurrentVersion)
+		return Config{}, fmt.Errorf("%w: %s declares version %d (this wyk understands version %d)", ErrUnsupportedVersion, path, c.Version, CurrentVersion)
 	}
 	return c, nil
 }

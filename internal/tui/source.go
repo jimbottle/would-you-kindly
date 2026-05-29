@@ -62,27 +62,75 @@ type depLister interface {
 	ListDeps(ctx context.Context, id string) ([]beads.Issue, error)
 }
 
-func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, error) {
-	var issues []beads.Issue
-	var err error
+// fetchCall identifies which bd subcommand BDSource.Fetch will
+// invoke for a given preset + IncludeClosed combination. Exposing
+// the routing decision as a value (rather than burying it inside
+// Fetch's switch) lets tests assert "this combination resolves to
+// list-all, not query-empty-string" without standing up a fake bd
+// Client.
+type fetchCall int
+
+const (
+	fetchReady fetchCall = iota
+	fetchList
+	fetchListAll
+	fetchQuery
+)
+
+// pickFetchCall resolves the preset + flags to a bd subcommand
+// choice. The query string is meaningful only when call==fetchQuery.
+// Default-branch presets whose QueryWithClosed result collapses to
+// "" (e.g. mine with no resolved identity and IncludeClosed=true)
+// are routed to list/listall — bd query "" would error.
+func (s *BDSource) pickFetchCall(p filter.Preset) (fetchCall, string) {
 	switch p {
 	case filter.PresetReady:
 		// bd ready has blocker-aware semantics that bd query cannot
 		// reproduce; defer to it. IncludeClosed has no effect — bd
 		// ready is open-only by definition.
-		issues, err = s.Client.Ready(ctx)
+		return fetchReady, ""
 	case filter.PresetAll:
 		// "all" in the TUI means "all non-closed" by default —
 		// opening wyk should show actionable work, not the full
 		// history. C toggles IncludeClosed and switches us to
 		// `bd list --all` for the archive view.
 		if s.IncludeClosed {
-			issues, err = s.Client.ListAll(ctx)
-		} else {
-			issues, err = s.Client.List(ctx)
+			return fetchListAll, ""
 		}
+		return fetchList, ""
 	default:
-		issues, err = s.Client.Query(ctx, filter.QueryWithClosed(p, s.Me, s.IncludeClosed))
+		q := filter.QueryWithClosed(p, s.Me, s.IncludeClosed)
+		if q == "" {
+			// QueryWithClosed can legitimately return "" for a
+			// preset where every clause has been dropped — e.g.
+			// `mine` with no resolved identity (Me=="") and
+			// IncludeClosed=true. The preset chip stays accurate
+			// (user still sees the "mine" filter) even though the
+			// result is "everything" — there's no narrower query
+			// we can express, so degrading to all is more useful
+			// than the bd-error banner an empty query produces.
+			if s.IncludeClosed {
+				return fetchListAll, ""
+			}
+			return fetchList, ""
+		}
+		return fetchQuery, q
+	}
+}
+
+func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, error) {
+	var issues []beads.Issue
+	var err error
+	call, q := s.pickFetchCall(p)
+	switch call {
+	case fetchReady:
+		issues, err = s.Client.Ready(ctx)
+	case fetchListAll:
+		issues, err = s.Client.ListAll(ctx)
+	case fetchList:
+		issues, err = s.Client.List(ctx)
+	case fetchQuery:
+		issues, err = s.Client.Query(ctx, q)
 	}
 	if err != nil {
 		return nil, err

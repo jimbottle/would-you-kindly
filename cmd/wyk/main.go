@@ -93,9 +93,21 @@ func main() {
 	// so the user's last layout choice survives a restart. A
 	// missing or unreadable file falls back to "all columns on"
 	// silently — we don't want a corrupt ui.json to block launch.
+	// On a recoverable parse error we still wire the path so a
+	// subsequent overlay save can REPAIR the bad file. The one
+	// case we leave persistence disabled is an unsupported future
+	// version — overwriting that would silently downgrade a
+	// forward-compatible file.
 	if uiPath, err := uiconfig.DefaultPath(); err == nil {
-		if cfg, err := uiconfig.Load(uiPath); err == nil {
+		cfg, err := uiconfig.Load(uiPath)
+		switch {
+		case err == nil:
 			model = model.WithHiddenColumns(cfg.HiddenSet(), uiPath)
+		case errors.Is(err, uiconfig.ErrUnsupportedVersion):
+			// Don't touch the file. Leave columns at default for
+			// this session.
+		default:
+			model = model.WithHiddenColumns(map[string]bool{}, uiPath)
 		}
 	}
 	// Read the cached update nudge once at startup so the banner

@@ -27,9 +27,28 @@ func runUpdate(args []string) int {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	yes := fs.Bool("y", false, "skip the [y/N] confirmation before running go install")
 	dryRun := fs.Bool("dry-run", false, "print the install command without executing it")
-	channel := fs.String("channel", "any", "release channel: `any` (include prereleases — default) or `stable` (skip prereleases)")
+	channel := fs.String("channel", "any", "release channel: `any` (include prereleases — default) or `stable` (skip prereleases). When omitted, the most recently used channel is reused so a stable-pinned user clicking the TUI's nudge doesn't silently jump back to prereleases.")
 	if err := fs.Parse(args); err != nil {
 		return 64
+	}
+	// If the user didn't pass -channel explicitly, fall back to
+	// whatever they last persisted. Without this, a user who once
+	// ran `wyk update -channel stable` would see a stable-targeted
+	// nudge from the TUI, run plain `wyk update`, and land on a
+	// prerelease — the exact "nudge text disagrees with install
+	// behaviour" gap the cached-channel field was added to close.
+	// fs.Visit only walks flags actually set on this invocation,
+	// so explicit "-channel any" still wins.
+	explicitChannel := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "channel" {
+			explicitChannel = true
+		}
+	})
+	if !explicitChannel {
+		if cached := updater.CachedChannel(); cached == "stable" {
+			*channel = cached
+		}
 	}
 	// Validate channel up front so a typo (`-channel stabel`)
 	// doesn't silently fall through to "any" and surprise a user

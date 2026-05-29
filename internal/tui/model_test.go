@@ -1776,6 +1776,37 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 }
 
+func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
+	// In single-repo mode the wyk/repo/branch slots (2-4) are
+	// inert — pressing them shouldn't toggle anything. The slot
+	// numbering still has to match the registry order so the
+	// keystroke means the same column whether wyk launches into
+	// single- or multi-repo mode.
+	src := &stubSource{issues: sampleIssues()} // sampleIssues has no Repo → single-repo
+	m := applyFetched(New(src), src)
+	if m.isMultiRepo() {
+		t.Fatalf("test premise: sampleIssues should produce a single-repo view")
+	}
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = model.(Model)
+	// Slot 2 → wyk (multi-only). Slot 3 → repo. Slot 4 → branch.
+	for _, r := range []rune{'2', '3', '4'} {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	if len(m.colsHidden) != 0 {
+		t.Errorf("multi-only slot toggles should be no-ops in single-repo mode; got %v", m.colsHidden)
+	}
+
+	// Confirm the registry order — slot 2 still names wyk after
+	// the no-op, so a user who learns the mapping in one mode
+	// keeps it in the other.
+	if toggleableColumns[1].ID != colIDWyk {
+		t.Errorf("slot 2 should be wyk (multi-only); got %q", toggleableColumns[1].ID)
+	}
+}
+
 func TestApplySort_SortByUpdatedNewestFirst(t *testing.T) {
 	older := []beads.Issue{
 		{ID: "a-1", UpdatedAt: mustParse("2026-01-01T00:00:00Z")},
@@ -2051,6 +2082,36 @@ func TestMouseLeftClick_OutsideTableIsNoOp(t *testing.T) {
 	m = model.(Model)
 	if m.cursor != 0 {
 		t.Errorf("click past end of list should be a no-op; cursor moved to %d", m.cursor)
+	}
+}
+
+func TestMouseLeftClick_OnMoreBelowHintIsNoOp(t *testing.T) {
+	// When the row window is smaller than len(visible), viewList
+	// renders a "↓ N more below" hint line just past the last row.
+	// Clicking that hint used to map to the next out-of-window row
+	// (target = scroll + rowY, which is a valid index whenever the
+	// view is partially scrolled), producing a surprising downward
+	// cursor jump. The clamp now treats such clicks as no-ops.
+	src := &stubSource{issues: manyIssues(50)}
+	m := New(src)
+	// Constrain height so bodyHeight is small and the hint line
+	// actually renders.
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 12})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	if m.bodyHeight() >= len(m.visible) {
+		t.Fatalf("test premise: bodyHeight (%d) should be < visible (%d) so a hint line renders", m.bodyHeight(), len(m.visible))
+	}
+
+	preCursor := m.cursor
+	// Click one cell past the body — the "↓ N more below" line.
+	hintY := m.rowsStartY() + m.bodyHeight()
+	model, _ = m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: hintY,
+	})
+	m = model.(Model)
+	if m.cursor != preCursor {
+		t.Errorf("click on more-below hint should be a no-op; cursor moved %d → %d", preCursor, m.cursor)
 	}
 }
 

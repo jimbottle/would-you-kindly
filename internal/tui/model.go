@@ -740,9 +740,21 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		// body, then translate to a m.visible index via the
 		// current scroll offset. Clicks above the body
 		// (title/setupHint/chip/header) or past the last rendered
-		// row produce target out-of-range → no-op.
+		// row produce target out-of-range → no-op. We also clamp
+		// to the actual rendered window height so a click on the
+		// "↑ N more above"/"↓ N more below" hint lines (which sit
+		// just past the row window) doesn't get mapped to the
+		// next row out-of-window — that produced a surprising
+		// downward jump.
 		rowY := msg.Y - m.rowsStartY()
 		if rowY < 0 {
+			return m, nil
+		}
+		visibleRows := len(m.visible) - m.scroll
+		if h := m.bodyHeight(); h > 0 && visibleRows > h {
+			visibleRows = h
+		}
+		if rowY >= visibleRows {
 			return m, nil
 		}
 		target := m.scroll + rowY
@@ -1156,6 +1168,11 @@ func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // for the current session, only the next launch loses it.
 func (m Model) updateColumns(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
+		// Persist before quitting so toggles made in the overlay
+		// aren't silently lost when the user closes via ctrl+c
+		// instead of esc. Best-effort; we're exiting anyway, so a
+		// save error has nowhere useful to surface.
+		_ = m.persistColumns()
 		return m, tea.Quit
 	}
 	switch msg.String() {
@@ -1398,7 +1415,7 @@ func (m Model) viewColumns() string {
 	var b strings.Builder
 	b.WriteString(detailHeaderStyle.Render("Columns"))
 	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render("Press 1-7 to toggle. ID, P, and Title are always shown."))
+	b.WriteString(helpStyle.Render(fmt.Sprintf("Press 1-%d to toggle. ID, P, and Title are always shown.", len(toggleableColumns))))
 	b.WriteString("\n\n")
 	multi := m.isMultiRepo()
 	for i, col := range toggleableColumns {

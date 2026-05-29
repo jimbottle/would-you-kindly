@@ -14,6 +14,44 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 )
 
+func TestBDSource_PickFetchCall(t *testing.T) {
+	cases := []struct {
+		name          string
+		preset        filter.Preset
+		me            string
+		includeClosed bool
+		wantCall      fetchCall
+		wantQuery     string // checked only when wantCall == fetchQuery
+	}{
+		{"ready ignores includeClosed", filter.PresetReady, "ev", true, fetchReady, ""},
+		{"all open uses list", filter.PresetAll, "ev", false, fetchList, ""},
+		{"all + closed uses listall", filter.PresetAll, "ev", true, fetchListAll, ""},
+		{"mine with me uses query", filter.PresetMine, "ev", false, fetchQuery, `assignee=ev AND status!=closed`},
+		{"mine with me + closed uses query", filter.PresetMine, "ev", true, fetchQuery, `assignee=ev`},
+		// Regression for the MED finding on job 1277: mine + empty
+		// me + includeClosed used to produce bd query "" → error.
+		// The empty-query branch now routes to listall so the user
+		// sees the closest expressible answer (every issue) rather
+		// than a bd-error banner.
+		{"mine no-me + closed routes to listall", filter.PresetMine, "", true, fetchListAll, ""},
+		{"mine no-me open uses query", filter.PresetMine, "", false, fetchQuery, `status!=closed`},
+		{"human open uses query", filter.PresetHuman, "", false, fetchQuery, `label=human AND status!=closed`},
+		{"human + closed uses query", filter.PresetHuman, "", true, fetchQuery, `label=human`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &BDSource{Me: tc.me, IncludeClosed: tc.includeClosed}
+			call, q := s.pickFetchCall(tc.preset)
+			if call != tc.wantCall {
+				t.Errorf("call = %v, want %v", call, tc.wantCall)
+			}
+			if tc.wantCall == fetchQuery && q != tc.wantQuery {
+				t.Errorf("query = %q, want %q", q, tc.wantQuery)
+			}
+		})
+	}
+}
+
 // fakeRepoSource implements both Source and Mutator so it can stand
 // in for a single-repo BDSource inside MultiBDSource. Each instance
 // records the writes routed to it so the multi-source test can
