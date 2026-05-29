@@ -110,7 +110,19 @@ func main() {
 	dir := flag.String("C", "", "run as if bd had been started in this directory")
 	me := flag.String("me", "", "current user, used by the 'mine' preset (default: git user.email or $USER)")
 	probe := flag.Bool("probe", false, "non-TTY: print the human-flagged issues and exit (useful in scripts/CI)")
+	startupPreset := flag.String("preset", "", "launch into a specific preset (all, ready, human, mine, blocked)")
 	flag.Parse()
+	if *startupPreset != "" && !filter.IsPreset(*startupPreset) {
+		fmt.Fprintf(os.Stderr, "wyk: unknown -preset %q (valid: ", *startupPreset)
+		for i, p := range filter.AllPresets() {
+			if i > 0 {
+				fmt.Fprint(os.Stderr, ", ")
+			}
+			fmt.Fprint(os.Stderr, p)
+		}
+		fmt.Fprintln(os.Stderr, ")")
+		os.Exit(64)
+	}
 
 	// Resolve --me lazily so a user supplying --me doesn't pay the cost
 	// of shelling out to git, and so startup doesn't depend on git being
@@ -142,6 +154,9 @@ func main() {
 	}
 
 	model := tui.NewWithHint(src, hint).WithMe(*me)
+	if *startupPreset != "" {
+		model = model.WithPreset(filter.Preset(*startupPreset))
+	}
 
 	// Spin up the filesystem watcher so external bd writes (a git
 	// pull pulling a new issue, another wyk instance committing,

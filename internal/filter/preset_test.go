@@ -36,3 +36,21 @@ func TestQueryDelegatesToWithClosed(t *testing.T) {
 		t.Errorf("Query should delegate to QueryWithClosed(.., false)")
 	}
 }
+
+func TestIsPreset(t *testing.T) {
+	cases := map[string]bool{
+		"all":     true,
+		"ready":   true,
+		"human":   true,
+		"mine":    true,
+		"blocked": true,
+		"":        false,
+		"bogus":   false,
+		"All":     false, // case-sensitive
+	}
+	for in, want := range cases {
+		if got := IsPreset(in); got != want {
+			t.Errorf("IsPreset(%q) = %v, want %v", in, got, want)
+		}
+	}
+}

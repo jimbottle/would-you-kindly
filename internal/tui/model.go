@@ -451,6 +451,18 @@ func (m Model) WithHiddenColumns(hidden map[string]bool, persistPath string) Mod
 	return m
 }
 
+// WithPreset returns a copy of the model with the given preset
+// selected as the startup view. Unknown presets are rejected (a
+// silent fall-through to PresetAll would hide a typo from the
+// user); the caller is expected to validate via filter.IsPreset
+// before this call. main wires this from the -preset flag so a
+// shell alias like `wykh = wyk -preset human` lands directly on
+// the human view.
+func (m Model) WithPreset(p filter.Preset) Model {
+	m.preset = p
+	return m
+}
+
 // WithMe returns a copy of the model with the current-user
 // identity set so the status-bar stats line can compute the
 // "mine" count. main wires this from the same value passed to

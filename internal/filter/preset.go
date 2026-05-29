@@ -28,6 +28,19 @@ var presetOrder = []Preset{
 // AllPresets returns the rotation in order.
 func AllPresets() []Preset { return append([]Preset(nil), presetOrder...) }
 
+// IsPreset reports whether s names a known preset. Use to
+// validate command-line input (e.g. `wyk -preset <name>`) before
+// constructing a Preset value — silently coercing an unknown
+// name to PresetAll would hide a typo from the user.
+func IsPreset(s string) bool {
+	for _, p := range presetOrder {
+		if string(p) == s {
+			return true
+		}
+	}
+	return false
+}
+
 // NextPreset advances p one step in the rotation, wrapping around.
 func NextPreset(p Preset) Preset {
 	for i, q := range presetOrder {
