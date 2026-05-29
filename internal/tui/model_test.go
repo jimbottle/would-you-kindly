@@ -2404,6 +2404,79 @@ func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
 	}
 }
 
+func TestCommandPalette_OpensAndDispatches(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	// Press ':' → modeCommand.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	if m.mode != modeCommand {
+		t.Fatalf(": should enter modeCommand; got %v", m.mode)
+	}
+
+	// Type "preset human" + enter → switchPreset(human).
+	for _, r := range "preset human" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.preset != filter.PresetHuman {
+		t.Errorf(":preset human should switch preset; got %v", m.preset)
+	}
+}
+
+func TestCommandPalette_UnknownCommandSurfacesStatus(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "wat" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if !strings.Contains(m.status, "unknown command") {
+		t.Errorf("status should explain the unknown command; got %q", m.status)
+	}
+}
+
+func TestCommandPalette_FilterSavePersistsAlias(t *testing.T) {
+	// :filter save <name> should persist m.query as @name. Point
+	// XDG at a tempdir so the test doesn't touch the user's
+	// config — Save resolves DefaultPath() at dispatch time.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m.query = "rotate"
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "filter save myrot" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	// Read the file back through filters.Load to confirm.
+	path, _ := filters.DefaultPath()
+	a, err := filters.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if a.Aliases["myrot"] != "rotate" {
+		t.Errorf("expected myrot → rotate; got %v", a.Aliases)
+	}
+}
+
 func TestFilterAlias_ExpandsAtNameToStoredQuery(t *testing.T) {
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "a-1", Title: "rotate password"},

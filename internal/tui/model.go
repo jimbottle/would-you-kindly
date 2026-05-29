@@ -65,6 +65,7 @@ const (
 	modeQuickAdd                 // text input for a new issue title
 	modeColumns                  // column-visibility overlay (o)
 	modeDefer                    // text input for `bd update --defer` value
+	modeCommand                  // vim-style `:` command palette
 )
 
 // Source abstracts where issues come from so a test can plug in
@@ -727,6 +728,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateColumns(msg)
 		case modeDefer:
 			return m.updateDefer(msg)
+		case modeCommand:
+			return m.updateCommand(msg)
 		default:
 			m.status = ""
 			return m.updateList(msg)
@@ -820,6 +823,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setSortKey(m.sortBy.next())
 	case keyHit(msg, m.keys.SortReverse):
 		return m.reverseSort()
+	case keyHit(msg, m.keys.Command):
+		return m.beginCommand()
 	case keyHit(msg, m.keys.ShowClosed):
 		return m.toggleShowClosed()
 	case keyHit(msg, m.keys.Columns):
@@ -1836,6 +1841,156 @@ func (m Model) markedIssues() []beads.Issue {
 	return out
 }
 
+// beginCommand opens the `:` command-palette prompt. Empty
+// submission cancels; otherwise updateCommand dispatches through
+// commandTable.
+func (m Model) beginCommand() (tea.Model, tea.Cmd) {
+	m.mode = modeCommand
+	m.input.SetValue("")
+	m.input.Prompt = ":"
+	m.input.Placeholder = "refresh / preset <name> / sort <axis> / reverse / filter save <name>"
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// updateCommand drives the `:` prompt. esc cancels; enter parses
+// the value into a command + args and dispatches through
+// commandTable. Unknown commands surface a status banner that
+// names the known set so the user can recover.
+func (m Model) updateCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+	switch msg.String() {
+	case "esc":
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		return m, nil
+	case "enter":
+		raw := strings.TrimSpace(m.input.Value())
+		m.mode = modeList
+		m.input.Blur()
+		m.restoreFilterPrompt()
+		if raw == "" {
+			return m, nil
+		}
+		return m.dispatchCommand(raw)
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// dispatchCommand splits the input into name + remaining args
+// and routes to the matching handler. Unknown commands set a
+// status banner with the supported list. The list is small
+// enough that a flat switch is more readable than a registry
+// pattern.
+func (m Model) dispatchCommand(raw string) (tea.Model, tea.Cmd) {
+	name, rest, _ := strings.Cut(raw, " ")
+	rest = strings.TrimSpace(rest)
+	switch name {
+	case "refresh":
+		m.refreshing = true
+		return m, m.fetchCmd()
+	case "preset":
+		p := filter.Preset(rest)
+		// Reject unknown presets early — silently switching to a
+		// no-op preset would just confuse the user about why the
+		// list didn't change.
+		known := false
+		for _, q := range filter.AllPresets() {
+			if q == p {
+				known = true
+				break
+			}
+		}
+		if !known {
+			m.setStatus(":preset: unknown name " + fmt.Sprintf("%q", rest))
+			return m, flashClearCmd(m.statusGen)
+		}
+		return m.switchPreset(p)
+	case "sort":
+		k, ok := parseSortKey(rest)
+		if !ok {
+			m.setStatus(":sort: axis must be one of none, priority, updated, repo, id")
+			return m, flashClearCmd(m.statusGen)
+		}
+		return m.setSortKey(k)
+	case "reverse":
+		return m.reverseSort()
+	case "filter":
+		return m.dispatchFilterCommand(rest)
+	case "help":
+		return m.openHelp()
+	default:
+		m.setStatus(":" + name + ": unknown command. Known: refresh, preset, sort, reverse, filter save <name>, help")
+		return m, flashClearCmd(m.statusGen)
+	}
+}
+
+// dispatchFilterCommand handles the `:filter <sub> <args>` family.
+// Only `save <name>` is supported today; the function exists as a
+// branch point so a future `:filter clear`, `:filter list`, etc.
+// don't bloat the main dispatchCommand switch.
+func (m Model) dispatchFilterCommand(rest string) (tea.Model, tea.Cmd) {
+	sub, args, _ := strings.Cut(rest, " ")
+	args = strings.TrimSpace(args)
+	switch sub {
+	case "save":
+		if args == "" {
+			m.setStatus(":filter save: missing alias name")
+			return m, flashClearCmd(m.statusGen)
+		}
+		if m.query == "" {
+			m.setStatus(":filter save: no active query to save")
+			return m, flashClearCmd(m.statusGen)
+		}
+		// Capture-and-persist. If the load failed at startup
+		// (m.filterAliases is zero-value), the save still works
+		// — we start a fresh Aliases map. Errors surface inline
+		// so the user knows the save didn't take.
+		if m.filterAliases.Aliases == nil {
+			m.filterAliases.Aliases = map[string]string{}
+		}
+		m.filterAliases.Aliases[args] = m.query
+		path, err := filters.DefaultPath()
+		if err != nil {
+			m.setStatus(":filter save failed: " + err.Error())
+			return m, nil
+		}
+		if err := filters.Save(path, m.filterAliases); err != nil {
+			m.setStatus(":filter save failed: " + err.Error())
+			return m, nil
+		}
+		m.setStatus("saved @" + args)
+		return m, flashClearCmd(m.statusGen)
+	default:
+		m.setStatus(":filter: unknown subcommand. Try: save <name>")
+		return m, flashClearCmd(m.statusGen)
+	}
+}
+
+// parseSortKey maps a string axis name to its sortKey constant.
+// Used by `:sort` so the command palette can drive the same
+// rotation the `s` key cycles through.
+func parseSortKey(s string) (sortKey, bool) {
+	switch strings.ToLower(s) {
+	case "none", "":
+		return sortNone, true
+	case "priority", "p":
+		return sortPriority, true
+	case "updated":
+		return sortUpdated, true
+	case "repo":
+		return sortRepo, true
+	case "id":
+		return sortID, true
+	}
+	return sortNone, false
+}
+
 // beginDefer enters modeDefer with a textinput prompt for the
 // defer value (+1d, +1w, tomorrow, 2026-06-15 — bd owns parsing).
 // Snapshots the cursor row into pendingTarget so a concurrent
@@ -2127,7 +2282,7 @@ func (m Model) viewList() string {
 
 	// modal prompts live just above the status bar
 	switch m.mode {
-	case modeFilter, modeNote, modeQuickAdd, modeDefer:
+	case modeFilter, modeNote, modeQuickAdd, modeDefer, modeCommand:
 		b.WriteString("\n")
 		b.WriteString(m.input.View())
 	case modeConfirmClose:

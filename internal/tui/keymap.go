@@ -100,6 +100,13 @@ type keyMap struct {
 	// asc, etc. No-op when no sort axis is active (sortNone has
 	// no direction).
 	SortReverse key.Binding // S — reverse sort direction
+
+	// Command opens the vim-style ":" command palette. Built-in
+	// commands cover the long tail of bindings we don't want a
+	// dedicated key for (refresh, preset switch, filter save,
+	// etc.). Unknown commands surface a status banner with the
+	// list of known names.
+	Command key.Binding // : — command palette
 }
 
 func defaultKeyMap() keyMap {
@@ -140,6 +147,7 @@ func defaultKeyMap() keyMap {
 		Defer:       key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
 		Mark:        key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
 		SortReverse: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse sort")),
+		Command:     key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command")),
 	}
 }
 
@@ -178,6 +186,6 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
 		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo, k.Defer, k.Mark},
-		{k.Refresh, k.Help, k.Quit},
+		{k.Refresh, k.Help, k.Quit, k.Command},
 	}
 }
