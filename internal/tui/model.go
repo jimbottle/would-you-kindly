@@ -2247,23 +2247,25 @@ func (m Model) dispatchFilterCommand(rest string) (tea.Model, tea.Cmd) {
 			m.setStatus(":filter save: no active query to save")
 			return m, flashClearCmd(m.statusGen)
 		}
-		// Capture-and-persist. If the load failed at startup
-		// (m.filterAliases is zero-value), the save still works
-		// — we start a fresh Aliases map. Errors surface inline
-		// so the user knows the save didn't take.
-		if m.filterAliases.Aliases == nil {
-			m.filterAliases.Aliases = map[string]string{}
-		}
-		m.filterAliases.Aliases[args] = m.query
+		// Compose the would-be aliases (in-memory state stays
+		// untouched until Save succeeds) so a persistence failure
+		// can't leave the session showing an alias that won't
+		// survive a restart.
 		path, err := filters.DefaultPath()
 		if err != nil {
 			m.setStatus(":filter save failed: " + err.Error())
 			return m, nil
 		}
-		if err := filters.Save(path, m.filterAliases); err != nil {
+		next := cloneAliases(m.filterAliases)
+		if next.Aliases == nil {
+			next.Aliases = map[string]string{}
+		}
+		next.Aliases[args] = m.query
+		if err := filters.Save(path, next); err != nil {
 			m.setStatus(":filter save failed: " + err.Error())
 			return m, nil
 		}
+		m.filterAliases = next
 		m.setStatus("saved @" + args)
 		return m, flashClearCmd(m.statusGen)
 	case "list":
@@ -2300,22 +2302,43 @@ func (m Model) dispatchFilterCommand(rest string) (tea.Model, tea.Cmd) {
 			m.setStatus(":filter remove: no alias @" + args)
 			return m, flashClearCmd(m.statusGen)
 		}
-		delete(m.filterAliases.Aliases, args)
+		// Stage the deletion on a clone so a persist failure
+		// keeps the in-memory view consistent with disk — a
+		// stale ":filter list" showing a still-saved alias is
+		// less confusing than an alias that silently reappears
+		// after a restart.
 		path, err := filters.DefaultPath()
 		if err != nil {
 			m.setStatus(":filter remove failed: " + err.Error())
 			return m, nil
 		}
-		if err := filters.Save(path, m.filterAliases); err != nil {
+		next := cloneAliases(m.filterAliases)
+		delete(next.Aliases, args)
+		if err := filters.Save(path, next); err != nil {
 			m.setStatus(":filter remove failed: " + err.Error())
 			return m, nil
 		}
+		m.filterAliases = next
 		m.setStatus("removed @" + args)
 		return m, flashClearCmd(m.statusGen)
 	default:
 		m.setStatus(":filter: unknown subcommand. Try: save <name>, list, remove <name>")
 		return m, flashClearCmd(m.statusGen)
 	}
+}
+
+// cloneAliases returns a deep copy of the on-disk Aliases shape
+// so the filter-save/remove flows can stage their mutation on a
+// clone and only commit it to m.filterAliases when the persist
+// succeeds. Without this, a persist failure would leave the
+// in-memory map mutated while the user sees ":filter * failed",
+// surfacing the divergence on the next ":filter list".
+func cloneAliases(a filters.Aliases) filters.Aliases {
+	out := filters.Aliases{Version: a.Version, Aliases: make(map[string]string, len(a.Aliases))}
+	for k, v := range a.Aliases {
+		out.Aliases[k] = v
+	}
+	return out
 }
 
 // parseSortKey maps a string axis name to its sortKey constant.

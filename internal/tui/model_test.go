@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -3231,6 +3232,50 @@ func TestCommandPalette_FilterRemoveDeletesAndPersists(t *testing.T) {
 	}
 	if _, ok := a.Aliases["blocked"]; ok {
 		t.Errorf("alias should be removed from disk; got %v", a.Aliases)
+	}
+}
+
+func TestCommandPalette_FilterRemovePreservesInMemoryOnPersistFailure(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	// Point XDG at a tempdir but THEN make the wyk subdir
+	// read-only so filters.Save fails with a real permission
+	// error. The persist-failure path should leave
+	// m.filterAliases untouched so :filter list still shows the
+	// alias and the on-disk state matches the in-memory view.
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	wykDir := filepath.Join(dir, "wyk")
+	if err := os.MkdirAll(wykDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wykDir, "filters.json"), []byte(`{"version":1,"aliases":{"blocked":"status=blocked"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(wykDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(wykDir, 0o755) })
+
+	src := &stubSource{issues: sampleIssues()}
+	aliases := filters.Aliases{Version: 1, Aliases: map[string]string{"blocked": "status=blocked"}}
+	m := applyFetched(New(src).WithFilterAliases(aliases), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = model.(Model)
+	for _, r := range "filter remove blocked" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	if !strings.Contains(m.status, "failed") {
+		t.Errorf("status should announce failure; got %q", m.status)
+	}
+	if _, ok := m.filterAliases.Aliases["blocked"]; !ok {
+		t.Errorf("in-memory map should still contain the alias on persist failure; got %v", m.filterAliases.Aliases)
 	}
 }
 

@@ -27,13 +27,12 @@ import (
 //	64 usage error
 func runExport(args []string) int {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
-	_ = fs.Bool("json", true, "(default; only output format currently supported)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk export [-json]")
+		fmt.Fprintln(os.Stderr, "usage: wyk export")
 		return 64
 	}
 
@@ -52,12 +51,31 @@ func runExport(args []string) int {
 		return 1
 	}
 
-	dump, hadError := collectExport(reg)
+	dump, hadError := collectExport(reg, defaultExportClient)
 	emitExportJSON(os.Stdout, dump)
 	if hadError {
 		return 1
 	}
 	return 0
+}
+
+// exportClient is the optional Client capability collectExport
+// needs. Production wires the real beads.NewClient via
+// defaultExportClient; tests inject a stub so the walk + error-
+// folding can be exercised without a real bd binary.
+type exportClient interface {
+	ListAll(ctx context.Context) ([]beads.Issue, error)
+	Ready(ctx context.Context) ([]beads.Issue, error)
+}
+
+// defaultExportClient is runExport's production factory: build
+// a real beads.Client pointed at the repo's path. Kept as a
+// package-level var so a future probe / debug flag can swap it
+// without touching collectExport's signature.
+var defaultExportClient = func(dir string) exportClient {
+	c := beads.NewClient()
+	c.Dir = dir
+	return c
 }
 
 // exportRepo captures one workspace's full bd state plus the
@@ -91,13 +109,12 @@ type exportDump struct {
 // before recording the row so a partial failure (e.g. `bd ready`
 // times out but `bd list --all` succeeds) still emits the issue
 // list with an empty ReadyIDs slice and an error string.
-func collectExport(reg *registry.Registry) (exportDump, bool) {
+func collectExport(reg *registry.Registry, mk func(dir string) exportClient) (exportDump, bool) {
 	dump := exportDump{ExportedAt: time.Now(), Repos: make([]exportRepo, 0, len(reg.Repos))}
 	hadError := false
 	for _, r := range reg.Repos {
 		row := exportRepo{Name: r.Name, Path: r.Path}
-		c := beads.NewClient()
-		c.Dir = r.Path
+		c := mk(r.Path)
 		// list --all
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		issues, err := c.ListAll(ctx)

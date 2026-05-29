@@ -2,12 +2,104 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
+
+// stubExportClient is a minimal exportClient impl recorded
+// per-call so collectExport tests can drive the list-ok/ready-
+// fail / list-fail/ready-ok / both-fail error-folding branches.
+type stubExportClient struct {
+	listIssues []beads.Issue
+	listErr    error
+	readyIssue []beads.Issue
+	readyErr   error
+}
+
+func (s *stubExportClient) ListAll(_ context.Context) ([]beads.Issue, error) {
+	return s.listIssues, s.listErr
+}
+func (s *stubExportClient) Ready(_ context.Context) ([]beads.Issue, error) {
+	return s.readyIssue, s.readyErr
+}
+
+func TestCollectExport_FoldsErrorsAndPreservesPartial(t *testing.T) {
+	reg := &registry.Registry{Repos: []registry.Repo{
+		{Name: "ok", Path: "/tmp/ok"},
+		{Name: "list-broken", Path: "/tmp/lb"},
+		{Name: "ready-broken", Path: "/tmp/rb"},
+		{Name: "both-broken", Path: "/tmp/bb"},
+	}}
+	stubs := map[string]*stubExportClient{
+		"/tmp/ok": {
+			listIssues: []beads.Issue{{ID: "a-1"}},
+			readyIssue: []beads.Issue{{ID: "a-1"}},
+		},
+		"/tmp/lb": {
+			listErr:    errors.New("list boom"),
+			readyIssue: []beads.Issue{{ID: "b-2"}},
+		},
+		"/tmp/rb": {
+			listIssues: []beads.Issue{{ID: "c-3"}},
+			readyErr:   errors.New("ready boom"),
+		},
+		"/tmp/bb": {
+			listErr:  errors.New("list boom"),
+			readyErr: errors.New("ready boom"),
+		},
+	}
+	mk := func(dir string) exportClient { return stubs[dir] }
+
+	dump, hadError := collectExport(reg, mk)
+	if !hadError {
+		t.Errorf("hadError should be true when any sub failed")
+	}
+	if len(dump.Repos) != 4 {
+		t.Fatalf("expected 4 repos in output; got %d", len(dump.Repos))
+	}
+
+	// Sort produces alphabetical order: both-broken, list-broken,
+	// ok, ready-broken.
+	byName := map[string]exportRepo{}
+	for _, r := range dump.Repos {
+		byName[r.Name] = r
+	}
+
+	// ok: both calls succeed, no error.
+	if r := byName["ok"]; r.Err != "" || len(r.Issues) != 1 || r.ReadyIDs[0] != "a-1" {
+		t.Errorf("ok row: got %+v", r)
+	}
+	// list-broken: list errors → Err carries 'list-all:' prefix;
+	// ready still populates ReadyIDs.
+	if r := byName["list-broken"]; r.Err == "" ||
+		!bytes.Contains([]byte(r.Err), []byte("list-all: list boom")) ||
+		len(r.ReadyIDs) != 1 {
+		t.Errorf("list-broken row: got %+v", r)
+	}
+	// ready-broken: list succeeds; ready errors → Err carries
+	// 'ready:' prefix.
+	if r := byName["ready-broken"]; r.Err == "" ||
+		!bytes.Contains([]byte(r.Err), []byte("ready: ready boom")) ||
+		len(r.Issues) != 1 {
+		t.Errorf("ready-broken row: got %+v", r)
+	}
+	// both-broken: Err carries BOTH prefixes joined with `; `.
+	if r := byName["both-broken"]; !bytes.Contains([]byte(r.Err), []byte("list-all: list boom")) ||
+		!bytes.Contains([]byte(r.Err), []byte("; ready: ready boom")) {
+		t.Errorf("both-broken row should fold both errors; got %+v", r)
+	}
+
+	// Sort: dump.Repos[0] must be the alphabetically first name.
+	if dump.Repos[0].Name != "both-broken" {
+		t.Errorf("repos should be alphabetical; first name = %q", dump.Repos[0].Name)
+	}
+}
 
 func TestEmitExportJSON_ShapeAndIndentation(t *testing.T) {
 	dump := exportDump{
