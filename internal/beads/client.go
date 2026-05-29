@@ -148,6 +148,17 @@ func (c *Client) Close(ctx context.Context, id string) error {
 	return err
 }
 
+// Reopen sets a closed issue back to status=open via `bd reopen`,
+// which clears closed_at and emits a Reopened event. Used by the
+// TUI's `u` undo-last-close key — preferred over `update --status
+// open` because the explicit subcommand preserves the audit trail
+// (an external `bd audit` walk can tell "this issue was closed
+// then reopened" from "this issue was opened in the first place").
+func (c *Client) Reopen(ctx context.Context, id string) error {
+	_, err := c.run(ctx, nil, "reopen", id, autoCommitFlag)
+	return err
+}
+
 // CreateOptions configures `bd create` invocations.
 type CreateOptions struct {
 	Title    string

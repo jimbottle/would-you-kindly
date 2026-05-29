@@ -36,11 +36,12 @@ func (s *stubSource) Fetch(_ context.Context, p filter.Preset) ([]beads.Issue, e
 // it through.
 type stubMutator struct {
 	stubSource
-	closed  []string
-	added   []labelOp
-	removed []labelOp
-	notes   []labelOp // reuse the {id,label} shape for {id, text}
-	created []labelOp // {repo, title} for quick-add
+	closed   []string
+	reopened []string
+	added    []labelOp
+	removed  []labelOp
+	notes    []labelOp // reuse the {id,label} shape for {id, text}
+	created  []labelOp // {repo, title} for quick-add
 }
 
 type labelOp struct{ id, label string }
@@ -64,6 +65,10 @@ func (s *stubMutator) Note(_ context.Context, i beads.Issue, text string) error 
 func (s *stubMutator) Create(_ context.Context, repo, title string) (string, error) {
 	s.created = append(s.created, labelOp{repo, title})
 	return "new-id", nil
+}
+func (s *stubMutator) Reopen(_ context.Context, i beads.Issue) error {
+	s.reopened = append(s.reopened, i.ID)
+	return nil
 }
 
 func sampleIssues() []beads.Issue {
@@ -1773,6 +1778,63 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	}
 	if len(cfg.HiddenColumns) != 1 || cfg.HiddenColumns[0] != colIDOwner {
 		t.Errorf("HiddenColumns = %v, want [%q]", cfg.HiddenColumns, colIDOwner)
+	}
+}
+
+func TestUndo_ReopensLastClosed(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	// Close issue 0 (c → confirm with y) and drive the writeMsg
+	// so m.lastClosed gets populated by handleWriteResult.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatalf("y should dispatch a close write")
+	}
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+	if m.lastClosed.ID == "" {
+		t.Fatalf("lastClosed should be populated after a successful close; status=%q", m.status)
+	}
+	closedID := m.lastClosed.ID
+
+	// Press u → dispatch reopen; drive the cmd; assert mutator
+	// recorded the call and lastClosed was cleared.
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatalf("u should dispatch a reopen write")
+	}
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+	if len(s.reopened) != 1 || s.reopened[0] != closedID {
+		t.Errorf("Reopen(%q) not dispatched; got %v", closedID, s.reopened)
+	}
+	if m.lastClosed.ID != "" {
+		t.Errorf("lastClosed should be cleared after reopen; got %q", m.lastClosed.ID)
+	}
+	if !strings.Contains(m.status, "reopened") {
+		t.Errorf("status should announce reopen; got %q", m.status)
+	}
+}
+
+func TestUndo_NoLastClosedShowsStatus(t *testing.T) {
+	restoreFlash := withFlashClearDelay(t, time.Millisecond)
+	defer restoreFlash()
+
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m = model.(Model)
+	if len(s.reopened) != 0 {
+		t.Errorf("u with no lastClosed should NOT dispatch a reopen; got %v", s.reopened)
+	}
+	if !strings.Contains(m.status, "nothing to undo") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
 	}
 }
 

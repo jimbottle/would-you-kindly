@@ -74,6 +74,12 @@ type keyMap struct {
 	// banner confirms; failures surface as an error so the user
 	// doesn't think the copy worked and paste stale content.
 	Yank key.Binding // y — copy ID to clipboard
+
+	// Undo reopens the most-recently-closed issue from this
+	// session. One-deep only — vim-style single-step undo, not a
+	// stack. Cleared once the reopen lands so a second press is a
+	// no-op rather than reopening some older row.
+	Undo key.Binding // u — undo last close
 }
 
 func defaultKeyMap() keyMap {
@@ -110,6 +116,7 @@ func defaultKeyMap() keyMap {
 		ShowClosed: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "±closed")),
 		Columns:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "columns")),
 		Yank:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank ID")),
+		Undo:       key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo close")),
 	}
 }
 
@@ -147,7 +154,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.Undo},
 		{k.Refresh, k.Help, k.Quit},
 	}
 }

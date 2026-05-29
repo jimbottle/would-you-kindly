@@ -94,6 +94,11 @@ type Mutator interface {
 	// implementations ignore it. The new issue is labeled src:human
 	// (the user filed it) by convention. Returns the new ID.
 	Create(ctx context.Context, repo, title string) (string, error)
+	// Reopen sets a closed issue back to status=open. Backs the `u`
+	// undo-last-close key — paired with the Model's lastClosed*
+	// fields so the user gets a single-deep undo without the TUI
+	// having to fetch the closed list to find the row again.
+	Reopen(ctx context.Context, issue beads.Issue) error
 }
 
 // Detailer is the "fetch the full issue for the detail view"
@@ -242,6 +247,13 @@ type Model struct {
 	// re-resolving XDG every time. Empty disables persistence
 	// (used by tests and read-only embeddings).
 	uiConfigPath string
+
+	// lastClosed snapshots the most recent close so the `u` undo
+	// can reopen it without re-fetching the closed list. Captured
+	// from writeMsg{action: "close"} on success and cleared once
+	// a reopen lands. Single-deep — vim-style "u" undoes the last
+	// move, not a stack.
+	lastClosed beads.Issue
 
 	// statusGen rises on every m.status assignment so a stale
 	// auto-clear tick (from a previous status that has since been
@@ -677,6 +689,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keyHit(msg, m.keys.Yank):
 		return m.handleYank()
+	case keyHit(msg, m.keys.Undo):
+		return m.handleUndo()
 	case keyHit(msg, m.keys.Refresh):
 		// Manual refresh also restarts the auto-tick if it was
 		// suspended after a terminal error. Bumping tickGen retires
@@ -816,10 +830,14 @@ func (m Model) jumpToHuman(dir int) (tea.Model, tea.Cmd) {
 
 // writeMsg carries the result of a Mutator call back to the model.
 // `action` describes what was attempted (used to compose the status
-// banner); `id` identifies the affected issue.
+// banner); `id` identifies the affected issue. `issue` snapshots
+// the full row (filled by close so the undo-handler has the Repo
+// to route reopen back through MultiBDSource without re-fetching
+// the closed list).
 type writeMsg struct {
 	action string
 	id     string
+	issue  beads.Issue
 	err    error
 }
 
@@ -869,7 +887,7 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		mu := m.mutator()
 		m.mode = modeList
-		return m, runWrite("close", target.ID, func(ctx context.Context) error {
+		return m, runWriteWithIssue("close", target, func(ctx context.Context) error {
 			return mu.Close(ctx, target)
 		})
 	}
@@ -1058,6 +1076,17 @@ func runWrite(action, id string, fn func(ctx context.Context) error) tea.Cmd {
 	}
 }
 
+// runWriteWithIssue is runWrite that also threads the full Issue
+// through to the result. Used by close so handleWriteResult can
+// snapshot the row into m.lastClosed for `u` undo without forcing
+// every other write path to plumb the issue through.
+func runWriteWithIssue(action string, issue beads.Issue, fn func(ctx context.Context) error) tea.Cmd {
+	return func() tea.Msg {
+		err := fn(context.Background())
+		return writeMsg{action: action, id: issue.ID, issue: issue, err: err}
+	}
+}
+
 // handleWriteResult sets the status banner and triggers a refetch so
 // the list reflects the new state. On error, the banner shows the
 // failure message; the existing data stays so the user can retry.
@@ -1079,6 +1108,13 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 	switch msg.action {
 	case "close":
 		m.setStatus("closed " + msg.id)
+		// Snapshot the row so `u` can reopen it without re-fetching
+		// the closed list. Cleared on reopen success (or on a
+		// second close, which overwrites this one).
+		m.lastClosed = msg.issue
+	case "reopen":
+		m.setStatus("reopened " + msg.id)
+		m.lastClosed = beads.Issue{} // consumed
 	case "flag":
 		m.setStatus("flagged " + msg.id + " for human")
 	case "unflag":
@@ -1405,6 +1441,27 @@ func (m Model) handleYank() (tea.Model, tea.Cmd) {
 // clipboardCopy is the seam tests can swap to skip /dev/tty I/O.
 // Production points at the real OSC 52 emitter.
 var clipboardCopy = clipboard.Copy
+
+// handleUndo reopens the most-recently-closed issue captured by
+// handleWriteResult. Empty m.lastClosed.ID means "nothing to undo"
+// — a friendly status banner is more useful than silently doing
+// nothing. Read-only sources surface the same "read-only" hint
+// the rest of the write keys use.
+func (m Model) handleUndo() (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if m.lastClosed.ID == "" {
+		m.setStatus("nothing to undo")
+		return m, flashClearCmd(m.statusGen)
+	}
+	target := m.lastClosed
+	return m, runWriteWithIssue("reopen", target, func(ctx context.Context) error {
+		return mu.Reopen(ctx, target)
+	})
+}
 
 // toggleShowClosed flips the include-closed flag on both the model
 // (for chip rendering) and the underlying Source (for the next

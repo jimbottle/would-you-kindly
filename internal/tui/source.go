@@ -262,6 +262,10 @@ func (s *BDSource) Close(ctx context.Context, i beads.Issue) error {
 	return s.Client.Close(ctx, i.ID)
 }
 
+func (s *BDSource) Reopen(ctx context.Context, i beads.Issue) error {
+	return s.Client.Reopen(ctx, i.ID)
+}
+
 func (s *BDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {
 	return s.Client.AddLabel(ctx, i.ID, label)
 }
@@ -564,6 +568,14 @@ func (m *MultiBDSource) Close(ctx context.Context, i beads.Issue) error {
 		return err
 	}
 	return sub.Close(ctx, i)
+}
+
+func (m *MultiBDSource) Reopen(ctx context.Context, i beads.Issue) error {
+	sub, err := m.repoForIssue(i)
+	if err != nil {
+		return err
+	}
+	return sub.(Mutator).Reopen(ctx, i)
 }
 
 func (m *MultiBDSource) AddLabel(ctx context.Context, i beads.Issue, label string) error {

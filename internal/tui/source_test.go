@@ -60,6 +60,7 @@ type fakeRepoSource struct {
 	issues   []beads.Issue
 	fetchErr error
 	closed   []string
+	reopened []string
 	added    []labelOp
 	removed  []labelOp
 	notes    []labelOp
@@ -97,6 +98,14 @@ func (f *fakeRepoSource) Detail(_ context.Context, i beads.Issue) (beads.Issue, 
 	// can verify the Detail call reached the right sub.
 	i.Notes = "stub notes from " + i.Repo
 	return i, nil
+}
+func (f *fakeRepoSource) Reopen(_ context.Context, i beads.Issue) error {
+	// Reopen routing is covered by the BDSource-level test; the
+	// multi-source tests just need the method to exist so the
+	// Mutator interface is satisfied. Recording the call lets the
+	// future routing test stay one symbol away.
+	f.reopened = append(f.reopened, i.ID)
+	return nil
 }
 
 // newMultiForTest builds a MultiBDSource directly from fake subs so
