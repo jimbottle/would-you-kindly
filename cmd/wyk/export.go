@@ -27,13 +27,26 @@ import (
 //	64 usage error
 func runExport(args []string) int {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	// -since accepts any duration parsable by time.ParseDuration
+	// ("24h", "7d" via 168h, "30m"). Empty (the default) emits
+	// the full dump, matching the historical behavior.
+	since := fs.String("since", "", "filter issues to those updated within this duration (e.g. 24h, 168h)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk export")
+		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h]")
 		return 64
+	}
+	var cutoff time.Time
+	if *since != "" {
+		d, err := time.ParseDuration(*since)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk export: invalid -since:", err)
+			return 64
+		}
+		cutoff = time.Now().Add(-d)
 	}
 
 	regPath, err := registry.DefaultPath()
@@ -52,6 +65,9 @@ func runExport(args []string) int {
 	}
 
 	dump, hadError := collectExport(reg, defaultExportClient)
+	if !cutoff.IsZero() {
+		dump = filterDumpSince(dump, cutoff)
+	}
 	emitExportJSON(os.Stdout, dump)
 	if hadError {
 		return 1
@@ -149,6 +165,28 @@ func collectExport(reg *registry.Registry, mk func(dir string) exportClient) (ex
 	}
 	sort.Slice(dump.Repos, func(i, j int) bool { return dump.Repos[i].Name < dump.Repos[j].Name })
 	return dump, hadError
+}
+
+// filterDumpSince trims each repo's Issues slice to issues whose
+// UpdatedAt is at or after the cutoff. ReadyIDs is left intact —
+// "ready" is a present-tense view of the workspace and doesn't
+// have a temporal axis. Repos with no matching issues stay in
+// the dump (empty Issues) so a downstream tool can tell which
+// repos had no activity vs. weren't queried.
+func filterDumpSince(dump exportDump, cutoff time.Time) exportDump {
+	out := dump
+	out.Repos = make([]exportRepo, len(dump.Repos))
+	for i, r := range dump.Repos {
+		filtered := make([]beads.Issue, 0, len(r.Issues))
+		for _, issue := range r.Issues {
+			if !issue.UpdatedAt.Before(cutoff) {
+				filtered = append(filtered, issue)
+			}
+		}
+		r.Issues = filtered
+		out.Repos[i] = r
+	}
+	return out
 }
 
 // emitExportJSON pretty-prints the dump to w. Indented because

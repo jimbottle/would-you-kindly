@@ -101,6 +101,52 @@ func TestCollectExport_FoldsErrorsAndPreservesPartial(t *testing.T) {
 	}
 }
 
+func TestFilterDumpSince_KeepsRecentDropsOlder(t *testing.T) {
+	cutoff := time.Now().Add(-1 * time.Hour)
+	dump := exportDump{Repos: []exportRepo{{
+		Name: "r",
+		Issues: []beads.Issue{
+			{ID: "old", UpdatedAt: cutoff.Add(-1 * time.Minute)},
+			{ID: "edge", UpdatedAt: cutoff},
+			{ID: "fresh", UpdatedAt: cutoff.Add(1 * time.Minute)},
+		},
+		ReadyIDs: []string{"old", "edge", "fresh"},
+	}}}
+	got := filterDumpSince(dump, cutoff)
+	ids := make([]string, len(got.Repos[0].Issues))
+	for i, x := range got.Repos[0].Issues {
+		ids[i] = x.ID
+	}
+	if len(ids) != 2 || ids[0] != "edge" || ids[1] != "fresh" {
+		t.Errorf("filtered IDs=%v, want [edge fresh]", ids)
+	}
+	// ReadyIDs left intact — present-tense view, no time axis.
+	if len(got.Repos[0].ReadyIDs) != 3 {
+		t.Errorf("ReadyIDs should not be filtered; got %v", got.Repos[0].ReadyIDs)
+	}
+}
+
+func TestFilterDumpSince_EmptyRepoStaysInDump(t *testing.T) {
+	// A repo with zero matching issues must remain in the output
+	// (with an empty Issues slice) so a downstream tool can tell
+	// "no recent activity" apart from "wasn't queried."
+	cutoff := time.Now().Add(-1 * time.Hour)
+	dump := exportDump{Repos: []exportRepo{
+		{Name: "r1", Issues: []beads.Issue{{ID: "old", UpdatedAt: cutoff.Add(-time.Hour)}}},
+		{Name: "r2", Issues: []beads.Issue{{ID: "fresh", UpdatedAt: cutoff.Add(time.Hour)}}},
+	}}
+	got := filterDumpSince(dump, cutoff)
+	if len(got.Repos) != 2 {
+		t.Fatalf("repo count changed: got %d, want 2", len(got.Repos))
+	}
+	if len(got.Repos[0].Issues) != 0 {
+		t.Errorf("r1 should be empty; got %d issues", len(got.Repos[0].Issues))
+	}
+	if len(got.Repos[1].Issues) != 1 {
+		t.Errorf("r2 should keep one issue; got %d", len(got.Repos[1].Issues))
+	}
+}
+
 func TestEmitExportJSON_ShapeAndIndentation(t *testing.T) {
 	dump := exportDump{
 		ExportedAt: time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC),
