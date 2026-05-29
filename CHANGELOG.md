@@ -8,6 +8,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (nothing yet)
 
+## [0.3.2] — 2026-05-29
+
+Research-driven TUI polish round. 12 commits since v0.3.1 — five new
+features from the punch list, the HUMAN-BLOCK dep-scan global cap,
+the updater channel-stable bug, and a 24× speedup on the tui test
+suite.
+
+### Added
+
+- **Scrollable detail view** via `bubbles/viewport.Model`. Long
+  runbooks now scroll with `j/k`, PgUp/PgDn, and mouse wheel; the
+  badge, title, and meta lines stay fixed above so the row's
+  identity never scrolls off. Footer shows scroll percent when
+  content exceeds the viewport.
+- **`bubbles/spinner`** animates the first-paint loading state
+  instead of a static `loading…`.
+- **Flash auto-clear** for write-success banners (`closed wyk-42`)
+  after 4s. Gen-tagged so a stale clear can't wipe a newer status.
+- **Preset-aware empty-state copy**. The `human` preset
+  celebrates `✓ no human-flagged issues — nothing waiting on you
+  right now`; ready / mine / blocked describe their absence
+  factually; the default preset on a fresh repo points at
+  `wyk handoff -create`.
+- **Responsibility badge promoted** in the detail view — for a
+  `← HUMAN` row the badge is the headline, on its own line above
+  the title.
+- **`bubbles/help` drives the status-bar footer**, sourced from the
+  keymap so the bindings can't drift from the actual handlers.
+  Read-only mode swaps in a write-free subset.
+- **Priority quick-cap** keys: `1` → P0 only, `2` → ≤P1, `3` → ≤P2,
+  `4` → ≤P3, `0` clears the cap. Applied before fuzzy match so
+  query + cap compose correctly.
+- **Filter chip strip** above the table — amber pills showing the
+  non-default preset, the priority cap, and the active sort axis.
+  Empty when nothing's filtered so a fresh view stays chrome-free.
+- **`s` cycles sort key**: none → priority (asc) → updated (desc)
+  → repo (asc) → id (asc) → none. Sorts run on a clone so `m.all`
+  stays in bd's native order.
+- **Column-header sort arrow** — `P↑`, `Updated↓`, `Repo↑`, `ID↑`
+  decorate the active column so the user knows which axis is
+  sorted without reading the chip.
+
+### Changed
+
+- **Error banners are sticky** — failed writes (`close wyk-42
+  failed: bd: issue is pinned`) stay until the next keystroke so
+  a user who glances away doesn't lose the failure text. Success
+  banners still auto-clear at 4s.
+- **HUMAN-BLOCK dep-scan semaphore hoisted** from each `BDSource`
+  into `MultiBDSource` — the cap is now truly global
+  (`markBlockedByHumanConcurrency = 8` total) rather than
+  `M × 8` per refresh.
+
+### Fixed
+
+- **`wyk update -channel stable` resolves correctly** through
+  prereleases. `LatestLive` returns the full `[]Release` page;
+  new `PickStable` walks for the newest non-prerelease;
+  `runUpdate` dispatches by channel. Cache schema keeps the
+  legacy `latest` field for v0.3.0/v0.3.1 back-compat. Channel
+  validation rejects typos like `-channel stabel` with exit 64.
+- **Atomic cache writes** — `internal/updater.writeCache` uses
+  temp file + `Rename` (mirrors `registry.Save`) so a concurrent
+  reader can't observe a half-written `update.json`.
+- **`setPriorityCap`/`setSortKey` side effects tested** — cursor
+  reset + scroll re-clamp are now pinned by regression tests.
+- **tui test suite speedup 12s → 0.5s** — `flashClearDelay` is
+  now a `var` so flash tests can shorten it via the
+  `withFlashClearDelay(t, time.Millisecond)` helper.
+
 ## [0.3.1] — 2026-05-28
 
 Owner column expansion: the per-row badge now identifies AGENT
@@ -638,7 +708,8 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.2
 [0.3.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.1
 [0.3.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0
 [0.3.0-alpha]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0-alpha
