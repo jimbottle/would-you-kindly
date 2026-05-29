@@ -27,16 +27,17 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] <issue-id>
 Install the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.
 
 ```
-wyk init [-C <dir>] [-chain | -force] [-dry-run] [-scan <root>]
+wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-C` | `_(empty)_` | install in this directory instead of the current one |
-| `-chain` | `false` | preserve an existing post-commit hook at post-commit.pre-wyk and wrap it |
-| `-force` | `false` | overwrite an existing post-commit hook entirely |
-| `-dry-run` | `false` | show what would happen without writing anything |
-| `-scan` | `_(empty)_` | scan this root for bd workspaces and register each one |
+| `-force` | `false` | overwrite an existing post-commit hook (destructive — drops the existing hook entirely) |
+| `-chain` | `false` | preserve an existing post-commit hook and chain wyk's logic after it (preferred over -force when the existing hook is from another tool like roborev) |
+| `-dry-run` | `false` | print what would happen without writing the hook |
+| `-skip-bd-init` | `false` | do not run `bd init` even if .beads is missing |
+| `-skip-register` | `false` | do not add this repo to ~/.config/wyk/repos.json |
+| `-scan` | `_(empty)_` | scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path |
 
 ## `wyk inbox`
 
@@ -107,13 +108,14 @@ wyk conventions [-json]
 Check for and install a newer wyk release. Live-fetches every invocation (no cache).
 
 ```
-wyk update [-channel any|stable] [-dry-run]
+wyk update [-y] [-dry-run] [-channel any|stable]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-channel` | `any` | release channel: any (default) or stable (no prereleases) |
-| `-dry-run` | `false` | print the install command without running it |
+| `-y` | `false` | skip the [y/N] confirmation before running go install |
+| `-dry-run` | `false` | print the install command without executing it |
+| `-channel` | `any` | release channel: `any` (include prereleases — default) or `stable` (skip prereleases). When omitted, the most recently used channel is reused so a stable-pinned user clicking the TUI's nudge doesn't silently jump back to prereleases. |
 
 ## `wyk dashboard`
 

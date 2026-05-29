@@ -19,11 +19,16 @@ docs-snapshot:
 	@echo "docs-snapshot: docs/generated/{keymap.md,cli.md} regenerated"
 
 # Drift check: regenerate the snapshots and fail if any committed
-# file changed. CI runs this so a code change touching a flag or
-# keymap entry has to bring the matching docs update along.
+# file changed OR if a snapshot file is untracked. Use
+# `git status --porcelain` rather than `git diff --quiet` because
+# the latter only surfaces modifications to tracked files — a
+# future docs-snapshot that emits a new file would silently pass
+# the diff check while the file sits uncommitted.
 docs-check: docs-snapshot
-	@if ! git diff --quiet -- docs/generated/; then \
+	@status=$$(git status --porcelain -- docs/generated/); \
+	if [ -n "$$status" ]; then \
 		echo "docs-check: docs/generated/ is stale — run 'make docs-snapshot' and commit the result"; \
+		echo "$$status"; \
 		git diff -- docs/generated/; \
 		exit 1; \
 	fi

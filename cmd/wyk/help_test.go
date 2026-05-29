@@ -97,13 +97,47 @@ func TestRunHelp_CLIMarkdownEmitsEverySubcommand(t *testing.T) {
 	if !contains(out, "# wyk CLI reference") {
 		t.Errorf("missing top-level heading; got:\n%s", out)
 	}
-	// Every subcommand in the canonical table should appear as an
-	// H2 — drift here means a subcommand was added to the dispatch
-	// but not the doc table (or vice versa).
+	// Every entry in the canonical table should appear as an H2.
+	// Note: this only catches "table entry missing from output" —
+	// the inverse (dispatch entry missing from the table) is
+	// covered by TestCLISubcommandDocs_CoversEveryDispatchedSubcommand
+	// below, and flag-level drift is caught by the CI docs-check.
 	for _, d := range cliSubcommandDocs {
 		want := "## `wyk " + d.Name + "`"
 		if !contains(out, want) {
 			t.Errorf("output missing section %q", want)
+		}
+	}
+}
+
+// TestCLISubcommandDocs_CoversEveryDispatchedSubcommand guards
+// the inverse direction: a subcommand added to the dispatch /
+// completion list must have a matching cliSubcommandDocs entry.
+// Anchored on wykSubcommands (completion.go) because that's the
+// existing canonical "user-facing subcommands" list — drift
+// between the two is exactly what this test catches.
+func TestCLISubcommandDocs_CoversEveryDispatchedSubcommand(t *testing.T) {
+	have := make(map[string]bool, len(cliSubcommandDocs))
+	for _, d := range cliSubcommandDocs {
+		have[d.Name] = true
+	}
+	for _, name := range wykSubcommands {
+		if !have[name] {
+			t.Errorf("wykSubcommands has %q but cliSubcommandDocs is missing an entry — add one to cmd/wyk/clidocs.go", name)
+		}
+	}
+	// Inverse: every doc entry should also appear in
+	// wykSubcommands (so a typo in the doc table can't go
+	// unnoticed). "hook" is intentionally absent from
+	// wykSubcommands and should also be absent here — we don't
+	// document the internal hook subcommand.
+	want := make(map[string]bool, len(wykSubcommands))
+	for _, n := range wykSubcommands {
+		want[n] = true
+	}
+	for _, d := range cliSubcommandDocs {
+		if !want[d.Name] {
+			t.Errorf("cliSubcommandDocs has %q but wykSubcommands does not — typo, or a subcommand that should not be user-facing?", d.Name)
 		}
 	}
 }

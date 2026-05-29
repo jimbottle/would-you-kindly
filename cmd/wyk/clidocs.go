@@ -48,13 +48,14 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "init",
 		Summary: "Install the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.",
-		Usage:   "wyk init [-C <dir>] [-chain | -force] [-dry-run] [-scan <root>]",
+		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>]",
 		Flags: []cliFlag{
-			{Name: "-C", Default: "", Description: "install in this directory instead of the current one"},
-			{Name: "-chain", Default: "false", Description: "preserve an existing post-commit hook at post-commit.pre-wyk and wrap it"},
-			{Name: "-force", Default: "false", Description: "overwrite an existing post-commit hook entirely"},
-			{Name: "-dry-run", Default: "false", Description: "show what would happen without writing anything"},
-			{Name: "-scan", Default: "", Description: "scan this root for bd workspaces and register each one"},
+			{Name: "-force", Default: "false", Description: "overwrite an existing post-commit hook (destructive — drops the existing hook entirely)"},
+			{Name: "-chain", Default: "false", Description: "preserve an existing post-commit hook and chain wyk's logic after it (preferred over -force when the existing hook is from another tool like roborev)"},
+			{Name: "-dry-run", Default: "false", Description: "print what would happen without writing the hook"},
+			{Name: "-skip-bd-init", Default: "false", Description: "do not run `bd init` even if .beads is missing"},
+			{Name: "-skip-register", Default: "false", Description: "do not add this repo to ~/.config/wyk/repos.json"},
+			{Name: "-scan", Default: "", Description: "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path"},
 		},
 	},
 	{
@@ -104,10 +105,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "update",
 		Summary: "Check for and install a newer wyk release. Live-fetches every invocation (no cache).",
-		Usage:   "wyk update [-channel any|stable] [-dry-run]",
+		Usage:   "wyk update [-y] [-dry-run] [-channel any|stable]",
 		Flags: []cliFlag{
-			{Name: "-channel", Default: "any", Description: "release channel: any (default) or stable (no prereleases)"},
-			{Name: "-dry-run", Default: "false", Description: "print the install command without running it"},
+			{Name: "-y", Default: "false", Description: "skip the [y/N] confirmation before running go install"},
+			{Name: "-dry-run", Default: "false", Description: "print the install command without executing it"},
+			{Name: "-channel", Default: "any", Description: "release channel: `any` (include prereleases — default) or `stable` (skip prereleases). When omitted, the most recently used channel is reused so a stable-pinned user clicking the TUI's nudge doesn't silently jump back to prereleases."},
 		},
 	},
 	{
