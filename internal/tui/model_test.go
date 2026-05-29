@@ -579,8 +579,7 @@ func TestToggleHuman_AddsThenRemovesLabel(t *testing.T) {
 	// move cursor to issue 1 which doesn't have `human`; H should AddLabel.
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = model.(Model)
-	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
-	m = model.(Model)
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
 	if cmd == nil {
 		t.Fatal("H on non-human issue should dispatch a write")
 	}
@@ -1810,8 +1809,7 @@ func TestColumnsOverlay_PersistsHiddenColumnsToDisk(t *testing.T) {
 	m = model.(Model)
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	m = model.(Model)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = model.(Model)
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 
 	// Load straight from disk to confirm the save happened.
 	cfg, err := uiconfig.Load(path)
@@ -2193,8 +2191,7 @@ func TestBulkFlag_AddsHumanToMarked(t *testing.T) {
 		m = model.(Model)
 	}
 
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
-	m = model.(Model)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
 	if cmd == nil {
 		t.Fatal("H with marks should dispatch a bulk flag")
 	}

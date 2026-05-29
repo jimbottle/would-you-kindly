@@ -452,7 +452,10 @@ func versionString() string {
 // the discoverability gap that produced wrong-labelled bd issues.
 func printTopLevelUsage() {
 	w := flag.CommandLine.Output()
-	fmt.Fprint(w, `wyk — terminal UI over the bd issue tracker, with a handoff convention
+	// errcheck: writes to flag.CommandLine.Output() (stderr) — if
+	// the user closed stderr we have nothing useful to report
+	// anywhere else, so swallow.
+	_, _ = fmt.Fprint(w, `wyk — terminal UI over the bd issue tracker, with a handoff convention
                 for the agent ↔ human round-trip.
 
 Usage:
@@ -474,7 +477,7 @@ Subcommands:
 Top-level flags (TUI / --probe mode):
 `)
 	flag.PrintDefaults()
-	fmt.Fprint(w, `
+	_, _ = fmt.Fprint(w, `
 For the agent-facing labels (`+"`human`"+`, `+"`src:agent`"+`) and the inbox
 query, run: wyk conventions
 `)

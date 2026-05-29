@@ -32,7 +32,7 @@ func Copy(text string) error {
 	if err != nil {
 		return fmt.Errorf("open /dev/tty: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return writeOSC52(f, text)
 }
 

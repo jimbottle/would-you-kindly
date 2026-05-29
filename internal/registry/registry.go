@@ -107,12 +107,12 @@ func (r *Registry) Save(path string) error {
 	cleanup := func() { _ = os.Remove(tmpPath) }
 
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("write temp %s: %w", tmpPath, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("sync temp %s: %w", tmpPath, err)
 	}

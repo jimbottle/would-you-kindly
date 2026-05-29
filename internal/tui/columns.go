@@ -44,13 +44,3 @@ var toggleableColumns = []toggleableCol{
 func (m Model) colVisible(id string) bool {
 	return !m.colsHidden[id]
 }
-
-// toggleableColIDs returns the column IDs the `o` overlay can
-// touch, in display order.
-func toggleableColIDs() []string {
-	out := make([]string, len(toggleableColumns))
-	for i, c := range toggleableColumns {
-		out[i] = c.ID
-	}
-	return out
-}

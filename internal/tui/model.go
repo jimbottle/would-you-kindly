@@ -327,7 +327,8 @@ func New(src Source) Model {
 	// they're embedded in.
 	h.Styles.ShortKey = helpStyle
 	h.Styles.ShortDesc = helpStyle
-	h.Styles.ShortSeparator = helpStyle.Copy()
+	// lipgloss.Style is a value type; plain assignment is the copy.
+	h.Styles.ShortSeparator = helpStyle
 
 	return Model{
 		src:         src,
@@ -1939,7 +1940,7 @@ func (m Model) viewHelp() string {
 		b.WriteString("\n")
 		for _, kb := range g.bindings {
 			h := kb.Help()
-			b.WriteString(fmt.Sprintf("  %-6s  %s\n", h.Key, h.Desc))
+			fmt.Fprintf(&b, "  %-6s  %s\n", h.Key, h.Desc)
 		}
 	}
 	b.WriteString("\n")
@@ -2234,29 +2235,29 @@ func (m Model) renderHeader() string {
 	var b strings.Builder
 	b.WriteString(cursor)
 	if m.colVisible(colIDOwner) {
-		b.WriteString(fmt.Sprintf("%-*s  ", colResp, "owner"))
+		fmt.Fprintf(&b, "%-*s  ", colResp, "owner")
 	}
 	if m.isMultiRepo() {
 		if m.colVisible(colIDWyk) {
-			b.WriteString(fmt.Sprintf("%-*s  ", colWyk, "wyk"))
+			fmt.Fprintf(&b, "%-*s  ", colWyk, "wyk")
 		}
 		if m.colVisible(colIDRepo) {
-			b.WriteString(fmt.Sprintf("%-*s  ", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑")))
+			fmt.Fprintf(&b, "%-*s  ", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑"))
 		}
 		if m.colVisible(colIDBranch) {
-			b.WriteString(fmt.Sprintf("%-*s  ", colBranch, "Branch"))
+			fmt.Fprintf(&b, "%-*s  ", colBranch, "Branch")
 		}
 	}
-	b.WriteString(fmt.Sprintf("%-*s  ", colID, sortDecorate("ID", m.sortBy == sortID, "↑")))
+	fmt.Fprintf(&b, "%-*s  ", colID, sortDecorate("ID", m.sortBy == sortID, "↑"))
 	if m.colVisible(colIDType) {
-		b.WriteString(fmt.Sprintf("%-*s  ", colType, "T"))
+		fmt.Fprintf(&b, "%-*s  ", colType, "T")
 	}
 	if m.colVisible(colIDStatus) {
-		b.WriteString(fmt.Sprintf("%-*s  ", colStatus, "Status"))
+		fmt.Fprintf(&b, "%-*s  ", colStatus, "Status")
 	}
-	b.WriteString(fmt.Sprintf("%-*s  ", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑")))
+	fmt.Fprintf(&b, "%-*s  ", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑"))
 	if m.colVisible(colIDUpdated) {
-		b.WriteString(fmt.Sprintf("%-*s  ", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓")))
+		fmt.Fprintf(&b, "%-*s  ", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓"))
 	}
 	b.WriteString("Title")
 	return tableHeaderStyle.Render(b.String())
@@ -2319,7 +2320,7 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		b.WriteString(statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status))))
 		b.WriteString("  ")
 	}
-	b.WriteString(fmt.Sprintf("P%d", i.Priority))
+	fmt.Fprintf(&b, "P%d", i.Priority)
 	b.WriteString("  ")
 	if m.colVisible(colIDUpdated) {
 		b.WriteString(updatedStyle.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt))))

@@ -1,0 +1,53 @@
+# golangci-lint configuration for would-you-kindly.
+#
+# Run with: golangci-lint run ./...
+#
+# Linters enabled here are the practical superset of what `go vet`
+# already gives us — vet still runs in CI for redundancy. The
+# config is intentionally narrow: each enabled linter has fired
+# on real bugs in past projects, and the false-positive rate is
+# low. Adding a linter is cheap; removing one once it's wired up
+# requires explaining every contributor's failed lint, so we keep
+# the bar high.
+
+version: "2"
+
+run:
+  timeout: 5m
+  # Skip generated files and the .beads working tree (Dolt blobs
+  # that aren't Go anyway, but skip explicitly so a future bd
+  # release that drops .go fixtures doesn't surprise us).
+  build-tags: []
+
+linters:
+  default: standard
+  enable:
+    # govet is on by default; explicit so the config reads as the
+    # full set.
+    - govet
+    # staticcheck catches a wide grab-bag of real bugs (impossible
+    # nil checks, dead code, incorrect time.Parse formats, etc.).
+    # Highest-value single linter in the ecosystem.
+    - staticcheck
+    # errcheck surfaces unchecked error returns. We have a few
+    # legitimate `_ = ...` sites that explicitly ignore (best-
+    # effort writes, background tasks); errcheck respects those.
+    - errcheck
+    # ineffassign catches "x = ... ; x = ..." where the first
+    # assignment is dead.
+    - ineffassign
+    # unused catches unreferenced functions/vars/types/fields. We
+    # intentionally keep a few named-but-unstyled lipgloss
+    # vars for future styling (typeStyle/updatedStyle); those are
+    # used at the call site so they don't trip this.
+    - unused
+
+  exclusions:
+    # Test files routinely have ignored errors (closing tempfiles,
+    # stubbed Mutators returning nil, etc.). Allowing errcheck to
+    # be relaxed on _test.go means real production code stays
+    # under the strict bar without flagging every test helper.
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go

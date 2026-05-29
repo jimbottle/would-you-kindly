@@ -103,12 +103,12 @@ func Save(path string, c Config) error {
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = os.Remove(tmpPath) }
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("write %s: %w", tmpPath, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("sync %s: %w", tmpPath, err)
 	}

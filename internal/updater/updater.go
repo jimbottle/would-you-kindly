@@ -89,7 +89,7 @@ func LatestLive(ctx context.Context, client *http.Client) ([]Release, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		// Drain so the connection can be reused; ignore the body
 		// content — we won't surface it to the user.
@@ -297,12 +297,12 @@ func writeCache(path string, entry cacheEntry) error {
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = os.Remove(tmpPath) }
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return err
 	}

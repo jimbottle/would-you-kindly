@@ -158,20 +158,3 @@ func statusStyleFor(status string) lipgloss.Style {
 		return statusOther
 	}
 }
-
-func statusIcon(status string) string {
-	switch status {
-	case "open":
-		return "○"
-	case "in_progress":
-		return "◐"
-	case "blocked":
-		return "●"
-	case "deferred":
-		return "◌"
-	case "closed":
-		return "✓"
-	default:
-		return "·"
-	}
-}
