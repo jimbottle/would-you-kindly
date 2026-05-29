@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -1758,4 +1759,74 @@ func TestRenderHeader_DecoratesActiveSortColumn(t *testing.T) {
 	if got := m.renderHeader(); !strings.Contains(got, "Updated↓") {
 		t.Errorf("sortUpdated should decorate the Updated column with ↓; got:\n%s", got)
 	}
+}
+
+func TestRenderHeader_DecoratedColumnsStayWithinTheirWidth(t *testing.T) {
+	// Regression for the 1259 LOW: "Updated↓" used to overflow
+	// colUpdated=7 and push Title one column right of the data
+	// rows. Pin the invariant: under every sort state, every
+	// decorated column header renders at exactly its configured
+	// width — never more.
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "alpha-1", Repo: "alpha", Title: "x"},
+		{ID: "beta-9", Repo: "beta", Title: "y"},
+	}}
+	m := applyFetched(New(src), src)
+
+	cases := []struct {
+		label string
+		sort  sortKey
+	}{
+		{"none", sortNone},
+		{"priority", sortPriority},
+		{"updated", sortUpdated}, // the regression case
+		{"repo", sortRepo},
+		{"id", sortID},
+	}
+	for _, c := range cases {
+		t.Run(c.label, func(t *testing.T) {
+			m.sortBy = c.sort
+			out := stripANSI(m.renderHeader())
+			byteAt := strings.Index(out, "Title")
+			if byteAt < 0 {
+				t.Fatalf("Title not found in header:\n%s", out)
+			}
+			// strings.Index returns a byte offset, but multi-byte
+			// arrows (↑↓) would inflate it relative to visual
+			// columns. Measure rune-count to get the true column
+			// position.
+			runesAt := utf8.RuneCountInString(out[:byteAt])
+			if c.label == "none" {
+				baselineTitleRune = runesAt
+			} else if runesAt != baselineTitleRune {
+				t.Errorf("sort=%s shifted Title from rune-col %d to %d (header overflow!)",
+					c.label, baselineTitleRune, runesAt)
+			}
+		})
+	}
+}
+
+var baselineTitleRune int
+
+// stripANSI removes ANSI escape sequences (\033[...m) so visual
+// widths can be compared. lipgloss decorates the header with
+// styles even when the test runs without a TTY.
+func stripANSI(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '\033' {
+			// Skip until 'm'
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			if i < len(s) {
+				i++ // skip the 'm' itself
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }

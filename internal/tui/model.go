@@ -1421,7 +1421,7 @@ const (
 	colType    = 4
 	colStatus  = 8
 	colPrio    = 2
-	colUpdated = 7
+	colUpdated = 8 // 8 chars so the "Updated↓" sort-arrow decoration fits without overflowing into the Title column. relTime values ("4h ago", "2 weeks", etc.) are all ≤ 7 chars so the extra slack is harmless when no sort is active.
 )
 
 // isMultiRepo reports whether the current list has any issue with
@@ -1510,14 +1510,6 @@ func (m Model) renderHeader() string {
 	// cased to match `wyk` — both are indicator columns rather
 	// than data ones.
 	respCol := fmt.Sprintf("%-*s  ", colResp, "owner")
-	var prefix string
-	if m.isMultiRepo() {
-		prefix = fmt.Sprintf("%-*s  %-*s  %-*s  ",
-			colWyk, "wyk",
-			colRepo, "Repo",
-			colBranch, "Branch",
-		)
-	}
 	// Active sort decoration: append "↑" / "↓" to the active
 	// column's header so the user knows which axis is sorted
 	// without having to read the chip strip. Priority ascending
@@ -1527,6 +1519,7 @@ func (m Model) renderHeader() string {
 	prioHdr := fmt.Sprintf("%-*s", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑"))
 	updHdr := fmt.Sprintf("%-*s", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓"))
 	repoHdrText := fmt.Sprintf("%-*s", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑"))
+	var prefix string
 	if m.isMultiRepo() {
 		prefix = fmt.Sprintf("%-*s  %s  %-*s  ",
 			colWyk, "wyk",
