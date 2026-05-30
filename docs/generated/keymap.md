@@ -47,6 +47,7 @@ internal/tui/keymap.go (`DocsKeymap`).
 | `e` | edit |
 | `+` | ↑prio |
 | `-` | ↓prio |
+| `T` | cycle type |
 | `v` | mark |
 | `u` | undo close |
 | `.` | repeat last |

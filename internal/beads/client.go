@@ -212,6 +212,15 @@ func (c *Client) SetAssignee(ctx context.Context, id, assignee string) error {
 	return err
 }
 
+// SetIssueType changes the issue's type via `bd update --type`.
+// Caller is responsible for passing one of bd's accepted values
+// (task / bug / feature / chore / epic / decision / spike /
+// story / milestone); bd rejects unknown types.
+func (c *Client) SetIssueType(ctx context.Context, id, issueType string) error {
+	_, err := c.run(ctx, nil, "update", id, "--type", issueType, autoCommitFlag)
+	return err
+}
+
 // RawRun invokes bd with the supplied args verbatim and returns
 // stdout. Used by the TUI's `:bd <args>` command palette entry so
 // the user can run arbitrary bd subcommands without leaving the

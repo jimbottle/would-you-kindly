@@ -127,6 +127,11 @@ type Mutator interface {
 	// pre-existing issue can be hand-edited back to un-owned via
 	// `bd update` and we respect that).
 	SetAssignee(ctx context.Context, issue beads.Issue, assignee string) error
+	// SetIssueType changes the issue's type. The caller is
+	// responsible for passing a bd-accepted value; the T key
+	// cycles through the known list (task / bug / feature /
+	// chore / epic / decision / spike / story / milestone).
+	SetIssueType(ctx context.Context, issue beads.Issue, issueType string) error
 	// SetDescription rewrites the issue's description. Multi-line
 	// content survives because the underlying bd call uses
 	// --description-file rather than a shell-escaped flag. Empty
@@ -974,6 +979,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.bumpPriority(-1)
 	case keyHit(msg, m.keys.PriorityDown):
 		return m.bumpPriority(+1)
+	case keyHit(msg, m.keys.TypeCycle):
+		return m.handleTypeCycle()
 	case keyHit(msg, m.keys.AssignOwner):
 		return m.beginAssign()
 	case keyHit(msg, m.keys.Label):
@@ -2237,6 +2244,56 @@ func (m Model) bumpPriority(delta int) (tea.Model, tea.Cmd) {
 	m.lastAction = repeatableAction{kind: "priority", arg: strconv.Itoa(newP)}
 	return m, runWrite(fmt.Sprintf("set P%d", newP), i.ID, func(ctx context.Context) error {
 		return mu.SetPriority(ctx, i, newP)
+	})
+}
+
+// issueTypeCycle is the rotation order T walks through. Sourced
+// from bd's accepted --type values (see internal/beads.CreateOptions
+// IssueType doc); the empty string is mapped to "task" so a row
+// without a recorded type lands on the default starting point.
+var issueTypeCycle = []string{
+	"task", "bug", "feature", "chore", "epic",
+	"decision", "spike", "story", "milestone",
+}
+
+// nextIssueType returns the value one position ahead of cur in
+// issueTypeCycle, wrapping at the end. Unknown / empty `cur`
+// returns the first entry — the safe rotation start.
+func nextIssueType(cur string) string {
+	for i, t := range issueTypeCycle {
+		if t == cur {
+			return issueTypeCycle[(i+1)%len(issueTypeCycle)]
+		}
+	}
+	return issueTypeCycle[0]
+}
+
+// handleTypeCycle bumps the cursor row's IssueType one step
+// through issueTypeCycle. Same shape as bumpPriority: respects
+// the mutator gate, supports the bulk-marked path so a multi-
+// select can move every marked row in lockstep, and records a
+// repeatableAction so '.' replays the most recent type set.
+func (m Model) handleTypeCycle() (tea.Model, tea.Cmd) {
+	mu := m.mutator()
+	if mu == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if len(m.marked) > 0 {
+		targets := m.markedIssues()
+		m.marked = nil
+		return m, runBulkWrite("type", targets, func(ctx context.Context, i beads.Issue) error {
+			return mu.SetIssueType(ctx, i, nextIssueType(i.IssueType))
+		})
+	}
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		return m, nil
+	}
+	i := m.visible[m.cursor]
+	newType := nextIssueType(i.IssueType)
+	m.lastAction = repeatableAction{kind: "type", arg: newType}
+	return m, runWrite(fmt.Sprintf("set type=%s", newType), i.ID, func(ctx context.Context) error {
+		return mu.SetIssueType(ctx, i, newType)
 	})
 }
 

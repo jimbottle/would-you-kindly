@@ -143,6 +143,13 @@ type keyMap struct {
 	PriorityUp   key.Binding // + — more urgent
 	PriorityDown key.Binding // - — less urgent
 
+	// TypeCycle rotates the cursor issue's IssueType through the
+	// bd-accepted values (task / bug / feature / chore / epic /
+	// decision / spike / story / milestone), wrapping at the end.
+	// Same shape as 's' (sort cycle): a single keystroke maps to
+	// the next-in-sequence write.
+	TypeCycle key.Binding // T — cycle issue type
+
 	// AssignOwner opens a textinput prompt for a new assignee
 	// (bd's --assignee). Empty submission clears the owner. Bulk-
 	// aware: with marks present, the value applies to every
@@ -214,6 +221,7 @@ func defaultKeyMap() keyMap {
 		SortReverse:  key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse sort")),
 		Command:      key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command")),
 		PriorityUp:   key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "↑prio")),
+		TypeCycle:    key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "cycle type")),
 		PriorityDown: key.NewBinding(key.WithKeys("-"), key.WithHelp("-", "↓prio")),
 		AssignOwner:  key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "owner")),
 		Label:        key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "label")),
@@ -272,7 +280,7 @@ func DocsKeymap() []HelpGroup {
 		}},
 		{"Writes", []key.Binding{
 			k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Defer,
-			k.AssignOwner, k.Label, k.Editor, k.PriorityUp, k.PriorityDown,
+			k.AssignOwner, k.Label, k.Editor, k.PriorityUp, k.PriorityDown, k.TypeCycle,
 			k.Mark, k.Undo, k.Repeat,
 		}},
 		{"Clipboard / command", []key.Binding{k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.YankAllMarkdown, k.Command}},
@@ -317,7 +325,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
-		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.YankAllMarkdown, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.AssignOwner, k.Label, k.Editor, k.Repeat},
+		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.YankAllMarkdown, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.TypeCycle, k.AssignOwner, k.Label, k.Editor, k.Repeat},
 		{k.Refresh, k.Help, k.Quit, k.Command},
 	}
 }

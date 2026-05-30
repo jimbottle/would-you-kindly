@@ -274,6 +274,10 @@ func (s *BDSource) SetPriority(ctx context.Context, i beads.Issue, p int) error 
 	return s.Client.SetPriority(ctx, i.ID, p)
 }
 
+func (s *BDSource) SetIssueType(ctx context.Context, i beads.Issue, issueType string) error {
+	return s.Client.SetIssueType(ctx, i.ID, issueType)
+}
+
 func (s *BDSource) RawBD(ctx context.Context, _ /* repo */ string, args []string) ([]byte, error) {
 	return s.Client.RawRun(ctx, args)
 }
@@ -616,6 +620,14 @@ func (m *MultiBDSource) SetPriority(ctx context.Context, i beads.Issue, p int) e
 		return err
 	}
 	return sub.SetPriority(ctx, i, p)
+}
+
+func (m *MultiBDSource) SetIssueType(ctx context.Context, i beads.Issue, issueType string) error {
+	sub, err := m.repoForIssue(i)
+	if err != nil {
+		return err
+	}
+	return sub.SetIssueType(ctx, i, issueType)
 }
 
 func (m *MultiBDSource) SetAssignee(ctx context.Context, i beads.Issue, assignee string) error {

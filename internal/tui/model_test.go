@@ -44,6 +44,7 @@ type stubMutator struct {
 	priorities       []priorityOp // {id, priority} for SetPriority
 	assignees        []labelOp    // {id, owner} for SetAssignee
 	descriptions     []labelOp    // {id, body} for SetDescription
+	issueTypes       []labelOp    // {id, type} for SetIssueType
 	added            []labelOp
 	removed          []labelOp
 	notes            []labelOp // reuse the {id,label} shape for {id, text}
@@ -92,6 +93,10 @@ func (s *stubMutator) SetAssignee(_ context.Context, i beads.Issue, assignee str
 }
 func (s *stubMutator) SetDescription(_ context.Context, i beads.Issue, body string) error {
 	s.descriptions = append(s.descriptions, labelOp{i.ID, body})
+	return nil
+}
+func (s *stubMutator) SetIssueType(_ context.Context, i beads.Issue, issueType string) error {
+	s.issueTypes = append(s.issueTypes, labelOp{i.ID, issueType})
 	return nil
 }
 
@@ -3037,6 +3042,60 @@ func TestYankAll_EmptyListSetsStatusInstead(t *testing.T) {
 	}
 	if !strings.Contains(m.status, "nothing to yank") {
 		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
+func TestTypeCycle_RotatesThroughKnownTypes(t *testing.T) {
+	// Pin the rotation contract: T starts at task → bug → feature → ...
+	// and unknown / empty types fall through to "task" (the safe start).
+	cases := []struct {
+		cur, want string
+	}{
+		{"task", "bug"},
+		{"bug", "feature"},
+		{"feature", "chore"},
+		{"chore", "epic"},
+		{"epic", "decision"},
+		{"decision", "spike"},
+		{"spike", "story"},
+		{"story", "milestone"},
+		{"milestone", "task"}, // wraps
+		{"", "task"},          // empty → safe start
+		{"bogus", "task"},     // unknown → safe start
+	}
+	for _, tc := range cases {
+		if got := nextIssueType(tc.cur); got != tc.want {
+			t.Errorf("nextIssueType(%q) = %q, want %q", tc.cur, got, tc.want)
+		}
+	}
+}
+
+func TestTypeCycle_DispatchesSetIssueType(t *testing.T) {
+	src := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "rotate", Status: "open", IssueType: "task"},
+	}}}
+	m := applyFetched(New(&src.stubSource).WithMe("ev"), &src.stubSource)
+	// Manually set the mutator (applyFetched uses the read-only Source path).
+	m.src = src
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("expected a write cmd from T; got nil")
+	}
+	// Run the cmd to dispatch the write through the stub.
+	cmd()
+
+	if len(src.issueTypes) != 1 {
+		t.Fatalf("SetIssueType called %d times, want 1; recorded=%v", len(src.issueTypes), src.issueTypes)
+	}
+	got := src.issueTypes[0]
+	if got.id != "a-1" || got.label != "bug" {
+		t.Errorf("SetIssueType{%q, %q}, want {a-1, bug}", got.id, got.label)
+	}
+	// Repeat state should record the kind+arg for '.' replay.
+	if m.lastAction.kind != "type" || m.lastAction.arg != "bug" {
+		t.Errorf("lastAction = {%q, %q}, want {type, bug}", m.lastAction.kind, m.lastAction.arg)
 	}
 }
 

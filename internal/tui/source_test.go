@@ -65,6 +65,7 @@ type fakeRepoSource struct {
 	priorities   []priorityOp // {id, priority} for SetPriority
 	assignees    []labelOp    // {id, owner} for SetAssignee
 	descriptions []labelOp    // {id, body} for SetDescription
+	issueTypes   []labelOp    // {id, type} for SetIssueType
 	added        []labelOp
 	removed      []labelOp
 	notes        []labelOp
@@ -133,6 +134,10 @@ func (f *fakeRepoSource) SetAssignee(_ context.Context, i beads.Issue, assignee 
 }
 func (f *fakeRepoSource) SetDescription(_ context.Context, i beads.Issue, body string) error {
 	f.descriptions = append(f.descriptions, labelOp{i.ID, body})
+	return nil
+}
+func (f *fakeRepoSource) SetIssueType(_ context.Context, i beads.Issue, issueType string) error {
+	f.issueTypes = append(f.issueTypes, labelOp{i.ID, issueType})
 	return nil
 }
 
