@@ -34,7 +34,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "handoff",
 		Summary: "Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file.",
-		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-file <path>]",
+		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-file <path>] [-dry-run]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "run as if bd had been started in this directory"},
 			{Name: "-file", Default: "", Description: "read the runbook from this file (default: stdin)"},
@@ -43,6 +43,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-priority", Default: "1", Description: "priority for the newly-created issue (only used with -create; 0-4 or P0-P4)"},
 			{Name: "-type", Default: "task", Description: "issue type for the newly-created issue (only used with -create)"},
 			{Name: "-note", Default: "", Description: "after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook"},
+			{Name: "-dry-run", Default: "false", Description: "print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it"},
 		},
 	},
 	{

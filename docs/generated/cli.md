@@ -8,8 +8,8 @@ Source: `cmd/wyk/clidocs.go`.
 Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file.
 
 ```
-wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] <issue-id>
-   or: wyk handoff -create "<title>" [-priority N] [-type task] [-file <path>]
+wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <issue-id>
+   or: wyk handoff -create "<title>" [-priority N] [-type task] [-file <path>] [-dry-run]
 ```
 
 | Flag | Default | Description |
@@ -21,6 +21,7 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] <issue-id>
 | `-priority` | `1` | priority for the newly-created issue (only used with -create; 0-4 or P0-P4) |
 | `-type` | `task` | issue type for the newly-created issue (only used with -create) |
 | `-note` | `_(empty)_` | after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook |
+| `-dry-run` | `false` | print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it |
 
 ## `wyk init`
 

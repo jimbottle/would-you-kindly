@@ -344,6 +344,8 @@ func runHandoff(args []string) int {
 		"issue type for the newly-created issue (only used with -create)")
 	note := fs.String("note", "",
 		"after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook")
+	dryRun := fs.Bool("dry-run", false,
+		"print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -397,6 +399,29 @@ func runHandoff(args []string) int {
 		fmt.Fprintln(os.Stderr,
 			"wyk handoff: empty runbook would clear the description. Pass -allow-empty to confirm.")
 		return 64
+	}
+
+	// -dry-run short-circuits before any bd writes. Print the
+	// plan and exit; nothing is created, no labels are flipped.
+	// The plan covers both -create (would-create banner + the
+	// CreateOptions that would be passed) and bare-id paths.
+	if *dryRun {
+		fmt.Println("DRY-RUN: no bd writes performed")
+		if *createTitle != "" {
+			fmt.Printf("would create: title=%q priority=%s type=%s labels=[src:agent]\n",
+				*createTitle, *priority, *issueType)
+			fmt.Println("would hand off the new issue to human (label=human added, description replaced)")
+		} else {
+			fmt.Printf("would hand off %s to human (label=human added, description replaced)\n", fs.Arg(0))
+		}
+		fmt.Printf("runbook (%d bytes):\n", len(runbook))
+		fmt.Println("---")
+		fmt.Println(runbook)
+		fmt.Println("---")
+		if *note != "" {
+			fmt.Printf("would note: %s\n", *note)
+		}
+		return 0
 	}
 
 	client := beads.NewClient()
