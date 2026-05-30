@@ -83,9 +83,7 @@ func runActivity(args []string) int {
 
 	cutoff := time.Now().Add(-*since)
 	events, hadError := collectActivity(reg, cutoff, *maxPriority, *status, defaultActivityClient)
-	if *limit >= 0 && *limit < len(events) {
-		events = events[:*limit]
-	}
+	events = limitActivityEvents(events, *limit)
 	if *asJSON {
 		emitActivityJSON(os.Stdout, events, cutoff)
 	} else {
@@ -172,6 +170,17 @@ func collectActivity(reg *registry.Registry, cutoff time.Time, maxPriority int, 
 	}
 	sort.Slice(events, func(i, j int) bool { return events[i].UpdatedAt.After(events[j].UpdatedAt) })
 	return events, hadError
+}
+
+// limitActivityEvents truncates events to the first `limit`
+// entries. collectActivity already sorts newest-first, so the
+// head-of-slice cut keeps the newest N. A negative limit (or one
+// >= len) returns the input unchanged.
+func limitActivityEvents(events []activityEvent, limit int) []activityEvent {
+	if limit < 0 || limit >= len(events) {
+		return events
+	}
+	return events[:limit]
 }
 
 // emitActivityTable prints the human-facing stream. Each row is

@@ -86,24 +86,7 @@ func runInbox(args []string) int {
 	if *maxPriority >= 0 {
 		all = filterByMaxPriority(all, *maxPriority)
 	}
-	if *limit >= 0 {
-		// fetchInbox concatenates per-repo results in registry
-		// order with no global sort — so an unsorted top-N
-		// truncation would return "a prefix of repo 1, then
-		// repo 2, …" rather than the highest-priority N across
-		// every in-scope repo. Sort ascending by Priority (P0 is
-		// most urgent in bd's convention), tiebreaking on ID for
-		// determinism, then take the head.
-		sort.SliceStable(all, func(i, j int) bool {
-			if all[i].Priority != all[j].Priority {
-				return all[i].Priority < all[j].Priority
-			}
-			return all[i].ID < all[j].ID
-		})
-		if *limit < len(all) {
-			all = all[:*limit]
-		}
-	}
+	all = limitByPriority(all, *limit)
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -225,6 +208,31 @@ func filterByMaxPriority(issues []beads.Issue, max int) []beads.Issue {
 		}
 	}
 	return out
+}
+
+// limitByPriority returns the top-`limit` issues by Priority (P0
+// most urgent) across the input, breaking ties on ID for
+// determinism. A negative limit is a no-op (returns the input
+// unchanged); a limit >= len(issues) is also a no-op so the
+// caller's prior ordering is preserved when no truncation
+// would actually happen.
+//
+// fetchInbox concatenates per-repo results in registry order
+// with no global sort, so a naive head-of-slice truncation
+// would return "a prefix of repo 1, then repo 2…" rather than
+// the highest-priority N. Sorting before truncating addresses
+// that.
+func limitByPriority(issues []beads.Issue, limit int) []beads.Issue {
+	if limit < 0 || limit >= len(issues) {
+		return issues
+	}
+	sort.SliceStable(issues, func(i, j int) bool {
+		if issues[i].Priority != issues[j].Priority {
+			return issues[i].Priority < issues[j].Priority
+		}
+		return issues[i].ID < issues[j].ID
+	})
+	return issues[:limit]
 }
 
 // renderInboxText prints the inbox as a compact list — one line per

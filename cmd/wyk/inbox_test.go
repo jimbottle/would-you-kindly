@@ -1,7 +1,6 @@
 package main
 
 import (
-	"sort"
 	"testing"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -58,9 +57,10 @@ func idsOf(issues []beads.Issue) []string {
 	return ids
 }
 
-// helper for the -limit tests: build a slice that mimics
-// fetchInbox's unsorted, repo-concatenated output so we can
-// exercise the sort-then-truncate path in isolation.
+// mixedRepoInbox returns a slice mimicking fetchInbox's
+// unsorted, repo-concatenated output so the limitByPriority
+// tests can exercise the production sort+truncate against a
+// realistic shape.
 func mixedRepoInbox() []beads.Issue {
 	return []beads.Issue{
 		{ID: "r1-c", Priority: 3, Repo: "r1"},
@@ -71,57 +71,39 @@ func mixedRepoInbox() []beads.Issue {
 	}
 }
 
-func TestInbox_LimitTakesHighestPriorityAcrossRepos(t *testing.T) {
-	// Mirror the production sort-then-truncate that runInbox
-	// applies inside the *limit >= 0 branch.
-	all := mixedRepoInbox()
-	sort.SliceStable(all, func(i, j int) bool {
-		if all[i].Priority != all[j].Priority {
-			return all[i].Priority < all[j].Priority
-		}
-		return all[i].ID < all[j].ID
-	})
-	limited := all[:3]
-
-	gotIDs := idsOf(limited)
-	want := []string{"r1-a", "r2-x", "r2-y"}
-	if len(gotIDs) != len(want) {
-		t.Fatalf("got %v, want %v", gotIDs, want)
+func TestLimitByPriority(t *testing.T) {
+	cases := []struct {
+		name  string
+		limit int
+		want  []string // expected order; nil = same as input
+	}{
+		{"top-3 by priority across repos", 3, []string{"r1-a", "r2-x", "r2-y"}},
+		{"top-1 picks lowest priority + lowest ID tiebreak", 1, []string{"r1-a"}},
+		{"limit zero empties the result", 0, []string{}},
+		{"limit -1 returns input unchanged (no sort)", -1, nil},
+		{"limit at len returns input unchanged (no sort)", 5, nil},
+		{"limit > len returns input unchanged (no sort)", 99, nil},
 	}
-	for i := range want {
-		if gotIDs[i] != want[i] {
-			t.Errorf("got %v, want %v (mismatch at %d)", gotIDs, want, i)
-		}
-	}
-}
-
-func TestInbox_LimitNegativeOneIsNoop(t *testing.T) {
-	// -limit -1 should not even enter the sort/truncate branch,
-	// so the unsorted concatenation order is preserved.
-	all := mixedRepoInbox()
-	original := make([]beads.Issue, len(all))
-	copy(original, all)
-
-	// Simulate the runInbox guard: *limit >= 0 gates the work.
-	limit := -1
-	if limit >= 0 {
-		t.Fatal("guard accepted -1; production path would mutate")
-	}
-
-	for i := range all {
-		if all[i].ID != original[i].ID {
-			t.Errorf("ordering changed at %d: got %q, want %q", i, all[i].ID, original[i].ID)
-		}
-	}
-}
-
-func TestInbox_LimitZeroEmptiesResult(t *testing.T) {
-	all := mixedRepoInbox()
-	if 0 < len(all) {
-		all = all[:0]
-	}
-	if len(all) != 0 {
-		t.Errorf("expected empty slice; got %v", idsOf(all))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := mixedRepoInbox()
+			got := limitByPriority(in, tc.limit)
+			gotIDs := idsOf(got)
+			var want []string
+			if tc.want == nil {
+				want = idsOf(mixedRepoInbox())
+			} else {
+				want = tc.want
+			}
+			if len(gotIDs) != len(want) {
+				t.Fatalf("len=%d, want %d (got %v, want %v)", len(gotIDs), len(want), gotIDs, want)
+			}
+			for i := range want {
+				if gotIDs[i] != want[i] {
+					t.Errorf("position %d: got %q, want %q (full got=%v, want=%v)", i, gotIDs[i], want[i], gotIDs, want)
+				}
+			}
+		})
 	}
 }
 

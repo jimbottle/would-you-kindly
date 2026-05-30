@@ -172,31 +172,41 @@ func TestCollectActivity_StatusFilter(t *testing.T) {
 	}
 }
 
-func TestActivity_LimitKeepsNewestN(t *testing.T) {
-	// Mirror the production truncation that runActivity applies
-	// after collectActivity's newest-first sort. Given 4 events
-	// in chronological order (newest first), -limit 2 should
-	// keep the two newest.
+func TestLimitActivityEvents(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
-	events := []activityEvent{
-		{ID: "newest", UpdatedAt: now},
-		{ID: "newer", UpdatedAt: now.Add(-1 * time.Hour)},
-		{ID: "older", UpdatedAt: now.Add(-2 * time.Hour)},
-		{ID: "oldest", UpdatedAt: now.Add(-3 * time.Hour)},
+	mk := func() []activityEvent {
+		// collectActivity emits newest-first; pass that ordering in.
+		return []activityEvent{
+			{ID: "newest", UpdatedAt: now},
+			{ID: "newer", UpdatedAt: now.Add(-1 * time.Hour)},
+			{ID: "older", UpdatedAt: now.Add(-2 * time.Hour)},
+			{ID: "oldest", UpdatedAt: now.Add(-3 * time.Hour)},
+		}
 	}
-	limit := 2
-	if limit < len(events) {
-		events = events[:limit]
+	cases := []struct {
+		name  string
+		limit int
+		want  []string
+	}{
+		{"keep newest two", 2, []string{"newest", "newer"}},
+		{"limit zero empties", 0, []string{}},
+		{"limit -1 returns input unchanged", -1, []string{"newest", "newer", "older", "oldest"}},
+		{"limit equal to len is unchanged", 4, []string{"newest", "newer", "older", "oldest"}},
+		{"limit greater than len is unchanged", 99, []string{"newest", "newer", "older", "oldest"}},
 	}
-	if len(events) != 2 || events[0].ID != "newest" || events[1].ID != "newer" {
-		t.Errorf("limit=2 should keep newest two; got %v", events)
-	}
-}
-
-func TestActivity_LimitNegativeOneIsNoop(t *testing.T) {
-	limit := -1
-	if limit >= 0 {
-		t.Fatal("guard accepted -1")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := mk()
+			got := limitActivityEvents(in, tc.limit)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len=%d, want %d", len(got), len(tc.want))
+			}
+			for i := range tc.want {
+				if got[i].ID != tc.want[i] {
+					t.Errorf("position %d: got %q, want %q", i, got[i].ID, tc.want[i])
+				}
+			}
+		})
 	}
 }
 
