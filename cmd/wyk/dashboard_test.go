@@ -73,6 +73,33 @@ func TestTallyIssues_ClassifiesAllBranches(t *testing.T) {
 	}
 }
 
+func TestTallyIssues_WithPriorityFilter(t *testing.T) {
+	// Confirm the wiring: filterByMaxPriority is what
+	// collectDashboard applies before calling tallyIssues, so the
+	// open/human/closed-in-window counts reflect the in-priority
+	// set. Test the composition end-to-end on a fixture so the
+	// behavior is locked even if collectDashboard rearranges
+	// internally.
+	now := time.Now()
+	cutoff := now.Add(-7 * 24 * time.Hour)
+	all := []beads.Issue{
+		{ID: "p0-open", Priority: 0, Status: "open"},
+		{ID: "p1-open-human", Priority: 1, Status: "open", Labels: []string{"human"}},
+		{ID: "p2-open", Priority: 2, Status: "open"},
+		{ID: "p3-open", Priority: 3, Status: "open"},
+		{ID: "p1-closed-recent", Priority: 1, Status: "closed", ClosedAt: now.Add(-1 * time.Hour)},
+		{ID: "p3-closed-recent", Priority: 3, Status: "closed", ClosedAt: now.Add(-1 * time.Hour)},
+	}
+
+	filtered := filterByMaxPriority(append([]beads.Issue(nil), all...), 1)
+	open, human, closed := tallyIssues(filtered, cutoff)
+	// P0 + P1 only: 2 open (p0-open + p1-open-human), 1 human,
+	// 1 closed-in-window (p1-closed-recent).
+	if open != 2 || human != 1 || closed != 1 {
+		t.Errorf("max=1 counts open=%d human=%d closed=%d; want 2/1/1", open, human, closed)
+	}
+}
+
 func TestEmitDashboardJSON_RoundTrips(t *testing.T) {
 	rows := []dashboardRow{{Name: "alpha", Open: 5, Human: 1, ClosedInWindow: 2}}
 	cutoff := time.Date(2026, 5, 22, 0, 0, 0, 0, time.UTC)

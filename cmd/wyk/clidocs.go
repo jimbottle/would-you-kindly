@@ -122,11 +122,12 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "dashboard",
 		Summary: "Per-repo rollup of open / human-flagged / recently-closed counts.",
-		Usage:   "wyk dashboard [-json] [-days N] [-repo name]",
+		Usage:   "wyk dashboard [-json] [-days N] [-repo name] [-priority N]",
 		Flags: []cliFlag{
 			{Name: "-json", Default: "false", Description: "emit a structured JSON object instead of the table"},
 			{Name: "-days", Default: "7", Description: "window for the closed-recently column (default 7)"},
 			{Name: "-repo", Default: "", Description: "restrict the rollup to the registered repo with this name (empty = every registered repo)"},
+			{Name: "-priority", Default: "-1", Description: "cap rows at priority N or higher (lower number = higher priority; -1 disables)"},
 		},
 	},
 	{

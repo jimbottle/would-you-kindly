@@ -129,7 +129,7 @@ wyk update [-y] [-dry-run] [-channel any|stable]
 Per-repo rollup of open / human-flagged / recently-closed counts.
 
 ```
-wyk dashboard [-json] [-days N] [-repo name]
+wyk dashboard [-json] [-days N] [-repo name] [-priority N]
 ```
 
 | Flag | Default | Description |
@@ -137,6 +137,7 @@ wyk dashboard [-json] [-days N] [-repo name]
 | `-json` | `false` | emit a structured JSON object instead of the table |
 | `-days` | `7` | window for the closed-recently column (default 7) |
 | `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (empty = every registered repo) |
+| `-priority` | `-1` | cap rows at priority N or higher (lower number = higher priority; -1 disables) |
 
 ## `wyk export`
 

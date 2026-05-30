@@ -32,12 +32,13 @@ func runDashboard(args []string) int {
 	asJSON := fs.Bool("json", false, "emit a structured JSON object instead of the table")
 	days := fs.Int("days", 7, "window for the closed-recently column (default 7)")
 	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (empty = every registered repo)")
+	maxPriority := fs.Int("priority", -1, "cap rows at priority N or higher (lower number = higher priority; -1 disables)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk dashboard [-json] [-days N] [-repo name]")
+		fmt.Fprintln(os.Stderr, "usage: wyk dashboard [-json] [-days N] [-repo name] [-priority N]")
 		return 64
 	}
 	if *days <= 0 {
@@ -70,7 +71,7 @@ func runDashboard(args []string) int {
 	}
 
 	cutoff := time.Now().Add(-time.Duration(*days) * 24 * time.Hour)
-	rows, hadError := collectDashboard(reg, cutoff)
+	rows, hadError := collectDashboard(reg, cutoff, *maxPriority)
 
 	if *asJSON {
 		emitDashboardJSON(os.Stdout, rows, *days, cutoff)
@@ -102,7 +103,11 @@ type dashboardRow struct {
 // the CPU. Per-repo errors are recorded on the row but don't
 // abort the walk; we'd rather emit a partial dashboard than
 // nothing.
-func collectDashboard(reg *registry.Registry, cutoff time.Time) ([]dashboardRow, bool) {
+// maxPriority of -1 disables the cap; any non-negative value
+// drops issues whose Priority > N before the tally so the
+// open/human/closed-in-window counts reflect only the
+// in-priority set.
+func collectDashboard(reg *registry.Registry, cutoff time.Time, maxPriority int) ([]dashboardRow, bool) {
 	rows := make([]dashboardRow, 0, len(reg.Repos))
 	hadError := false
 	for _, r := range reg.Repos {
@@ -117,6 +122,9 @@ func collectDashboard(reg *registry.Registry, cutoff time.Time) ([]dashboardRow,
 			hadError = true
 			rows = append(rows, row)
 			continue
+		}
+		if maxPriority >= 0 {
+			issues = filterByMaxPriority(issues, maxPriority)
 		}
 		row.Open, row.Human, row.ClosedInWindow = tallyIssues(issues, cutoff)
 		rows = append(rows, row)
