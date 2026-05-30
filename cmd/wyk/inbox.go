@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -85,8 +86,23 @@ func runInbox(args []string) int {
 	if *maxPriority >= 0 {
 		all = filterByMaxPriority(all, *maxPriority)
 	}
-	if *limit >= 0 && *limit < len(all) {
-		all = all[:*limit]
+	if *limit >= 0 {
+		// fetchInbox concatenates per-repo results in registry
+		// order with no global sort — so an unsorted top-N
+		// truncation would return "a prefix of repo 1, then
+		// repo 2, …" rather than the highest-priority N across
+		// every in-scope repo. Sort ascending by Priority (P0 is
+		// most urgent in bd's convention), tiebreaking on ID for
+		// determinism, then take the head.
+		sort.SliceStable(all, func(i, j int) bool {
+			if all[i].Priority != all[j].Priority {
+				return all[i].Priority < all[j].Priority
+			}
+			return all[i].ID < all[j].ID
+		})
+		if *limit < len(all) {
+			all = all[:*limit]
+		}
 	}
 
 	if *asJSON {

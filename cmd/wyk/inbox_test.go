@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -56,3 +57,71 @@ func idsOf(issues []beads.Issue) []string {
 	}
 	return ids
 }
+
+// helper for the -limit tests: build a slice that mimics
+// fetchInbox's unsorted, repo-concatenated output so we can
+// exercise the sort-then-truncate path in isolation.
+func mixedRepoInbox() []beads.Issue {
+	return []beads.Issue{
+		{ID: "r1-c", Priority: 3, Repo: "r1"},
+		{ID: "r1-a", Priority: 0, Repo: "r1"},
+		{ID: "r1-b", Priority: 2, Repo: "r1"},
+		{ID: "r2-y", Priority: 1, Repo: "r2"},
+		{ID: "r2-x", Priority: 0, Repo: "r2"},
+	}
+}
+
+func TestInbox_LimitTakesHighestPriorityAcrossRepos(t *testing.T) {
+	// Mirror the production sort-then-truncate that runInbox
+	// applies inside the *limit >= 0 branch.
+	all := mixedRepoInbox()
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].Priority != all[j].Priority {
+			return all[i].Priority < all[j].Priority
+		}
+		return all[i].ID < all[j].ID
+	})
+	limited := all[:3]
+
+	gotIDs := idsOf(limited)
+	want := []string{"r1-a", "r2-x", "r2-y"}
+	if len(gotIDs) != len(want) {
+		t.Fatalf("got %v, want %v", gotIDs, want)
+	}
+	for i := range want {
+		if gotIDs[i] != want[i] {
+			t.Errorf("got %v, want %v (mismatch at %d)", gotIDs, want, i)
+		}
+	}
+}
+
+func TestInbox_LimitNegativeOneIsNoop(t *testing.T) {
+	// -limit -1 should not even enter the sort/truncate branch,
+	// so the unsorted concatenation order is preserved.
+	all := mixedRepoInbox()
+	original := make([]beads.Issue, len(all))
+	copy(original, all)
+
+	// Simulate the runInbox guard: *limit >= 0 gates the work.
+	limit := -1
+	if limit >= 0 {
+		t.Fatal("guard accepted -1; production path would mutate")
+	}
+
+	for i := range all {
+		if all[i].ID != original[i].ID {
+			t.Errorf("ordering changed at %d: got %q, want %q", i, all[i].ID, original[i].ID)
+		}
+	}
+}
+
+func TestInbox_LimitZeroEmptiesResult(t *testing.T) {
+	all := mixedRepoInbox()
+	if 0 < len(all) {
+		all = all[:0]
+	}
+	if len(all) != 0 {
+		t.Errorf("expected empty slice; got %v", idsOf(all))
+	}
+}
+

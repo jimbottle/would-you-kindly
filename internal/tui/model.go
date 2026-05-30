@@ -3678,14 +3678,24 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 			}
 			idxs = filtered
 		}
-		title = highlightRunes(title, idxs, fuzzyMatchStyle)
+		// For closed rows, pass closedRowStyle as the "rest" style
+		// so every non-highlighted run in the title carries the
+		// dim. Without this, the first fuzzy highlight's trailing
+		// \x1b[0m would clear an outer wrap and leave the title
+		// tail at terminal default. Open rows pass nil so no
+		// extra Render allocations happen on the common path.
+		var rest *lipgloss.Style
+		if i.Status == "closed" {
+			r := closedRowStyle
+			rest = &r
+		}
+		title = highlightRunesWithRest(title, idxs, fuzzyMatchStyle, rest)
+		b.WriteString(title)
+	} else {
+		// No fuzzy matches: dim the whole title for closed rows
+		// (no-op for open).
+		b.WriteString(dim(title))
 	}
-	// Wrap the title in the same dim style for closed rows.
-	// Fuzzy-match highlights keep their amber color — they're
-	// already wrapped in fuzzyMatchStyle.Render which carries
-	// its own foreground; the dim only applies to the runes
-	// between the highlights.
-	b.WriteString(dim(title))
 	return b.String()
 }
 
@@ -3718,7 +3728,24 @@ func byteToRuneIdxs(s string, byteIdxs []int) []int {
 // indices wrapped in style.Render. Indices past the end of s
 // (e.g. matches in a truncated title) are silently dropped.
 func highlightRunes(s string, idxs []int, style lipgloss.Style) string {
+	return highlightRunesWithRest(s, idxs, style, nil)
+}
+
+// highlightRunesWithRest is highlightRunes plus an optional
+// "rest" style applied to runs of non-highlighted runes. Used by
+// renderRow for closed rows with active fuzzy matches: every
+// embedded fuzzy SGR emits a \x1b[0m reset on its trailing edge,
+// which would clear an outer dim envelope and leave the title
+// segments AFTER the first highlight at terminal default. Re-
+// applying the rest style per non-highlighted run keeps the dim
+// across the whole title. Nil restStyle skips the wrap (open
+// rows, where the no-op style would still trigger a Render
+// allocation per run).
+func highlightRunesWithRest(s string, idxs []int, style lipgloss.Style, restStyle *lipgloss.Style) string {
 	if len(idxs) == 0 {
+		if restStyle != nil {
+			return restStyle.Render(s)
+		}
 		return s
 	}
 	set := make(map[int]bool, len(idxs))
@@ -3727,14 +3754,30 @@ func highlightRunes(s string, idxs []int, style lipgloss.Style) string {
 	}
 	var b strings.Builder
 	pos := 0
+	// Buffer consecutive non-highlighted runes so a single
+	// restStyle.Render wraps each run, not each rune.
+	var plain strings.Builder
+	flushPlain := func() {
+		if plain.Len() == 0 {
+			return
+		}
+		if restStyle != nil {
+			b.WriteString(restStyle.Render(plain.String()))
+		} else {
+			b.WriteString(plain.String())
+		}
+		plain.Reset()
+	}
 	for _, r := range s {
 		if set[pos] {
+			flushPlain()
 			b.WriteString(style.Render(string(r)))
 		} else {
-			b.WriteRune(r)
+			plain.WriteRune(r)
 		}
 		pos++
 	}
+	flushPlain()
 	return b.String()
 }
 

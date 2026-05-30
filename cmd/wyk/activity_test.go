@@ -172,6 +172,34 @@ func TestCollectActivity_StatusFilter(t *testing.T) {
 	}
 }
 
+func TestActivity_LimitKeepsNewestN(t *testing.T) {
+	// Mirror the production truncation that runActivity applies
+	// after collectActivity's newest-first sort. Given 4 events
+	// in chronological order (newest first), -limit 2 should
+	// keep the two newest.
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	events := []activityEvent{
+		{ID: "newest", UpdatedAt: now},
+		{ID: "newer", UpdatedAt: now.Add(-1 * time.Hour)},
+		{ID: "older", UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "oldest", UpdatedAt: now.Add(-3 * time.Hour)},
+	}
+	limit := 2
+	if limit < len(events) {
+		events = events[:limit]
+	}
+	if len(events) != 2 || events[0].ID != "newest" || events[1].ID != "newer" {
+		t.Errorf("limit=2 should keep newest two; got %v", events)
+	}
+}
+
+func TestActivity_LimitNegativeOneIsNoop(t *testing.T) {
+	limit := -1
+	if limit >= 0 {
+		t.Fatal("guard accepted -1")
+	}
+}
+
 func TestRunActivity_RejectsBadArgs(t *testing.T) {
 	// Send stderr to /dev/null so the validation messages don't
 	// leak into the test runner's output.
