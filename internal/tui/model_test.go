@@ -1087,7 +1087,7 @@ func TestDetailBody_WrapsLongDescription(t *testing.T) {
 	// off the right edge and the body is unreadable.
 	long := strings.Repeat("word ", 30) // ~150 chars, well past 40-col wrap
 	i := beads.Issue{Description: long}
-	out := detailBody(i, 40)
+	out := detailBody(i, 40, nil, nil, false, false)
 	// Each rendered line must be ≤ 40 cells. lipgloss may emit
 	// ANSI; strip the test of ANSI by checking each line as-is
 	// since this body has no foreground styles applied to its
@@ -1152,9 +1152,94 @@ func TestDetailBody_WidthZeroSkipsWrap(t *testing.T) {
 	// shows something legible. The next paint with a real width
 	// re-wraps correctly.
 	i := beads.Issue{Description: "a very long line that should not be touched here"}
-	out := detailBody(i, 0)
+	out := detailBody(i, 0, nil, nil, false, false)
 	if !strings.Contains(out, "a very long line that should not be touched here") {
 		t.Errorf("width=0 should pass body through verbatim; got %q", out)
+	}
+}
+
+func TestDetailBody_RendersDependencySections(t *testing.T) {
+	// Both directions populated: each section renders its header plus
+	// one `ID — title (status)` row per edge.
+	i := beads.Issue{ID: "a-1", Description: "root"}
+	deps := []beads.Issue{{ID: "a-2", Title: "needs this", Status: "open"}}
+	dependents := []beads.Issue{{ID: "a-3", Title: "blocks that", Status: "in_progress"}}
+	out := detailBody(i, 80, deps, dependents, false, false)
+	for _, want := range []string{
+		"dependencies", "a-2 — needs this (open)",
+		"dependents", "a-3 — blocks that (in_progress)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("detail body missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestDetailBody_EmptySectionsCollapse(t *testing.T) {
+	// Zero rows and no error → the section (and its header) is omitted
+	// entirely so the body doesn't sprout empty "dependencies" labels.
+	i := beads.Issue{ID: "a-1", Description: "lonely"}
+	out := detailBody(i, 80, nil, nil, false, false)
+	if strings.Contains(out, "dependencies") || strings.Contains(out, "dependents") {
+		t.Errorf("empty dep sections should collapse; got:\n%s", out)
+	}
+}
+
+func TestDetailBody_FailedLookupShowsUnavailable(t *testing.T) {
+	// A failed fetch renders the header plus a single unavailable
+	// line so the body still flows (and the user knows it's an error,
+	// not a genuinely empty set).
+	i := beads.Issue{ID: "a-1", Description: "boom"}
+	out := detailBody(i, 80, nil, nil, true, true)
+	for _, want := range []string{
+		"dependencies", "(deps unavailable)",
+		"dependents", "(dependents unavailable)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("detail body missing %q on failed lookup; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestResolveDetailDeps_NilWhenAlreadyCached(t *testing.T) {
+	// Re-opening an issue whose both directions are already cached
+	// must not re-shell `bd dep list` — resolveDetailDeps returns nil.
+	src := &stubDepSource{
+		stubSource: stubSource{issues: []beads.Issue{{ID: "a-1"}}},
+		edges:      map[string][]string{"a-1": {"a-2"}},
+	}
+	m := New(src)
+	m.depCache["a-1"] = nil
+	m.dependentCache["a-1"] = nil
+	if cmd := m.resolveDetailDeps("a-1"); cmd != nil {
+		t.Error("both directions cached → resolveDetailDeps should return nil")
+	}
+}
+
+func TestResolveDetailDeps_FetchesAndCaches(t *testing.T) {
+	// Opening a fresh issue resolves both directions via the
+	// DepLister and merges them into the per-ID caches.
+	src := &stubDepSource{
+		stubSource: stubSource{issues: []beads.Issue{{ID: "a-1"}, {ID: "a-2"}}},
+		edges:      map[string][]string{"a-1": {"a-2"}},
+	}
+	m := New(src)
+	cmd := m.resolveDetailDeps("a-1")
+	if cmd == nil {
+		t.Fatal("uncached issue should produce a resolve Cmd")
+	}
+	msg := cmd()
+	model, _ := m.Update(msg)
+	m = model.(Model)
+	// Forward: a-1 depends on a-2.
+	if got := m.depCache["a-1"]; len(got) != 1 || got[0].ID != "a-2" {
+		t.Errorf("depCache[a-1] = %+v, want [a-2]", got)
+	}
+	// Reverse: a-2 is a dependent of a-1, so a-1's dependents... the
+	// stub inverts edges, so a-1's dependents are nodes that depend on
+	// a-1 (none here → empty, but cached so it won't re-fetch).
+	if _, ok := m.dependentCache["a-1"]; !ok {
+		t.Error("dependentCache[a-1] should be populated after resolve")
 	}
 }
 
@@ -5181,6 +5266,25 @@ func (s *stubDepSource) ListDeps(_ context.Context, id string) ([]beads.Issue, e
 	var out []beads.Issue
 	for _, dep := range s.edges[id] {
 		out = append(out, beads.Issue{ID: dep})
+	}
+	return out, nil
+}
+
+// ListDependents is the reverse-edge twin of ListDeps so stubDepSource
+// satisfies the (now two-method) DepLister interface; without it the
+// deps sort silently falls back to the count proxy. It inverts the
+// edges map: every node that lists id among its deps is a dependent.
+func (s *stubDepSource) ListDependents(_ context.Context, id string) ([]beads.Issue, error) {
+	if s.failIDs[id] {
+		return nil, errors.New("boom")
+	}
+	var out []beads.Issue
+	for from, deps := range s.edges {
+		for _, dep := range deps {
+			if dep == id {
+				out = append(out, beads.Issue{ID: from})
+			}
+		}
 	}
 	return out, nil
 }

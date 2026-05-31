@@ -183,6 +183,13 @@ func (f *fakeRepoSource) ListDeps(_ context.Context, _ string) ([]beads.Issue, e
 	return nil, nil
 }
 
+// ListDependents is the reverse-direction twin of ListDeps; same
+// best-effort empty set so fakeRepoSource keeps satisfying DepLister
+// / fullSource.
+func (f *fakeRepoSource) ListDependents(_ context.Context, _ string) ([]beads.Issue, error) {
+	return nil, nil
+}
+
 // newMultiForTest builds a MultiBDSource directly from fake subs so
 // tests don't have to wire up real bd.Clients. The branchFn is a
 // constant so assertions can pin the branch column too.

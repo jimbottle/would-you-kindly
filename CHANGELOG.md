@@ -6,7 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **Dependency context in the detail view** — opening an issue now
+  renders collapsing `Dependencies` and `Dependents` sections at the
+  bottom of the body (`ID — title (status)`, dimmed). Edges are
+  fetched lazily on detail entry (no per-row fan-out) and cached for
+  the session, so re-opening the same issue is instant. A failed
+  lookup degrades to a single `(… unavailable)` line so the body
+  still flows. Pairs with the topological deps-sort: sort by deps,
+  drill in, and see why a row landed where it did.
 
 ## [0.4.1] — 2026-05-31
 

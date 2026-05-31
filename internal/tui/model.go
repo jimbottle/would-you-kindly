@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -160,20 +161,23 @@ type Detailer interface {
 	Detail(ctx context.Context, issue beads.Issue) (beads.Issue, error)
 }
 
-// DepLister exposes one issue's direct dependencies so the model's
-// topological deps-sort can build the edge set for the visible
-// rows. Optional — when the Source doesn't satisfy it the deps
-// sort degrades to the bd-supplied DependencyCount level proxy
-// (see applySort's sortDeps branch). Both BDSource and
-// MultiBDSource implement it; the model type-asserts m.src at
-// runtime, mirroring the Mutator / Detailer pattern.
+// DepLister exposes one issue's direct dependencies (ListDeps) and
+// dependents (ListDependents) so the model's topological deps-sort
+// can build the edge set for the visible rows and the detail view
+// can show both directions. Optional — when the Source doesn't
+// satisfy it the deps sort degrades to the bd-supplied
+// DependencyCount level proxy (see applySort's sortDeps branch) and
+// the detail view simply omits the dependency sections. Both
+// BDSource and MultiBDSource implement it; the model type-asserts
+// m.src at runtime, mirroring the Mutator / Detailer pattern.
 //
-// It takes a bare ID rather than a full Issue (unlike the write
-// methods): the deps sort keys everything off Issue.ID, and a
+// Both methods take a bare ID rather than a full Issue (unlike the
+// write methods): the deps sort keys everything off Issue.ID, and a
 // MultiBDSource routes by ID prefix anyway, so threading the Repo
 // through would add nothing the ID doesn't already encode.
 type DepLister interface {
 	ListDeps(ctx context.Context, id string) ([]beads.Issue, error)
+	ListDependents(ctx context.Context, id string) ([]beads.Issue, error)
 }
 
 // Model is the Bubble Tea model.
@@ -343,6 +347,16 @@ type Model struct {
 	// are satisfied" rule the off-screen-dependency case relies on.
 	depErr map[string]bool
 
+	// dependentCache / dependentErr are the reverse-direction twins
+	// of depCache / depErr: dependentCache memoises the issues each
+	// ID blocks (its direct dependents), dependentErr records IDs
+	// whose ListDependents call failed. Both are populated lazily on
+	// detail entry (the deps-sort path doesn't need the reverse edge)
+	// and keyed per issue ID, cached for the session so re-opening
+	// the same detail view doesn't re-shell `bd dep list`.
+	dependentCache map[string][]beads.Issue
+	dependentErr   map[string]bool
+
 	// showClosed mirrors the BDSource/MultiBDSource IncludeClosed
 	// flag so the chip strip + status bar can render it without
 	// reaching back through the Source. Toggled by C.
@@ -479,20 +493,22 @@ func New(src Source) Model {
 	h.Styles.ShortSeparator = helpStyle
 
 	m := Model{
-		src:         src,
-		keys:        defaultKeyMap(),
-		mode:        modeList,
-		preset:      filter.PresetAll,
-		input:       ti,
-		noteArea:    na,
-		loading:     true, // first paint shows "loading…" until Init's fetch returns
-		detailVP:    viewport.New(80, 20),
-		outputVP:    viewport.New(80, 20),
-		spinner:     sp,
-		help:        h,
-		priorityCap: -1,
-		depCache:    map[string][]beads.Issue{},
-		depErr:      map[string]bool{},
+		src:            src,
+		keys:           defaultKeyMap(),
+		mode:           modeList,
+		preset:         filter.PresetAll,
+		input:          ti,
+		noteArea:       na,
+		loading:        true, // first paint shows "loading…" until Init's fetch returns
+		detailVP:       viewport.New(80, 20),
+		outputVP:       viewport.New(80, 20),
+		spinner:        sp,
+		help:           h,
+		priorityCap:    -1,
+		depCache:       map[string][]beads.Issue{},
+		depErr:         map[string]bool{},
+		dependentCache: map[string][]beads.Issue{},
+		dependentErr:   map[string]bool{},
 	}
 	// Adopt the dep-resolution seam when the Source supports it so
 	// the deps sort can fetch real edges. Read-only / stub Sources
@@ -964,7 +980,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Preserve scroll offset: a user who'd already paged
 			// to line 40 shouldn't be yanked back to the top.
 			prev := m.detailVP.YOffset
-			m.detailVP.SetContent(detailBody(m.detailIssue, m.detailVP.Width))
+			id := m.detailIssue.ID
+			m.detailVP.SetContent(detailBody(
+				m.detailIssue, m.detailVP.Width,
+				m.depCache[id], m.dependentCache[id],
+				m.depErr[id], m.dependentErr[id],
+			))
 			m.detailVP.SetYOffset(prev)
 		}
 		return m, nil
@@ -996,9 +1017,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.depCache[id] = nil
 			}
 		}
+		// Reverse-direction merge (detail-entry path only; the
+		// deps-sort sender leaves these nil, so the loops no-op).
+		if m.dependentCache == nil {
+			m.dependentCache = map[string][]beads.Issue{}
+		}
+		if m.dependentErr == nil {
+			m.dependentErr = map[string]bool{}
+		}
+		for id, d := range msg.dependents {
+			m.dependentCache[id] = d
+		}
+		for _, id := range msg.dependentsFailed {
+			m.dependentErr[id] = true
+		}
 		if m.sortBy == sortDeps {
 			m.recomputeVisible()
 			m.ensureCursorVisible()
+		}
+		// If the resolved data is for the issue currently on the
+		// detail view, re-seed the body so the dependency sections
+		// fill in (preserving scroll). The deps-sort path also lands
+		// here but won't be in modeDetail, so this is a no-op there.
+		if m.mode == modeDetail && m.detailIssue.ID != "" {
+			id := m.detailIssue.ID
+			_, gotDeps := msg.deps[id]
+			_, gotDependents := msg.dependents[id]
+			failedDeps := slices.Contains(msg.failed, id)
+			failedDependents := slices.Contains(msg.dependentsFailed, id)
+			if gotDeps || gotDependents || failedDeps || failedDependents {
+				prev := m.detailVP.YOffset
+				m.detailVP.SetContent(detailBody(
+					m.detailIssue, m.detailVP.Width,
+					m.depCache[id], m.dependentCache[id],
+					m.depErr[id], m.dependentErr[id],
+				))
+				m.detailVP.SetYOffset(prev)
+			}
 		}
 		return m, nil
 
@@ -1130,7 +1185,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// may be empty until the Detail Cmd resolves); reset
 			// scroll to the top so a previous detail view's scroll
 			// position doesn't bleed in.
-			m.detailVP.SetContent(detailBody(m.detailIssue, m.detailVP.Width))
+			m.detailVP.SetContent(detailBody(
+				m.detailIssue, m.detailVP.Width,
+				m.depCache[m.detailIssue.ID], m.dependentCache[m.detailIssue.ID],
+				m.depErr[m.detailIssue.ID], m.dependentErr[m.detailIssue.ID],
+			))
 			m.detailVP.GotoTop()
 			// Drop mouse capture while in detail mode so the host
 			// terminal (VS Code, Terminal.app, iTerm) handles
@@ -1139,14 +1198,20 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// the body text is unselectable. Re-enabled on return
 			// to list — see updateDetail's Back/Open case.
 			disableMouse := tea.DisableMouse
+			// Lazily resolve this issue's dependency + dependent edges
+			// for the detail view's bottom sections. nil when no
+			// DepLister is wired or both directions are already cached
+			// (re-opening the same issue is instant). Runs off the
+			// event loop so the bd shell-outs don't block input.
+			depsCmd := m.resolveDetailDeps(m.detailIssue.ID)
 			if d, ok := m.src.(Detailer); ok {
 				target := m.detailIssue
-				return m, tea.Batch(disableMouse, func() tea.Msg {
+				return m, tea.Batch(disableMouse, depsCmd, func() tea.Msg {
 					full, err := d.Detail(context.Background(), target)
 					return detailMsg{issue: full, err: err}
 				})
 			}
-			return m, disableMouse
+			return m, tea.Batch(disableMouse, depsCmd)
 		}
 	case keyHit(msg, m.keys.Filter):
 		m.mode = modeFilter
@@ -2430,14 +2495,21 @@ func (m Model) reverseSort() (tea.Model, tea.Cmd) {
 }
 
 // depsResolvedMsg carries a batch of freshly-resolved dependency
-// edge sets back to the model so the deps sort can switch from the
-// count proxy to the real topological order. deps maps issue ID →
-// its direct dependencies; failed lists IDs whose ListDeps call
-// errored (recorded so the resolver doesn't re-spin them). Both are
-// merged into m.depCache / m.depErr in Update.
+// edge sets back to the model. The deps-sort path populates only
+// deps/failed (forward edges) so it can switch from the count proxy
+// to the real topological order; the detail-entry path additionally
+// populates dependents/dependentsFailed (the reverse edge) so the
+// detail view can render both sections. deps/dependents map issue ID
+// → its direct dependencies / dependents; failed/dependentsFailed
+// list IDs whose ListDeps / ListDependents call errored (recorded so
+// the resolver doesn't re-spin them). All four are merged into the
+// matching caches in Update; an empty/nil field is simply a no-op
+// merge, so the deps-sort sender can keep emitting just deps/failed.
 type depsResolvedMsg struct {
-	deps   map[string][]beads.Issue
-	failed []string
+	deps             map[string][]beads.Issue
+	failed           []string
+	dependents       map[string][]beads.Issue
+	dependentsFailed []string
 }
 
 // maybeResolveDeps returns a Cmd that resolves the direct
@@ -2504,6 +2576,49 @@ func (m Model) maybeResolveDeps() tea.Cmd {
 		}
 		wg.Wait()
 		return depsResolvedMsg{deps: deps, failed: failed}
+	}
+}
+
+// resolveDetailDeps returns a Cmd that lazily resolves a single
+// issue's forward dependencies AND dependents for the detail view's
+// dependency sections, merged back via depsResolvedMsg. Returns nil
+// — no Cmd — when no DepLister is wired or both directions are
+// already cached / known-failed for this ID (forward deps in
+// particular may already be warm from the deps-sort path, in which
+// case only the reverse edge is fetched). Both lookups run off the
+// Bubble Tea event loop in the Cmd goroutine so the `bd dep list`
+// shell-outs never block input. Unlike maybeResolveDeps this is a
+// single issue's two lookups, not a fan-out over visible rows, so it
+// needs no semaphore.
+func (m Model) resolveDetailDeps(id string) tea.Cmd {
+	if m.depLister == nil || id == "" {
+		return nil
+	}
+	_, depsCached := m.depCache[id]
+	needDeps := !depsCached && !m.depErr[id]
+	_, dependentsCached := m.dependentCache[id]
+	needDependents := !dependentsCached && !m.dependentErr[id]
+	if !needDeps && !needDependents {
+		return nil
+	}
+	dl := m.depLister
+	return func() tea.Msg {
+		var msg depsResolvedMsg
+		if needDeps {
+			if d, err := dl.ListDeps(context.Background(), id); err != nil {
+				msg.failed = []string{id}
+			} else {
+				msg.deps = map[string][]beads.Issue{id: d}
+			}
+		}
+		if needDependents {
+			if d, err := dl.ListDependents(context.Background(), id); err != nil {
+				msg.dependentsFailed = []string{id}
+			} else {
+				msg.dependents = map[string][]beads.Issue{id: d}
+			}
+		}
+		return msg
 	}
 }
 
@@ -4493,7 +4608,16 @@ const detailChromeHeight = 9
 // first paint still renders something legible — the next paint
 // with a real width re-wraps correctly. Section headings stay
 // unwrapped — they're short and one-liner by design.
-func detailBody(i beads.Issue, width int) string {
+// deps/dependents carry the issue's forward dependencies (what
+// blocks it) and dependents (what it blocks), pulled from the
+// model's per-issue caches by the caller; depsErr/dependentsErr flag
+// a failed lookup. Each renders as a collapsing section at the
+// bottom: a dimmed `ID — title (status)` list under a header, with
+// the header (and section) omitted entirely when there's nothing to
+// show — zero rows and no error. On error a single dimmed
+// `(… unavailable)` line stands in for the list so the body still
+// flows.
+func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsErr, dependentsErr bool) string {
 	wrap := func(s string) string {
 		if width <= 0 {
 			return s
@@ -4514,7 +4638,38 @@ func detailBody(i beads.Issue, width int) string {
 		b.WriteString("\n")
 		b.WriteString(wrap(i.Notes))
 	}
+	writeDepSection(&b, width, "dependencies", deps, depsErr, "(deps unavailable)")
+	writeDepSection(&b, width, "dependents", dependents, dependentsErr, "(dependents unavailable)")
 	return b.String()
+}
+
+// writeDepSection appends one collapsing dependency section to b. It
+// renders nothing when rows is empty and isErr is false (collapse).
+// Otherwise it writes the header followed by either the unavailable
+// line (isErr) or one dimmed `ID — title (status)` row per edge,
+// truncated rune-aware to the body width so a long title can't
+// overflow the viewport.
+func writeDepSection(b *strings.Builder, width int, header string, rows []beads.Issue, isErr bool, unavailable string) {
+	if len(rows) == 0 && !isErr {
+		return
+	}
+	b.WriteString("\n\n")
+	b.WriteString(detailLabelStyle.Render(header))
+	b.WriteString("\n")
+	if isErr {
+		b.WriteString(emptyStyle.Render(unavailable))
+		return
+	}
+	for idx, r := range rows {
+		if idx > 0 {
+			b.WriteString("\n")
+		}
+		line := fmt.Sprintf("%s — %s (%s)", r.ID, r.Title, r.Status)
+		if width > 0 {
+			line = trunc(line, width)
+		}
+		b.WriteString(emptyStyle.Render(line))
+	}
 }
 
 func (m Model) viewDetail() string {
@@ -4563,7 +4718,11 @@ func (m Model) viewDetail() string {
 	// m.detailIssue (tests, future code paths) stays reflected.
 	// viewport.SetContent preserves YOffset, so the user's scroll
 	// position survives the refresh.
-	m.detailVP.SetContent(detailBody(i, m.detailVP.Width))
+	m.detailVP.SetContent(detailBody(
+		i, m.detailVP.Width,
+		m.depCache[i.ID], m.dependentCache[i.ID],
+		m.depErr[i.ID], m.dependentErr[i.ID],
+	))
 	b.WriteString(m.detailVP.View())
 
 	// Footer: scroll percent (only when there's actually

@@ -120,6 +120,21 @@ func (c *Client) ListDeps(ctx context.Context, id string) ([]Issue, error) {
 	return parseIssues(out)
 }
 
+// ListDependents runs `bd dep list <id> --direction=up --json` and
+// returns the issues that the given id BLOCKS (i.e. its direct
+// dependents — the reverse edge of ListDeps). The JSON shape is the
+// same flat []Issue, so it parses through parseIssues unchanged. Like
+// ListDeps it's per-issue rather than batched and carries the full
+// field set, so the detail view can render `ID — title (status)`
+// without a second lookup.
+func (c *Client) ListDependents(ctx context.Context, id string) ([]Issue, error) {
+	out, err := c.run(ctx, nil, "dep", "list", id, "--direction=up", "--json")
+	if err != nil {
+		return nil, err
+	}
+	return parseIssues(out)
+}
+
 // Show runs `bd show <id> --json` and returns the single Issue,
 // which carries the full field set (description AND notes — the
 // list/query endpoints drop one or the other for efficiency).

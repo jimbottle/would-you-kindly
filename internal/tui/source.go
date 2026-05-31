@@ -306,6 +306,15 @@ func (s *BDSource) ListDeps(ctx context.Context, id string) ([]beads.Issue, erro
 	return s.Client.ListDeps(ctx, id)
 }
 
+// ListDependents returns the direct dependents of issue id (the
+// issues it blocks), shelling through to the underlying bd Client.
+// Satisfies DepLister's reverse-direction half so the detail view's
+// "dependents" section can render. Thin pass-through, same contract
+// as ListDeps — see Client.ListDependents.
+func (s *BDSource) ListDependents(ctx context.Context, id string) ([]beads.Issue, error) {
+	return s.Client.ListDependents(ctx, id)
+}
+
 // Detail runs `bd show <id>` and decorates the resulting issue with
 // Repo/Branch so callers can treat it like any other Source-derived
 // Issue.
@@ -730,6 +739,19 @@ func (m *MultiBDSource) ListDeps(ctx context.Context, id string) ([]beads.Issue,
 		return nil, fmt.Errorf("no registered workspace claims issue %q", id)
 	}
 	return sub.ListDeps(ctx, id)
+}
+
+// ListDependents routes a `bd dep list --direction=up` to the
+// workspace that owns id, returning the issues it blocks. Mirrors
+// ListDeps's longest-prefix-ID routing exactly — an ID no registered
+// sub claims returns an error rather than silently mis-routing, so a
+// caller can degrade.
+func (m *MultiBDSource) ListDependents(ctx context.Context, id string) ([]beads.Issue, error) {
+	sub := m.subForID(id)
+	if sub == nil {
+		return nil, fmt.Errorf("no registered workspace claims issue %q", id)
+	}
+	return sub.ListDependents(ctx, id)
 }
 
 // subForID returns the sub whose name is the longest registered
