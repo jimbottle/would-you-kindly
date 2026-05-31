@@ -1452,7 +1452,7 @@ func TestColumnOrder_OwnerIsSecondFromLeft_LegacyHumanRenameCheck(t *testing.T) 
 	// Header pin: in multi-repo mode the responsibility column
 	// header is now "owner" (renamed from "human" so the column
 	// can carry AGENT badges too). "owner" must appear before
-	// "wyk" so the responsibility signal stays second-from-left.
+	// "repo" so the responsibility signal stays second-from-left.
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "alpha-1", Repo: "alpha", Title: "row in alpha"},
 		{ID: "beta-9", Repo: "beta", Title: "row in beta"},
@@ -1463,12 +1463,12 @@ func TestColumnOrder_OwnerIsSecondFromLeft_LegacyHumanRenameCheck(t *testing.T) 
 	m = applyFetched(m, src)
 	out := m.View()
 	oi := strings.Index(out, "owner")
-	wi := strings.Index(out, "wyk")
-	if oi < 0 || wi < 0 {
-		t.Fatalf("expected both 'owner' and 'wyk' headers in view; got:\n%s", out)
+	ri := strings.Index(out, "Repo")
+	if oi < 0 || ri < 0 {
+		t.Fatalf("expected both 'owner' and 'Repo' headers in view; got:\n%s", out)
 	}
-	if oi > wi {
-		t.Errorf("'owner' header should appear before 'wyk' header in the column row; got owner at %d, wyk at %d", oi, wi)
+	if oi > ri {
+		t.Errorf("'owner' header should appear before 'Repo' header in the column row; got owner at %d, Repo at %d", oi, ri)
 	}
 }
 
@@ -1584,7 +1584,7 @@ func TestResponsibilityBadge_BlankForOwnerlessRows(t *testing.T) {
 func TestColumnOrder_OwnerHeaderIsSecondFromLeft(t *testing.T) {
 	// The column header renamed from 'human' to 'owner' to reflect
 	// the broader responsibility framing. Header must still appear
-	// before 'wyk' (second-from-left position invariant).
+	// before 'Repo' (second-from-left position invariant).
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "alpha-1", Repo: "alpha", Title: "x"},
 		{ID: "beta-9", Repo: "beta", Title: "y"},
@@ -1595,12 +1595,12 @@ func TestColumnOrder_OwnerHeaderIsSecondFromLeft(t *testing.T) {
 	m = applyFetched(m, src)
 	out := m.View()
 	oi := strings.Index(out, "owner")
-	wi := strings.Index(out, "wyk")
+	ri := strings.Index(out, "Repo")
 	if oi < 0 {
 		t.Errorf("'owner' header missing from view:\n%s", out)
 	}
-	if oi > wi {
-		t.Errorf("'owner' should appear before 'wyk'; got owner=%d wyk=%d", oi, wi)
+	if oi > ri {
+		t.Errorf("'owner' should appear before 'Repo'; got owner=%d Repo=%d", oi, ri)
 	}
 }
 
@@ -1941,14 +1941,14 @@ func TestColumnsOverlay_TogglesHidesColumnFromHeader(t *testing.T) {
 		t.Fatalf("expected modeColumns after pressing o; got %v", m.mode)
 	}
 
-	// Press 5 — toggleableColumns[4] is "type" (owner=1, wyk=2,
-	// repo=3, branch=4, type=5). Multi-only entries are inert in
+	// Press 4 — toggleableColumns[3] is "type" (owner=1, repo=2,
+	// branch=3, type=4). Multi-only entries are inert in
 	// single-repo mode but still occupy a slot — so the test
 	// relies on the registry order, not on a runtime filter.
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m = model.(Model)
 	if !m.colsHidden[colIDType] {
-		t.Errorf("expected colIDType hidden after pressing 5; got hidden=%v", m.colsHidden)
+		t.Errorf("expected colIDType hidden after pressing 4; got hidden=%v", m.colsHidden)
 	}
 
 	// Press esc to close the overlay.
@@ -3421,7 +3421,7 @@ func TestYank_FailureSurfacesError(t *testing.T) {
 }
 
 func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
-	// In single-repo mode the wyk/repo/branch slots (2-4) are
+	// In single-repo mode the repo/branch slots (2-3) are
 	// inert — pressing them shouldn't toggle anything. The slot
 	// numbering still has to match the registry order so the
 	// keystroke means the same column whether wyk launches into
@@ -3434,8 +3434,8 @@ func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	m = model.(Model)
-	// Slot 2 → wyk (multi-only). Slot 3 → repo. Slot 4 → branch.
-	for _, r := range []rune{'2', '3', '4'} {
+	// Slot 2 → repo (multi-only). Slot 3 → branch.
+	for _, r := range []rune{'2', '3'} {
 		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = model.(Model)
 	}
@@ -3443,11 +3443,11 @@ func TestColumnsOverlay_MultiOnlySlotInertInSingleRepo(t *testing.T) {
 		t.Errorf("multi-only slot toggles should be no-ops in single-repo mode; got %v", m.colsHidden)
 	}
 
-	// Confirm the registry order — slot 2 still names wyk after
+	// Confirm the registry order — slot 2 still names repo after
 	// the no-op, so a user who learns the mapping in one mode
 	// keeps it in the other.
-	if toggleableColumns[1].ID != colIDWyk {
-		t.Errorf("slot 2 should be wyk (multi-only); got %q", toggleableColumns[1].ID)
+	if toggleableColumns[1].ID != colIDRepo {
+		t.Errorf("slot 2 should be repo (multi-only); got %q", toggleableColumns[1].ID)
 	}
 }
 
@@ -4718,7 +4718,6 @@ func TestRenderHeader_DecoratedColumnsStayWithinTheirWidth(t *testing.T) {
 	const sep = 2 // two-space separator after each column
 	expectedTitleRune := 2 /* leading cursor */ +
 		colResp + sep +
-		colWyk + sep +
 		colRepo + sep +
 		colBranch + sep +
 		colID + sep +

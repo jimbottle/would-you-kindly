@@ -6,7 +6,6 @@ package tui
 // hidden column.
 const (
 	colIDOwner   = "owner"
-	colIDWyk     = "wyk"
 	colIDRepo    = "repo"
 	colIDBranch  = "branch"
 	colIDType    = "type"
@@ -30,7 +29,6 @@ type toggleableCol struct {
 // when the view switches between single- and multi-repo modes.
 var toggleableColumns = []toggleableCol{
 	{ID: colIDOwner, Label: "Owner"},
-	{ID: colIDWyk, Label: "Wyk hook", MultiOnly: true},
 	{ID: colIDRepo, Label: "Repo", MultiOnly: true},
 	{ID: colIDBranch, Label: "Branch", MultiOnly: true},
 	{ID: colIDType, Label: "Type"},

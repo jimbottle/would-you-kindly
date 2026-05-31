@@ -116,11 +116,6 @@ var (
 			Foreground(lipgloss.Color("214")).
 			Italic(true)
 
-	// wykIndicatorStyle renders the ✓ in the W column for repos that
-	// have wyk's post-commit hook installed. Green so it reads as
-	// "this is configured correctly" at a glance.
-	wykIndicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("84"))
-
 	// chipActiveStyle renders an active filter chip above the
 	// table (e.g. "human" preset, "≤P1" priority cap). Bright
 	// background + dark text so it reads as a pill the eye can
@@ -234,9 +229,6 @@ func ApplyTheme(t theme.Theme) {
 	}
 	if t.SetupHint != "" {
 		setupHintStyle = setupHintStyle.Foreground(lipgloss.Color(t.SetupHint))
-	}
-	if t.WykIndicator != "" {
-		wykIndicatorStyle = wykIndicatorStyle.Foreground(lipgloss.Color(t.WykIndicator))
 	}
 	if t.ChipActiveBG != "" {
 		chipActiveStyle = chipActiveStyle.Background(lipgloss.Color(t.ChipActiveBG))

@@ -35,13 +35,6 @@ type Issue struct {
 	Repo   string `json:"-"`
 	Branch string `json:"-"`
 
-	// WykHooked is true when the issue's repo has wyk's post-commit
-	// hook installed (plain or chained). Surfaces in the TUI as a
-	// per-row indicator so the user can tell which registered repos
-	// have the auto-close machinery active vs. which are just being
-	// tracked.
-	WykHooked bool `json:"-"`
-
 	// BlockedByHuman is true when this issue's `src:agent` AND its
 	// dependency set contains at least one issue carrying the
 	// `human` label — i.e. the agent owns this task but the next

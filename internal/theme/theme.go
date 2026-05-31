@@ -58,7 +58,6 @@ type Theme struct {
 	Confirm          string `json:"confirm,omitempty"`
 	StatusBanner     string `json:"status_banner,omitempty"`
 	SetupHint        string `json:"setup_hint,omitempty"`
-	WykIndicator     string `json:"wyk_indicator,omitempty"`
 	ChipActiveBG     string `json:"chip_active_bg,omitempty"`
 	ChipActiveFG     string `json:"chip_active_fg,omitempty"`
 	FetchError       string `json:"fetch_error,omitempty"`

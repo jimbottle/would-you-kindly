@@ -3972,7 +3972,6 @@ func (m Model) viewList() string {
 // extra width was just whitespace in every row.
 const (
 	colResp    = 13 // responsibility column: " ← HUMAN ", " · HUMAN ", " AGENT ", " HUMAN-BLOCK ", or blank. 13 = " HUMAN-BLOCK " visual width (Padding(0,1) + 11-char content), the widest variant. Shorter badges get trailing whitespace. Placed second-from-left to put the most important "whose move is it" signal where the eye lands first.
-	colWyk     = 3  // wyk-hook indicator: ✓ if installed, blank if not. Header reads "wyk" so the column is self-explanatory.
 	colRepo    = 18
 	colBranch  = 10
 	colID      = 12
@@ -4069,9 +4068,6 @@ func (m Model) renderHeader() string {
 		fmt.Fprintf(&b, "%-*s  ", colResp, "owner")
 	}
 	if m.isMultiRepo() {
-		if m.colVisible(colIDWyk) {
-			fmt.Fprintf(&b, "%-*s  ", colWyk, "wyk")
-		}
 		if m.colVisible(colIDRepo) {
 			fmt.Fprintf(&b, "%-*s  ", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑", m.sortDesc))
 		}
@@ -4159,14 +4155,6 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		b.WriteString(sep)
 	}
 	if m.isMultiRepo() {
-		if m.colVisible(colIDWyk) {
-			w := strings.Repeat(" ", colWyk)
-			if i.WykHooked {
-				w = " " + wykIndicatorStyle.Render("✓") + " "
-			}
-			b.WriteString(w)
-			b.WriteString(sep)
-		}
 		if m.colVisible(colIDRepo) {
 			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colRepo, trunc(i.Repo, colRepo))))
 			b.WriteString(sep)
@@ -4345,9 +4333,6 @@ func (m Model) titleBudget() int {
 		used += colResp + sep
 	}
 	if m.isMultiRepo() {
-		if m.colVisible(colIDWyk) {
-			used += colWyk + sep
-		}
 		if m.colVisible(colIDRepo) {
 			used += colRepo + sep
 		}
