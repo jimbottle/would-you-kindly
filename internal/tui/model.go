@@ -575,12 +575,21 @@ const (
 	sortUpdated
 	sortRepo
 	sortID
+	// sortDeps orders rows so issues with no dependencies appear
+	// first, followed by issues with one dependency, then two,
+	// etc. Uses the bd-supplied DependencyCount as a level proxy:
+	// it captures "depth from leaves" approximately but is NOT a
+	// true topological sort (two issues with DependencyCount=1
+	// could be at different depths in the actual graph). True
+	// transitive ordering would require fetching the edge set per
+	// issue via ListDeps; followup work.
+	sortDeps
 )
 
 // next returns the next sort key in the cycle so `s` rotates
-// through {none, priority, updated, repo, id, none, ...}.
+// through {none, priority, updated, repo, id, deps, deps, none, ...}.
 func (k sortKey) next() sortKey {
-	if k == sortID {
+	if k == sortDeps {
 		return sortNone
 	}
 	return k + 1
@@ -599,6 +608,8 @@ func (k sortKey) label() string {
 		return "repo"
 	case sortID:
 		return "id"
+	case sortDeps:
+		return "deps"
 	default:
 		return ""
 	}
@@ -2001,6 +2012,21 @@ func applySort(issues []beads.Issue, k sortKey, reverse bool) {
 		less = func(i, j int) bool { return issues[i].Repo < issues[j].Repo }
 	case sortID:
 		less = func(i, j int) bool { return issues[i].ID < issues[j].ID }
+	case sortDeps:
+		// DependencyCount ASC: 0-dep rows at top, then 1-dep, etc.
+		// Tiebreak by Priority ASC then ID ASC so within a level
+		// the ordering is deterministic and reads like the priority
+		// sort. Approximate: see the const block comment for why
+		// this isn't a strict topological sort.
+		less = func(i, j int) bool {
+			if issues[i].DependencyCount != issues[j].DependencyCount {
+				return issues[i].DependencyCount < issues[j].DependencyCount
+			}
+			if issues[i].Priority != issues[j].Priority {
+				return issues[i].Priority < issues[j].Priority
+			}
+			return issues[i].ID < issues[j].ID
+		}
 	default:
 		return
 	}
@@ -2467,12 +2493,12 @@ func (m Model) dispatchCommand(raw string) (tea.Model, tea.Cmd) {
 		// instead of silently switching to no-sort. The explicit
 		// way to clear is `:sort none`.
 		if rest == "" {
-			m.setStatus(":sort: axis required (one of none, priority, updated, repo, id)")
+			m.setStatus(":sort: axis required (one of none, priority, updated, repo, id, deps)")
 			return m, flashClearCmd(m.statusGen)
 		}
 		k, ok := parseSortKey(rest)
 		if !ok {
-			m.setStatus(":sort: unknown axis. Try one of none, priority, updated, repo, id")
+			m.setStatus(":sort: unknown axis. Try one of none, priority, updated, repo, id, deps")
 			return m, flashClearCmd(m.statusGen)
 		}
 		return m.setSortKey(k)
@@ -2882,6 +2908,8 @@ func parseSortKey(s string) (sortKey, bool) {
 		return sortRepo, true
 	case "id":
 		return sortID, true
+	case "deps", "dep":
+		return sortDeps, true
 	}
 	return sortNone, false
 }

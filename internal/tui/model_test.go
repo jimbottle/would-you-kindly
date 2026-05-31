@@ -1809,14 +1809,57 @@ func TestSortCycle_RotatesThroughKeys(t *testing.T) {
 		t.Errorf("priority sort should put P0 first; got priority=%d", m.visible[0].Priority)
 	}
 
-	// Press s four more times → updated → repo → id → none.
-	for i := 0; i < 4; i++ {
+	// Press s five more times → updated → repo → id → deps → none.
+	for i := 0; i < 5; i++ {
 		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 		m = model.(Model)
 	}
 	if m.sortBy != sortNone {
-		t.Errorf("cycle should return to sortNone after 5 presses; got %v", m.sortBy)
+		t.Errorf("cycle should return to sortNone after 6 presses; got %v", m.sortBy)
 	}
+}
+
+func TestSortDeps_OrdersByDependencyCount(t *testing.T) {
+	// DependencyCount-based ordering: 0-dep rows at top, then
+	// 1-dep, then 2-dep. Tiebreak within a level by Priority
+	// then ID — pin the deterministic order so future refactors
+	// can't silently flip it.
+	in := []beads.Issue{
+		{ID: "a-3", Priority: 2, DependencyCount: 0},
+		{ID: "a-2", Priority: 1, DependencyCount: 2},
+		{ID: "a-1", Priority: 0, DependencyCount: 0},
+		{ID: "a-4", Priority: 3, DependencyCount: 1},
+		{ID: "a-5", Priority: 1, DependencyCount: 1},
+	}
+	applySort(in, sortDeps, false)
+	wantIDs := []string{"a-1", "a-3", "a-5", "a-4", "a-2"}
+	// a-1 (0 deps, P0) before a-3 (0 deps, P2) — Priority tiebreak.
+	// a-5 (1 dep, P1) before a-4 (1 dep, P3) — Priority tiebreak.
+	// a-2 (2 deps) last.
+	for i, want := range wantIDs {
+		if in[i].ID != want {
+			t.Errorf("position %d: got %q, want %q (full order: %+v)", i, in[i].ID, want, idsOfIssues(in))
+		}
+	}
+}
+
+func TestSortDeps_ReverseFlipsOrder(t *testing.T) {
+	in := []beads.Issue{
+		{ID: "leaf", Priority: 0, DependencyCount: 0},
+		{ID: "deep", Priority: 0, DependencyCount: 5},
+	}
+	applySort(in, sortDeps, true)
+	if in[0].ID != "deep" || in[1].ID != "leaf" {
+		t.Errorf("reversed sortDeps should put deepest first; got %v", idsOfIssues(in))
+	}
+}
+
+func idsOfIssues(issues []beads.Issue) []string {
+	out := make([]string, len(issues))
+	for i, x := range issues {
+		out[i] = x.ID
+	}
+	return out
 }
 
 // stubClosedToggler wraps stubSource with a SetIncludeClosed
