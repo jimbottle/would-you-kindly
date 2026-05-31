@@ -217,6 +217,17 @@ func main() {
 	if nudge := readUpdateNudge(versionString()); nudge != "" {
 		model = model.WithUpdateNudge(nudge)
 	}
+
+	// Warm-start: seed m.all from the last-saved fetch so the
+	// first frame paints rows instead of the empty "loading…"
+	// stand-in. The live fetch dispatched by Init still runs in
+	// parallel; the cached rows are replaced when it returns.
+	// Best-effort: any cache failure (missing file, stale TTL,
+	// unsupported schema) silently falls back to the cold path.
+	if cachePath, err := tui.CacheDefaultPath(); err == nil {
+		cache, _ := tui.LoadCache(cachePath)
+		model = model.WithCacheSnapshot(cache, cachePath)
+	}
 	// WithMouseCellMotion lets the model receive tea.MouseMsg with
 	// cell-level coordinates so a click on a row sets the cursor
 	// and the scroll wheel moves up/down. Cell motion (not all

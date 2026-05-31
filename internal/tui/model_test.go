@@ -4934,6 +4934,90 @@ func TestDetailView_MouseWheelScrollsViewport(t *testing.T) {
 	_ = preYOff
 }
 
+func TestWithCacheSnapshot_PaintsCachedRowsImmediately(t *testing.T) {
+	// User-visible payoff: opening wyk shouldn't blank-flash a
+	// "loading…" line when there are cached rows we can paint
+	// right away. WithCacheSnapshot pre-populates m.all so the
+	// view's "len(m.all) > 0" branch fires on the first frame,
+	// while m.loading is still true and the live fetch is in
+	// flight.
+	src := &stubSource{}
+	cache := Cache{
+		Preset:  string(filter.PresetAll),
+		SavedAt: time.Now().Add(-30 * time.Minute),
+		Issues:  []beads.Issue{{ID: "wyk-1", Title: "from cache"}},
+	}
+	m := New(src).WithCacheSnapshot(cache, "")
+	if len(m.all) != 1 || m.all[0].ID != "wyk-1" {
+		t.Errorf("WithCacheSnapshot should seed m.all; got %+v", m.all)
+	}
+	if !m.cacheStale {
+		t.Error("cacheStale should be true while m.all is sourced from cache")
+	}
+	if m.cacheSavedAt.IsZero() {
+		t.Error("cacheSavedAt should reflect the seeded snapshot time")
+	}
+	if !m.loading {
+		t.Error("m.loading should remain true until the live fetch lands — the cache seed doesn't replace it")
+	}
+}
+
+func TestWithCacheSnapshot_IgnoresMismatchedPreset(t *testing.T) {
+	// A cached "all" snapshot is useless when the user launched
+	// with -preset human; seeding it would mis-paint. The check
+	// keeps the cold-path "loading…" experience for these cases.
+	src := &stubSource{}
+	cache := Cache{
+		Preset:  string(filter.PresetAll),
+		SavedAt: time.Now(),
+		Issues:  []beads.Issue{{ID: "wyk-1"}},
+	}
+	m := New(src).WithPreset(filter.PresetHuman).WithCacheSnapshot(cache, "")
+	if len(m.all) != 0 {
+		t.Errorf("mismatched preset should not seed; got %+v", m.all)
+	}
+	if m.cacheStale {
+		t.Error("cacheStale should remain false on mismatch")
+	}
+}
+
+func TestFetchedMsg_ClearsCacheStaleAndPersistsSnapshot(t *testing.T) {
+	// After the live fetch lands, the on-screen rows are no
+	// longer stale, and the snapshot should land on disk so the
+	// next launch can warm-start. Verify both.
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "last-fetch.json")
+	src := &stubSource{}
+	seed := Cache{
+		Preset:  string(filter.PresetAll),
+		SavedAt: time.Now().Add(-time.Hour),
+		Issues:  []beads.Issue{{ID: "stale"}},
+	}
+	m := New(src).WithCacheSnapshot(seed, cachePath)
+	if !m.cacheStale {
+		t.Fatal("setup: WithCacheSnapshot didn't mark m.cacheStale")
+	}
+
+	fresh := []beads.Issue{{ID: "wyk-7", Title: "fresh"}}
+	model, _ := m.Update(fetchedMsg{preset: filter.PresetAll, issues: fresh})
+	m = model.(Model)
+	if m.cacheStale {
+		t.Error("cacheStale should clear after a successful fetchedMsg")
+	}
+	if len(m.all) != 1 || m.all[0].ID != "wyk-7" {
+		t.Errorf("m.all should reflect the fresh fetch; got %+v", m.all)
+	}
+
+	// The persisted snapshot is the fresh data, not the seed.
+	got, err := LoadCache(cachePath)
+	if err != nil {
+		t.Fatalf("LoadCache after fetch: %v", err)
+	}
+	if len(got.Issues) != 1 || got.Issues[0].ID != "wyk-7" {
+		t.Errorf("persisted snapshot should hold the fresh fetch; got %+v", got.Issues)
+	}
+}
+
 func TestRowsStartY_AccountsForChipStrip(t *testing.T) {
 	src := &stubSource{issues: manyIssues(20)}
 	m := applyFetched(New(src), src)

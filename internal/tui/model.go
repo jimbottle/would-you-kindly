@@ -229,6 +229,22 @@ type Model struct {
 	// of band in main's background goroutine.
 	updateNudge string
 
+	// cachePath is where SaveCache writes the on-disk snapshot of
+	// each successful fetch; empty disables persistence. Set by
+	// main via WithCacheSnapshot so test models default to no
+	// persistence (no surprise writes when t.TempDir isn't set).
+	cachePath string
+	// cacheStale is true while m.all is sourced from the on-disk
+	// cache and no live fetch has landed yet. Drives a subtle
+	// "cached <relative> · refreshing" indicator in the status bar
+	// so the user knows the rows they're looking at are not
+	// guaranteed current. Cleared on the first successful
+	// fetchedMsg.
+	cacheStale bool
+	// cacheSavedAt is the SavedAt timestamp of the seeded cache,
+	// used by the status indicator. Zero when no seed happened.
+	cacheSavedAt time.Time
+
 	// scroll is the row index at the top of the rendered window —
 	// used to keep the column header visible when m.visible has
 	// more rows than the terminal can fit. Without it, the terminal
@@ -453,6 +469,35 @@ func (m Model) WithHiddenColumns(hidden map[string]bool, persistPath string) Mod
 	}
 	m.colsHidden = hidden
 	m.uiConfigPath = persistPath
+	return m
+}
+
+// WithCacheSnapshot seeds m.all from a previously-saved Cache so
+// the first paint shows rows immediately instead of the empty
+// "loading…" stand-in. The live fetch dispatched by Init still
+// runs in parallel — when it returns, fresh data replaces the
+// cached snapshot.
+//
+// Path is where future successful fetches will be persisted; main
+// passes this through so the model can call SaveCache after each
+// fetchedMsg lands. Empty path disables persistence.
+//
+// The cache is only honored if c.Preset matches the model's
+// current preset — a snapshot of the "all" view isn't useful when
+// the user launched with -preset human. The snapshot is also
+// dropped when it carries zero issues (no value in pre-painting
+// an empty list); the loading branch still shows the spinner so
+// first-run users don't see a confusing dead screen.
+func (m Model) WithCacheSnapshot(c Cache, path string) Model {
+	m.cachePath = path
+	if len(c.Issues) == 0 || filter.Preset(c.Preset) != m.preset {
+		return m
+	}
+	m.all = c.Issues
+	m.commonPrefix = commonIDPrefix(m.all)
+	m.recomputeVisible()
+	m.cacheStale = true
+	m.cacheSavedAt = c.SavedAt
 	return m
 }
 
@@ -710,6 +755,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// New row count → cursor may now sit outside the
 			// viewport, or m.scroll may exceed maxScroll.
 			m.ensureCursorVisible()
+			// Live data has landed; the cache seed (if any) is
+			// no longer the source of truth on screen.
+			m.cacheStale = false
+			// Persist the snapshot so the NEXT wyk launch can
+			// warm-start. Best-effort: a write failure must
+			// never block the TUI. cachePath empty = persistence
+			// disabled (tests, single-shot probe runs).
+			if m.cachePath != "" {
+				_ = SaveCache(m.cachePath, Cache{
+					Preset:  string(m.preset),
+					SavedAt: time.Now(),
+					Issues:  msg.issues,
+				})
+			}
 		}
 		// Per-sub fetch errors travel on the msg itself so they
 		// always reflect THIS fetch — not a concurrent one that
@@ -4190,6 +4249,13 @@ func (m Model) statusBar() string {
 	}
 	if !m.lastSync.IsZero() {
 		left += "  synced " + m.lastSync.Format("15:04:05")
+	} else if m.cacheStale && !m.cacheSavedAt.IsZero() {
+		// Before the first live fetch lands, surface that the
+		// rows on screen came from disk and are being refreshed
+		// underneath. After the live fetch arrives, lastSync !=
+		// zero and this branch is dead — the user sees the
+		// normal "synced HH:MM:SS" line.
+		left += "  cached " + relTime(m.cacheSavedAt)
 	}
 	// In-flight refresh indicator. Subtle on purpose — the table
 	// stays visible underneath; this just tells the user that
