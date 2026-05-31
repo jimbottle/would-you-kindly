@@ -1034,6 +1034,53 @@ func TestDetailBody_WrapsLongDescription(t *testing.T) {
 	}
 }
 
+func TestDetailView_YankCopiesDescriptionAndNotes(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "rotate", Description: "step one\nstep two", Notes: "first note"},
+	}}
+	m := applyFetched(New(src), src)
+	m.mode = modeDetail
+	m.detailIssue = m.visible[0]
+
+	var copied string
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { copied = s; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	want := "step one\nstep two\n\nfirst note"
+	if copied != want {
+		t.Errorf("y in detail mode copied %q, want %q", copied, want)
+	}
+	if !strings.Contains(m.status, "copied a-1 body") {
+		t.Errorf("status should announce the yank; got %q", m.status)
+	}
+}
+
+func TestDetailView_YankEmptyBodyNoOp(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "stub", Description: "", Notes: ""},
+	}}
+	m := applyFetched(New(src), src)
+	m.mode = modeDetail
+	m.detailIssue = m.visible[0]
+
+	called := false
+	orig := clipboardCopy
+	clipboardCopy = func(s string) error { called = true; return nil }
+	t.Cleanup(func() { clipboardCopy = orig })
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if called {
+		t.Error("empty body must not touch the clipboard")
+	}
+	if !strings.Contains(m.status, "nothing to yank") {
+		t.Errorf("status should explain the no-op; got %q", m.status)
+	}
+}
+
 func TestDetailBody_WidthZeroSkipsWrap(t *testing.T) {
 	// Pre-WindowSizeMsg the viewport width is zero; the body
 	// should still render (without wrap) so the first paint

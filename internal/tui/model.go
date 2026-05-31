@@ -941,13 +941,21 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// position doesn't bleed in.
 			m.detailVP.SetContent(detailBody(m.detailIssue, m.detailVP.Width))
 			m.detailVP.GotoTop()
+			// Drop mouse capture while in detail mode so the host
+			// terminal (VS Code, Terminal.app, iTerm) handles
+			// click-drag as native text selection. Without this,
+			// tea.WithMouseCellMotion eats the click events and
+			// the body text is unselectable. Re-enabled on return
+			// to list — see updateDetail's Back/Open case.
+			disableMouse := tea.DisableMouse
 			if d, ok := m.src.(Detailer); ok {
 				target := m.detailIssue
-				return m, func() tea.Msg {
+				return m, tea.Batch(disableMouse, func() tea.Msg {
 					full, err := d.Detail(context.Background(), target)
 					return detailMsg{issue: full, err: err}
-				}
+				})
 			}
+			return m, disableMouse
 		}
 	case keyHit(msg, m.keys.Filter):
 		m.mode = modeFilter
@@ -1699,11 +1707,16 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case keyHit(msg, m.keys.Back), keyHit(msg, m.keys.Open):
 		m.mode = modeList
-		return m, nil
+		// Re-enable mouse capture on return to list so row-clicks
+		// and wheel-scroll work again. Pair with the DisableMouse
+		// dispatched when entering modeDetail (see enterDetail).
+		return m, tea.EnableMouseCellMotion
 	case keyHit(msg, m.keys.Quit):
 		return m, tea.Quit
 	case keyHit(msg, m.keys.Help):
 		return m.openHelp()
+	case keyHit(msg, m.keys.Yank):
+		return m.handleYankDetailBody()
 	}
 	// Forward any other key (j/k/PgUp/PgDn/g/G inside the
 	// detail view, mouse wheel events, etc.) to the viewport so
@@ -1711,6 +1724,44 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.detailVP, cmd = m.detailVP.Update(msg)
 	return m, cmd
+}
+
+// handleYankDetailBody yanks the current detail issue's
+// Description + Notes verbatim (concatenated with a blank line
+// separator) via the same OSC 52 path as the list-mode yanks.
+// Useful when the user wants to paste the runbook into chat /
+// editor / commit message without the terminal-selection dance
+// — which the mouse capture would otherwise interfere with.
+func (m Model) handleYankDetailBody() (tea.Model, tea.Cmd) {
+	i := m.detailIssue
+	if i.ID == "" {
+		if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+			m.setStatus("nothing to yank")
+			return m, flashClearCmd(m.statusGen)
+		}
+		i = m.visible[m.cursor]
+	}
+	var b strings.Builder
+	if strings.TrimSpace(i.Description) != "" {
+		b.WriteString(i.Description)
+	}
+	if strings.TrimSpace(i.Notes) != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(i.Notes)
+	}
+	payload := b.String()
+	if payload == "" {
+		m.setStatus("nothing to yank (description and notes are empty)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if err := clipboardCopy(payload); err != nil {
+		m.setStatus("yank failed: " + err.Error())
+		return m, nil
+	}
+	m.setStatus(fmt.Sprintf("copied %s body (%d bytes)", i.ID, len(payload)))
+	return m, flashClearCmd(m.statusGen)
 }
 
 // openHelp captures the current mode and switches to modeHelp; the
@@ -4081,7 +4132,7 @@ func (m Model) viewDetail() string {
 	// Footer: scroll percent (only when there's actually
 	// something to scroll) + key hint.
 	b.WriteString("\n")
-	footer := "esc / enter: back   j/k ↑↓ scroll   q: quit"
+	footer := "esc / enter: back   j/k ↑↓ scroll   y: yank body   q: quit"
 	if m.detailVP.TotalLineCount() > m.detailVP.Height {
 		pct := int(m.detailVP.ScrollPercent() * 100)
 		footer = fmt.Sprintf("%d%%   %s", pct, footer)
