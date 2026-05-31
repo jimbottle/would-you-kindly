@@ -2360,15 +2360,30 @@ func TestFSEventMsg_SuspendedOnTerminalError(t *testing.T) {
 // inner func() runs and produces its side effects. Used by the
 // fsEventMsg suspension test to detect whether a fetchCmd is
 // hiding inside a batch; a single non-batch cmd is just consumed.
+// drainCmd runs cmd (and any batched children) for their side
+// effects. Each command runs in its own goroutine with a short
+// deadline so a long-lived timer like tickCmd's tea.Tick(refreshInterval)
+// — which would otherwise block the test for the full poll interval —
+// is abandoned once it's clear it isn't going to return promptly. The
+// side effects the tick tests assert on (the stub's synchronous Fetch
+// bumping src.calls) all complete well within the deadline.
 func drainCmd(cmd tea.Cmd) {
 	if cmd == nil {
 		return
 	}
-	msg := cmd()
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		for _, c := range batch {
-			drainCmd(c)
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msg := <-done:
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				drainCmd(c)
+			}
 		}
+	case <-time.After(time.Second):
+		// A slow command (e.g. tea.Tick on the poll interval) — its
+		// side effects, if any, have already run synchronously before
+		// the blocking wait; nothing left to drain.
 	}
 }
 
