@@ -655,8 +655,9 @@ func init() {
 //
 // The inverse of doctor -fix: doctor's auto-install refuses to
 // touch foreign hooks, while this command targets exactly that
-// set. Reuses the installHookIn seam so tests can substitute the
-// install side effect.
+// set. Uses the chainHookIntoRepo seam (not installHookIn, which
+// installs a plain wyk hook) so tests can substitute the chain
+// side effect.
 //
 // Exit codes:
 //

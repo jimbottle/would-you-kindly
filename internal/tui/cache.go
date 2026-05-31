@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
@@ -25,8 +27,9 @@ const cacheTTL = 7 * 24 * time.Hour
 
 // cacheMaxIssues bounds the persisted snapshot size. A pathological
 // registry (thousands of open issues) shouldn't blow up the cache
-// file unboundedly. We keep the highest-priority slice; the user's
-// next live fetch fills in the rest within seconds.
+// file unboundedly. The truncation keeps the first N issues in the
+// order the fetch delivered them — no sort happens here; the live
+// fetch that lands shortly after warm-start fills in the rest.
 const cacheMaxIssues = 5000
 
 // Cache is the on-disk snapshot of the last successful Fetch. It
@@ -83,6 +86,25 @@ func LoadCache(path string) (Cache, error) {
 		return Cache{}, fmt.Errorf("%s: cache is %s old (TTL %s); ignoring", path, age.Round(time.Hour), cacheTTL)
 	}
 	return c, nil
+}
+
+// saveCacheCmd returns a tea.Cmd that persists the snapshot off
+// the Bubble Tea event loop. Inline persistence from Update would
+// block input/render on every successful fetchedMsg for the
+// duration of an fsync — exactly the latency the warm-start
+// feature exists to eliminate. The command emits no message; the
+// save is fire-and-forget. A failure is silently dropped — the
+// next successful fetch will retry, and a permanently-broken
+// cache directory just degrades to a cold start.
+func saveCacheCmd(path, preset string, issues []beads.Issue) tea.Cmd {
+	return func() tea.Msg {
+		_ = SaveCache(path, Cache{
+			Preset:  preset,
+			SavedAt: time.Now(),
+			Issues:  issues,
+		})
+		return nil
+	}
 }
 
 // SaveCache atomically writes the cache via write-tmp-then-rename.

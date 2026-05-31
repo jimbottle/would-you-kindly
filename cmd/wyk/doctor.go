@@ -30,10 +30,12 @@ const (
 
 // doctorPerRepoTimeout bounds the bd-query check inside a single
 // repo so a locked / syncing / slow-filesystem workspace can't
-// hang the whole doctor run. Matched to the TUI's fetch timeout
-// in internal/tui/model.go (fetchCmd) — a repo that doctor
-// passes but the TUI fails on would be a confusing false signal.
-// Bump both together if the user's bd commonly takes longer.
+// hang the whole doctor run. Matched to beads.NewClient()'s
+// default Timeout in internal/beads/client.go — the TUI's
+// fetchCmd uses context.Background() and inherits THAT default,
+// so a repo doctor passes but the TUI fails on would be a
+// confusing false signal. Bump both constants together if the
+// user's bd commonly takes longer.
 const doctorPerRepoTimeout = 10 * time.Second
 
 func (s checkStatus) String() string {
@@ -525,10 +527,11 @@ func checkRepo(r registry.Repo) []check {
 
 		// Separate check: does bd actually respond? Bounded by a
 		// timeout so a broken/locked workspace doesn't hang the whole
-		// doctor run. Matched to the TUI's per-fetch timeout — a
-		// repo that responds inside doctor's window but not the
-		// TUI's would be a confusing false pass; aligning both means
-		// a doctor warning predicts a TUI refresh failure.
+		// doctor run. Matched to beads.NewClient()'s default Timeout
+		// (the value the TUI inherits per call) — a repo that
+		// responds inside doctor's window but not the TUI's would be
+		// a confusing false pass; aligning both means a doctor
+		// warning predicts a TUI refresh failure.
 		//
 		// Detect timeouts via ctx.Err() rather than errors.Is on the
 		// returned error: exec.CommandContext kills the process when

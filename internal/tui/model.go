@@ -748,6 +748,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.lastSync = time.Now()
 		m.lastErr = msg.err
+		var cacheCmd tea.Cmd
 		if msg.err == nil {
 			m.all = msg.issues
 			m.commonPrefix = commonIDPrefix(m.all)
@@ -759,15 +760,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// no longer the source of truth on screen.
 			m.cacheStale = false
 			// Persist the snapshot so the NEXT wyk launch can
-			// warm-start. Best-effort: a write failure must
-			// never block the TUI. cachePath empty = persistence
-			// disabled (tests, single-shot probe runs).
+			// warm-start. Dispatched as a tea.Cmd so the fsync +
+			// rename run off the Bubble Tea event loop — inline
+			// would stutter input handling on slow disks, which
+			// would defeat the warm-start latency win.
 			if m.cachePath != "" {
-				_ = SaveCache(m.cachePath, Cache{
-					Preset:  string(m.preset),
-					SavedAt: time.Now(),
-					Issues:  msg.issues,
-				})
+				cacheCmd = saveCacheCmd(m.cachePath, string(m.preset), msg.issues)
 			}
 		}
 		// Per-sub fetch errors travel on the msg itself so they
@@ -778,9 +776,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fetchErrors = msg.subErrs
 		if recovered {
 			m.tickGen++
-			return m, tickCmd(m.tickGen)
+			return m, tea.Batch(tickCmd(m.tickGen), cacheCmd)
 		}
-		return m, nil
+		return m, cacheCmd
 
 	case tickMsg:
 		// Drop ticks from a chain we've already replaced — this
@@ -4247,15 +4245,18 @@ func (m Model) statusBar() string {
 	if m.query != "" {
 		left += fmt.Sprintf("  filter:%q", m.query)
 	}
-	if !m.lastSync.IsZero() {
-		left += "  synced " + m.lastSync.Format("15:04:05")
-	} else if m.cacheStale && !m.cacheSavedAt.IsZero() {
-		// Before the first live fetch lands, surface that the
-		// rows on screen came from disk and are being refreshed
-		// underneath. After the live fetch arrives, lastSync !=
-		// zero and this branch is dead — the user sees the
-		// normal "synced HH:MM:SS" line.
+	switch {
+	case m.cacheStale && !m.cacheSavedAt.IsZero():
+		// While the rows on screen come from the on-disk cache and
+		// no successful live fetch has replaced them, surface that
+		// they're stale. The cached branch takes precedence over
+		// "synced" because lastSync is updated on every fetchedMsg
+		// — including failures — and a failed first fetch after a
+		// warm-start would otherwise label stale cached rows as
+		// "synced", lying about freshness to the user.
 		left += "  cached " + relTime(m.cacheSavedAt)
+	case !m.lastSync.IsZero():
+		left += "  synced " + m.lastSync.Format("15:04:05")
 	}
 	// In-flight refresh indicator. Subtle on purpose — the table
 	// stays visible underneath; this just tells the user that
@@ -4384,22 +4385,18 @@ func renderFetchErrorBanner(errs []FetchError, width int) string {
 // allFetchErrsSame reports whether every FetchError in the slice
 // has the same Err.Error() text. Used by the banner to collapse
 // the "every repo hit the same timeout" case into a single
-// actionable line. A nil Err is treated as the empty string —
-// two nil errors count as same, a nil-vs-non-nil mix doesn't.
+// actionable line. Callers MUST construct FetchErrors with a
+// non-nil Err — the coalesce branch in renderFetchErrorBanner
+// formats errs[0].Err.Error() without a nil guard, so a nil-Err
+// entry sneaking in would panic. Every in-tree construction site
+// (see source.go) populates Err; tests should do the same.
 func allFetchErrsSame(errs []FetchError) bool {
 	if len(errs) < 2 {
 		return false
 	}
-	first := ""
-	if errs[0].Err != nil {
-		first = errs[0].Err.Error()
-	}
+	first := errs[0].Err.Error()
 	for _, e := range errs[1:] {
-		s := ""
-		if e.Err != nil {
-			s = e.Err.Error()
-		}
-		if s != first {
+		if e.Err.Error() != first {
 			return false
 		}
 	}

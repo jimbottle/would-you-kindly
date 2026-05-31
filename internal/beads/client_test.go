@@ -228,8 +228,8 @@ func TestRunClassifiesContextDeadlineAsTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error from blocked runner")
 	}
-	if !strings.Contains(err.Error(), "timed out after 30ms") {
-		t.Errorf("expected 'timed out after 30ms' classification; got %q", err.Error())
+	if !strings.Contains(err.Error(), "timed out after ") {
+		t.Errorf("expected 'timed out after ...' classification; got %q", err.Error())
 	}
 	if strings.Contains(err.Error(), "signal: killed") {
 		t.Errorf("error should not leak 'signal: killed'; got %q", err.Error())

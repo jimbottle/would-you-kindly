@@ -324,6 +324,11 @@ func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) ([]by
 	if r == nil {
 		r = execRunner
 	}
+	// Capture the start time so the timeout message can report
+	// the actual elapsed duration. Reporting c.Timeout would lie
+	// when a shorter parent deadline fires first (the effective
+	// deadline is min(c.Timeout, parent.Deadline)).
+	start := time.Now()
 	stdout, stderr, err := r(ctx, c.Binary, full, stdin)
 	if err == nil {
 		return stdout, nil
@@ -339,10 +344,8 @@ func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) ([]by
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		switch {
 		case errors.Is(ctxErr, context.DeadlineExceeded):
-			if c.Timeout > 0 {
-				return nil, fmt.Errorf("bd %s: timed out after %s", strings.Join(args, " "), c.Timeout)
-			}
-			return nil, fmt.Errorf("bd %s: timed out (parent deadline)", strings.Join(args, " "))
+			elapsed := time.Since(start).Round(time.Millisecond)
+			return nil, fmt.Errorf("bd %s: timed out after %s", strings.Join(args, " "), elapsed)
 		case errors.Is(ctxErr, context.Canceled):
 			return nil, fmt.Errorf("bd %s: canceled", strings.Join(args, " "))
 		}

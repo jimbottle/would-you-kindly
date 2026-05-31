@@ -4981,6 +4981,48 @@ func TestWithCacheSnapshot_IgnoresMismatchedPreset(t *testing.T) {
 	}
 }
 
+func TestStatusBar_FailedFetchAfterWarmStartStaysCached(t *testing.T) {
+	// MED regression (job 1457): m.lastSync is set unconditionally
+	// on every fetchedMsg — including failures. After a warm-start
+	// (cached rows on screen, cacheStale=true), if the FIRST live
+	// fetch fails, lastSync is now non-zero but the rows are still
+	// the stale on-disk snapshot. The status bar must keep showing
+	// "cached <age>" — not "synced HH:MM:SS", which would lie
+	// about the data being current.
+	src := &stubSource{}
+	seed := Cache{
+		Preset:  string(filter.PresetAll),
+		SavedAt: time.Now().Add(-90 * time.Minute),
+		Issues:  []beads.Issue{{ID: "stale-row"}},
+	}
+	m := New(src).WithCacheSnapshot(seed, "")
+	if !m.cacheStale {
+		t.Fatal("setup: cache seed didn't take")
+	}
+
+	// Live fetch fails.
+	model, _ := m.Update(fetchedMsg{
+		preset: filter.PresetAll,
+		err:    errors.New("bd list --json: timed out after 10s"),
+	})
+	m = model.(Model)
+
+	if !m.cacheStale {
+		t.Fatal("cacheStale should remain true after a FAILED fetch — rows on screen are still the seed")
+	}
+	if m.lastSync.IsZero() {
+		t.Fatal("setup: lastSync should be set on every fetchedMsg (including failures) — that's the bug condition")
+	}
+
+	bar := m.statusBar()
+	if !strings.Contains(bar, "cached ") {
+		t.Errorf("status bar should show 'cached <age>' while warm-start rows are still on screen; got %q", bar)
+	}
+	if strings.Contains(bar, "synced ") {
+		t.Errorf("status bar must NOT show 'synced' over stale cached rows — that's the lie this guard exists to prevent; got %q", bar)
+	}
+}
+
 func TestFetchedMsg_ClearsCacheStaleAndPersistsSnapshot(t *testing.T) {
 	// After the live fetch lands, the on-screen rows are no
 	// longer stale, and the snapshot should land on disk so the
@@ -4999,7 +5041,7 @@ func TestFetchedMsg_ClearsCacheStaleAndPersistsSnapshot(t *testing.T) {
 	}
 
 	fresh := []beads.Issue{{ID: "wyk-7", Title: "fresh"}}
-	model, _ := m.Update(fetchedMsg{preset: filter.PresetAll, issues: fresh})
+	model, cmd := m.Update(fetchedMsg{preset: filter.PresetAll, issues: fresh})
 	m = model.(Model)
 	if m.cacheStale {
 		t.Error("cacheStale should clear after a successful fetchedMsg")
@@ -5007,6 +5049,12 @@ func TestFetchedMsg_ClearsCacheStaleAndPersistsSnapshot(t *testing.T) {
 	if len(m.all) != 1 || m.all[0].ID != "wyk-7" {
 		t.Errorf("m.all should reflect the fresh fetch; got %+v", m.all)
 	}
+	// The save is dispatched as a tea.Cmd so it runs off the
+	// event loop; execute it inline here for test determinism.
+	if cmd == nil {
+		t.Fatal("expected a save cmd from successful fetchedMsg with cachePath set")
+	}
+	_ = cmd()
 
 	// The persisted snapshot is the fresh data, not the seed.
 	got, err := LoadCache(cachePath)
