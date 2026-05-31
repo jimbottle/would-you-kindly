@@ -4281,6 +4281,20 @@ func renderFetchErrorBanner(errs []FetchError, width int) string {
 	const showFirst = 3
 	const tail = " (press r to retry; wyk doctor for details)"
 	n := len(errs)
+	// Same-error coalesce: when every sub returned the same
+	// underlying error string (typical case: every repo hit the
+	// 10s timeout because the user's machine is under load), the
+	// per-name list is noisy and the actionable signal is the
+	// shared error. Surface it once. Errors with distinct text
+	// fall through to the name-list path so the user still sees
+	// which repos are affected.
+	if n > 1 && allFetchErrsSame(errs) {
+		s := fmt.Sprintf("%d repos all failed: %s%s", n, errs[0].Err.Error(), tail)
+		if width > 0 && len(s) > width {
+			s = trunc(s, width)
+		}
+		return s
+	}
 	names := make([]string, 0, n)
 	for _, e := range errs {
 		names = append(names, e.Repo)
@@ -4299,6 +4313,31 @@ func renderFetchErrorBanner(errs []FetchError, width int) string {
 		s = trunc(s, width)
 	}
 	return s
+}
+
+// allFetchErrsSame reports whether every FetchError in the slice
+// has the same Err.Error() text. Used by the banner to collapse
+// the "every repo hit the same timeout" case into a single
+// actionable line. A nil Err is treated as the empty string —
+// two nil errors count as same, a nil-vs-non-nil mix doesn't.
+func allFetchErrsSame(errs []FetchError) bool {
+	if len(errs) < 2 {
+		return false
+	}
+	first := ""
+	if errs[0].Err != nil {
+		first = errs[0].Err.Error()
+	}
+	for _, e := range errs[1:] {
+		s := ""
+		if e.Err != nil {
+			s = e.Err.Error()
+		}
+		if s != first {
+			return false
+		}
+	}
+	return true
 }
 
 // chromeMinOverhead is the number of non-row lines viewList always

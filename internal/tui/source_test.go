@@ -552,7 +552,10 @@ func TestRenderFetchErrorBanner(t *testing.T) {
 	mk := func(names ...string) []FetchError {
 		out := make([]FetchError, len(names))
 		for i, n := range names {
-			out[i] = FetchError{Repo: n, Err: errors.New("x")}
+			// Use distinct error text per repo so the name-list
+			// regime is exercised (the same-error coalesce has
+			// its own test).
+			out[i] = FetchError{Repo: n, Err: errors.New("x-" + n)}
 		}
 		return out
 	}
@@ -577,6 +580,62 @@ func TestRenderFetchErrorBanner(t *testing.T) {
 	}
 }
 
+func TestRenderFetchErrorBanner_CoalescesSameError(t *testing.T) {
+	// When every sub fails with the same underlying error (the
+	// user's machine is under load, every repo hit the 10s
+	// timeout), the banner collapses to "N repos all failed: <err>"
+	// — surfacing the shared diagnosis rather than a noisy name
+	// list that hides it. n==1 keeps its existing "1 repo failed"
+	// phrasing; mixed errors fall through to the per-name list.
+	sameTimeout := errors.New("bd list --json: timed out after 10s")
+	errs := []FetchError{
+		{Repo: "alpha", Err: sameTimeout},
+		{Repo: "beta", Err: sameTimeout},
+		{Repo: "gamma", Err: sameTimeout},
+		{Repo: "delta", Err: sameTimeout},
+	}
+	got := renderFetchErrorBanner(errs, 0)
+	for _, want := range []string{
+		"4 repos all failed",
+		"timed out after 10s",
+		"press r to retry",
+		"wyk doctor",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("coalesced banner missing %q in %q", want, got)
+		}
+	}
+	// Per-repo name list must NOT be present — coalesced form is
+	// the whole point of the collapse.
+	for _, unwanted := range []string{"alpha,", "beta,", "gamma,"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("coalesced banner should not list repo names; found %q in %q", unwanted, got)
+		}
+	}
+
+	// Mixed errors → fall back to name list (don't collapse a
+	// false positive: the user needs to know WHICH repo broke when
+	// they don't all share the diagnosis).
+	mixed := []FetchError{
+		{Repo: "alpha", Err: errors.New("timed out after 10s")},
+		{Repo: "beta", Err: errors.New("no workspace")},
+	}
+	got = renderFetchErrorBanner(mixed, 0)
+	if !strings.Contains(got, "alpha, beta") {
+		t.Errorf("mixed-error banner should list both repos by name; got %q", got)
+	}
+	if strings.Contains(got, "all failed") {
+		t.Errorf("mixed-error banner should not coalesce; got %q", got)
+	}
+
+	// Single error keeps its established phrasing.
+	one := []FetchError{{Repo: "alpha", Err: sameTimeout}}
+	got = renderFetchErrorBanner(one, 0)
+	if !strings.Contains(got, "1 repo failed to load: alpha") {
+		t.Errorf("n=1 banner should keep its established phrasing; got %q", got)
+	}
+}
+
 func TestRenderFetchErrorBanner_TruncatesToWidth(t *testing.T) {
 	// Three long-named repos with the full retry tail will exceed
 	// a narrow terminal; the banner must cap at width with an
@@ -586,9 +645,9 @@ func TestRenderFetchErrorBanner_TruncatesToWidth(t *testing.T) {
 	// same semantic trunc uses (rune-aware, so multi-byte names
 	// can't be split mid-codepoint).
 	errs := []FetchError{
-		{Repo: "long-name-repository-one", Err: errors.New("x")},
-		{Repo: "long-name-repository-two", Err: errors.New("x")},
-		{Repo: "long-name-repository-three", Err: errors.New("x")},
+		{Repo: "long-name-repository-one", Err: errors.New("a")},
+		{Repo: "long-name-repository-two", Err: errors.New("b")},
+		{Repo: "long-name-repository-three", Err: errors.New("c")},
 	}
 	const width = 60
 	got := renderFetchErrorBanner(errs, width)
