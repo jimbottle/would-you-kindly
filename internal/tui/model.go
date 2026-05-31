@@ -817,7 +817,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Preserve scroll offset: a user who'd already paged
 			// to line 40 shouldn't be yanked back to the top.
 			prev := m.detailVP.YOffset
-			m.detailVP.SetContent(detailBody(m.detailIssue))
+			m.detailVP.SetContent(detailBody(m.detailIssue, m.detailVP.Width))
 			m.detailVP.SetYOffset(prev)
 		}
 		return m, nil
@@ -939,7 +939,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// may be empty until the Detail Cmd resolves); reset
 			// scroll to the top so a previous detail view's scroll
 			// position doesn't bleed in.
-			m.detailVP.SetContent(detailBody(m.detailIssue))
+			m.detailVP.SetContent(detailBody(m.detailIssue, m.detailVP.Width))
 			m.detailVP.GotoTop()
 			if d, ok := m.src.(Detailer); ok {
 				target := m.detailIssue
@@ -3993,24 +3993,38 @@ func relTime(t time.Time) string {
 const detailChromeHeight = 9
 
 // detailBody composes the scrolling-eligible portion of the
-// detail view: the section headings, description, and notes. The
-// fixed-chrome portion (badge, title, meta, labels, footer) lives
-// in viewDetail directly so the row's identity never scrolls off
-// the top.
-func detailBody(i beads.Issue) string {
+// detail view: the section headings, description, and notes.
+// The fixed-chrome portion (badge, title, meta, labels, footer)
+// lives in viewDetail directly so the row's identity never
+// scrolls off the top.
+//
+// width is the viewport width; the Description and Notes bodies
+// are word-wrapped to fit via lipgloss.Style.Width so a long
+// runbook step doesn't overflow horizontally off the right edge.
+// Width <= 0 (pre-WindowSizeMsg) skips the wrap so the very
+// first paint still renders something legible — the next paint
+// with a real width re-wraps correctly. Section headings stay
+// unwrapped — they're short and one-liner by design.
+func detailBody(i beads.Issue, width int) string {
+	wrap := func(s string) string {
+		if width <= 0 {
+			return s
+		}
+		return lipgloss.NewStyle().Width(width).Render(s)
+	}
 	var b strings.Builder
 	b.WriteString(detailLabelStyle.Render("instructions"))
 	b.WriteString("\n")
 	if strings.TrimSpace(i.Description) == "" {
 		b.WriteString(emptyStyle.Render("(no description)"))
 	} else {
-		b.WriteString(i.Description)
+		b.WriteString(wrap(i.Description))
 	}
 	if strings.TrimSpace(i.Notes) != "" {
 		b.WriteString("\n\n")
 		b.WriteString(detailLabelStyle.Render("notes"))
 		b.WriteString("\n")
-		b.WriteString(i.Notes)
+		b.WriteString(wrap(i.Notes))
 	}
 	return b.String()
 }
@@ -4061,7 +4075,7 @@ func (m Model) viewDetail() string {
 	// m.detailIssue (tests, future code paths) stays reflected.
 	// viewport.SetContent preserves YOffset, so the user's scroll
 	// position survives the refresh.
-	m.detailVP.SetContent(detailBody(i))
+	m.detailVP.SetContent(detailBody(i, m.detailVP.Width))
 	b.WriteString(m.detailVP.View())
 
 	// Footer: scroll percent (only when there's actually

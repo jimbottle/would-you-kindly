@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
@@ -1012,6 +1013,36 @@ func TestDetailView_RendersNotesWhenPresent(t *testing.T) {
 	lower := strings.ToLower(out)
 	if strings.Contains(lower, "\nnotes\n") {
 		t.Errorf("detail view should NOT render notes section when Notes is empty; got:\n%s", out)
+	}
+}
+
+func TestDetailBody_WrapsLongDescription(t *testing.T) {
+	// Long single-line description must wrap to the viewport
+	// width — without this, the detail view spills horizontally
+	// off the right edge and the body is unreadable.
+	long := strings.Repeat("word ", 30) // ~150 chars, well past 40-col wrap
+	i := beads.Issue{Description: long}
+	out := detailBody(i, 40)
+	// Each rendered line must be ≤ 40 cells. lipgloss may emit
+	// ANSI; strip the test of ANSI by checking each line as-is
+	// since this body has no foreground styles applied to its
+	// body content.
+	for _, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > 40 {
+			t.Errorf("line wider than 40 cells (%d): %q", w, line)
+		}
+	}
+}
+
+func TestDetailBody_WidthZeroSkipsWrap(t *testing.T) {
+	// Pre-WindowSizeMsg the viewport width is zero; the body
+	// should still render (without wrap) so the first paint
+	// shows something legible. The next paint with a real width
+	// re-wraps correctly.
+	i := beads.Issue{Description: "a very long line that should not be touched here"}
+	out := detailBody(i, 0)
+	if !strings.Contains(out, "a very long line that should not be touched here") {
+		t.Errorf("width=0 should pass body through verbatim; got %q", out)
 	}
 }
 
