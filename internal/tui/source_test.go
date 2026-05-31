@@ -141,6 +141,14 @@ func (f *fakeRepoSource) SetIssueType(_ context.Context, i beads.Issue, issueTyp
 	return nil
 }
 
+// ListDeps satisfies DepLister (and thus fullSource) for the
+// multi-repo routing tests. The fake has no dependency edges, so
+// every issue resolves to an empty set — enough to keep the
+// MultiBDSource.ListDeps routing test honest without canned data.
+func (f *fakeRepoSource) ListDeps(_ context.Context, _ string) ([]beads.Issue, error) {
+	return nil, nil
+}
+
 // newMultiForTest builds a MultiBDSource directly from fake subs so
 // tests don't have to wire up real bd.Clients. The branchFn is a
 // constant so assertions can pin the branch column too.

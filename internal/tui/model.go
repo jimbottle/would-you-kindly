@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -147,6 +148,22 @@ type Mutator interface {
 // to whatever the original fetch returned.
 type Detailer interface {
 	Detail(ctx context.Context, issue beads.Issue) (beads.Issue, error)
+}
+
+// DepLister exposes one issue's direct dependencies so the model's
+// topological deps-sort can build the edge set for the visible
+// rows. Optional — when the Source doesn't satisfy it the deps
+// sort degrades to the bd-supplied DependencyCount level proxy
+// (see applySort's sortDeps branch). Both BDSource and
+// MultiBDSource implement it; the model type-asserts m.src at
+// runtime, mirroring the Mutator / Detailer pattern.
+//
+// It takes a bare ID rather than a full Issue (unlike the write
+// methods): the deps sort keys everything off Issue.ID, and a
+// MultiBDSource routes by ID prefix anyway, so threading the Repo
+// through would add nothing the ID doesn't already encode.
+type DepLister interface {
+	ListDeps(ctx context.Context, id string) ([]beads.Issue, error)
 }
 
 // Model is the Bubble Tea model.
@@ -290,6 +307,32 @@ type Model struct {
 	// reverse).
 	sortDesc bool
 
+	// depLister resolves an issue's direct dependencies for the
+	// topological deps-sort. Set in New from m.src when the Source
+	// satisfies DepLister (both BDSource and MultiBDSource do); nil
+	// when the Source is read-only / a test stub without dep
+	// support, in which case the deps sort falls back to the
+	// DependencyCount level proxy.
+	depLister DepLister
+
+	// depCache memoises the direct-dependency edge set per issue ID
+	// so the deps-sort doesn't re-shell `bd dep list` on every
+	// re-sort / re-filter. Populated asynchronously: when the deps
+	// sort is active and some visible row's edges aren't cached
+	// yet, recomputeVisible dispatches a resolveDepsCmd and re-sorts
+	// when the depsResolvedMsg lands. A nil/missing entry is treated
+	// as "unknown" (the sort falls back to the count proxy until
+	// every visible row is resolved); a present-but-empty entry
+	// means "resolved, no deps".
+	depCache map[string][]beads.Issue
+
+	// depErr records the IDs whose ListDeps call failed so the
+	// resolver doesn't spin re-fetching a workspace that keeps
+	// erroring. An errored ID is treated as resolved-with-no-deps
+	// for sort purposes (in-degree 0), matching the "unknown deps
+	// are satisfied" rule the off-screen-dependency case relies on.
+	depErr map[string]bool
+
 	// showClosed mirrors the BDSource/MultiBDSource IncludeClosed
 	// flag so the chip strip + status bar can render it without
 	// reaching back through the Source. Toggled by C.
@@ -425,7 +468,7 @@ func New(src Source) Model {
 	// lipgloss.Style is a value type; plain assignment is the copy.
 	h.Styles.ShortSeparator = helpStyle
 
-	return Model{
+	m := Model{
 		src:         src,
 		keys:        defaultKeyMap(),
 		mode:        modeList,
@@ -438,7 +481,16 @@ func New(src Source) Model {
 		spinner:     sp,
 		help:        h,
 		priorityCap: -1,
+		depCache:    map[string][]beads.Issue{},
+		depErr:      map[string]bool{},
 	}
+	// Adopt the dep-resolution seam when the Source supports it so
+	// the deps sort can fetch real edges. Read-only / stub Sources
+	// leave this nil and the sort degrades to the count proxy.
+	if dl, ok := src.(DepLister); ok {
+		m.depLister = dl
+	}
+	return m
 }
 
 // NewWithHint is New plus a setupHint banner shown above the issue
@@ -620,14 +672,16 @@ const (
 	sortUpdated
 	sortRepo
 	sortID
-	// sortDeps orders rows so issues with no dependencies appear
-	// first, followed by issues with one dependency, then two,
-	// etc. Uses the bd-supplied DependencyCount as a level proxy:
-	// it captures "depth from leaves" approximately but is NOT a
-	// true topological sort (two issues with DependencyCount=1
-	// could be at different depths in the actual graph). True
-	// transitive ordering would require fetching the edge set per
-	// issue via ListDeps; followup work.
+	// sortDeps orders rows topologically against the CURRENT
+	// VISIBLE SET: roots (nothing they depend on is on screen)
+	// first, then issues whose deps are all already emitted,
+	// deeper levels later. Edges come from the per-issue dep set
+	// resolved via DepLister into m.depCache; dependencies pointing
+	// at issues NOT in the visible set are ignored (treated as
+	// already satisfied). Until every visible row's edges are
+	// cached, the sort degrades to the bd-supplied DependencyCount
+	// level proxy so the first paint isn't blocked on N `bd dep
+	// list` round-trips. See sortByDeps / resolveDepsCmd.
 	sortDeps
 )
 
@@ -887,6 +941,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prev := m.detailVP.YOffset
 			m.detailVP.SetContent(detailBody(m.detailIssue, m.detailVP.Width))
 			m.detailVP.SetYOffset(prev)
+		}
+		return m, nil
+
+	case depsResolvedMsg:
+		// Merge freshly-resolved edges (and failures) into the
+		// caches, then re-sort if the deps sort is still active so
+		// the view switches from the count proxy to the real
+		// topological order. A late batch that arrives after the
+		// user has moved off the deps sort still updates the cache
+		// (cheap, and warms a future re-entry) but skips the
+		// re-sort.
+		if m.depCache == nil {
+			m.depCache = map[string][]beads.Issue{}
+		}
+		if m.depErr == nil {
+			m.depErr = map[string]bool{}
+		}
+		for id, d := range msg.deps {
+			m.depCache[id] = d
+		}
+		for _, id := range msg.failed {
+			m.depErr[id] = true
+			// Treat an errored ID as resolved-with-no-deps for the
+			// sort: cache an empty edge set so depsFullyResolved can
+			// see the whole visible set as covered and switch to the
+			// real topo order (in-degree 0 for the failed node).
+			if _, ok := m.depCache[id]; !ok {
+				m.depCache[id] = nil
+			}
+		}
+		if m.sortBy == sortDeps {
+			m.recomputeVisible()
+			m.ensureCursorVisible()
 		}
 		return m, nil
 
@@ -1967,17 +2054,20 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		m.recomputeVisible()
 		m.ensureCursorVisible()
+		// A widened filter can pull in rows whose deps aren't cached
+		// under an active deps sort; resolve them (nil Cmd otherwise).
+		depCmd := m.maybeResolveDeps()
 		if m.status != "" {
-			return m, flashClearCmd(m.statusGen)
+			return m, tea.Batch(flashClearCmd(m.statusGen), depCmd)
 		}
-		return m, nil
+		return m, depCmd
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.query = m.input.Value()
 	m.recomputeVisible()
 	m.ensureCursorVisible()
-	return m, cmd
+	return m, tea.Batch(cmd, m.maybeResolveDeps())
 }
 
 // recomputeVisible applies the fuzzy filter to m.all. The matcher
@@ -2010,7 +2100,7 @@ func (m *Model) recomputeVisible() {
 		// bd's native order.
 		out := make([]beads.Issue, len(pool))
 		copy(out, pool)
-		applySort(out, m.sortBy, m.sortDesc)
+		applySort(out, m.sortBy, m.sortDesc, m.depCache)
 		m.visible = out
 		m.titleMatches = nil // no filter → no highlight
 		if m.cursor >= len(m.visible) {
@@ -2054,7 +2144,7 @@ func (m *Model) recomputeVisible() {
 	}
 	// Sort overrides the fuzzy-score ordering when set — the user
 	// asked for a specific axis, honour it.
-	applySort(out, m.sortBy, m.sortDesc)
+	applySort(out, m.sortBy, m.sortDesc, m.depCache)
 	m.visible = out
 
 	if m.cursor >= len(m.visible) {
@@ -2065,8 +2155,24 @@ func (m *Model) recomputeVisible() {
 // applySort orders the issue slice in place per the chosen sort
 // key. sortNone is a no-op so callers can pass through without
 // branching. Priority ASC (P0 first); updated DESC (newest first);
-// repo / id ASC (alphabetical).
-func applySort(issues []beads.Issue, k sortKey, reverse bool) {
+// repo / id ASC (alphabetical). deps is a topological order built
+// from depCache (see sortByDeps); it's handled separately because
+// a topo order isn't expressible as a pairwise less-func.
+//
+// depCache supplies the resolved dependency edges the deps sort
+// needs; it's ignored for every other axis. A nil cache (no
+// DepLister, or nothing resolved yet) makes the deps sort fall
+// back to the DependencyCount level proxy.
+func applySort(issues []beads.Issue, k sortKey, reverse bool, depCache map[string][]beads.Issue) {
+	if k == sortDeps {
+		sortByDeps(issues, depCache)
+		if reverse {
+			for i, j := 0, len(issues)-1; i < j; i, j = i+1, j-1 {
+				issues[i], issues[j] = issues[j], issues[i]
+			}
+		}
+		return
+	}
 	// Each axis declares its NATURAL direction (priority asc =
 	// P0 first; updated desc = newest first). Reverse flips the
 	// less-func so a single bool drives every axis the same way.
@@ -2080,21 +2186,6 @@ func applySort(issues []beads.Issue, k sortKey, reverse bool) {
 		less = func(i, j int) bool { return issues[i].Repo < issues[j].Repo }
 	case sortID:
 		less = func(i, j int) bool { return issues[i].ID < issues[j].ID }
-	case sortDeps:
-		// DependencyCount ASC: 0-dep rows at top, then 1-dep, etc.
-		// Tiebreak by Priority ASC then ID ASC so within a level
-		// the ordering is deterministic and reads like the priority
-		// sort. Approximate: see the const block comment for why
-		// this isn't a strict topological sort.
-		less = func(i, j int) bool {
-			if issues[i].DependencyCount != issues[j].DependencyCount {
-				return issues[i].DependencyCount < issues[j].DependencyCount
-			}
-			if issues[i].Priority != issues[j].Priority {
-				return issues[i].Priority < issues[j].Priority
-			}
-			return issues[i].ID < issues[j].ID
-		}
 	default:
 		return
 	}
@@ -2103,6 +2194,165 @@ func applySort(issues []beads.Issue, k sortKey, reverse bool) {
 		less = func(i, j int) bool { return base(j, i) }
 	}
 	sort.SliceStable(issues, less)
+}
+
+// sortByDeps reorders issues in place into a topological order
+// (Kahn's algorithm) against the CURRENT visible set:
+//
+//   - Edges are the direct dependencies in depCache. A dependency
+//     pointing at an issue NOT in `issues` is ignored — treated as
+//     already satisfied — so an issue blocked only by off-screen
+//     work sorts as a root.
+//   - In-degree 0 nodes (roots) come first; an issue is emitted
+//     once every visible dep it has is already emitted; deeper
+//     levels follow.
+//   - Within a batch of newly-ready nodes the tiebreak is Priority
+//     ASC then ID ASC, matching the priority sort's reading order.
+//   - Cycles can't crash: when no zero-in-degree node remains but
+//     nodes are left, the remaining node with lowest Priority then
+//     lowest ID is force-emitted to break the cycle, and the loop
+//     continues.
+//
+// Fallback: when depCache doesn't cover every visible row (no
+// DepLister, or async resolution hasn't finished), the true edge
+// set is unknown, so a partial topo order would be misleading.
+// Degrade to the DependencyCount level proxy (count ASC, then
+// Priority ASC, then ID ASC) — the same ordering the old proxy
+// produced — so the first paint stays sensible until the cache
+// fills in.
+func sortByDeps(issues []beads.Issue, depCache map[string][]beads.Issue) {
+	if !depsFullyResolved(issues, depCache) {
+		sort.SliceStable(issues, func(i, j int) bool {
+			if issues[i].DependencyCount != issues[j].DependencyCount {
+				return issues[i].DependencyCount < issues[j].DependencyCount
+			}
+			if issues[i].Priority != issues[j].Priority {
+				return issues[i].Priority < issues[j].Priority
+			}
+			return issues[i].ID < issues[j].ID
+		})
+		return
+	}
+
+	// Index the visible set so off-screen deps can be skipped and
+	// each node located by ID. Two issues sharing an ID (cross-repo
+	// collision) is possible in theory; the visible set is keyed by
+	// bare ID here because depCache and DependencyCount are too —
+	// the deps sort is a best-effort ordering aid, not a routing
+	// decision, so a collision degrades to "treated as one node"
+	// rather than mis-routing a write.
+	idx := make(map[string]int, len(issues))
+	for i := range issues {
+		idx[issues[i].ID] = i
+	}
+
+	// Build in-degree and the reverse adjacency (dep -> dependents)
+	// counting only edges whose target is in the visible set.
+	inDeg := make(map[string]int, len(issues))
+	dependents := make(map[string][]string, len(issues))
+	for i := range issues {
+		id := issues[i].ID
+		if _, ok := inDeg[id]; !ok {
+			inDeg[id] = 0
+		}
+		for _, d := range depCache[id] {
+			if _, onScreen := idx[d.ID]; !onScreen {
+				continue // off-screen dep: already satisfied
+			}
+			if d.ID == id {
+				continue // self-edge: ignore so it doesn't deadlock
+			}
+			inDeg[id]++
+			dependents[d.ID] = append(dependents[d.ID], id)
+		}
+	}
+
+	// less ranks ready nodes by Priority ASC then ID ASC.
+	less := func(a, b string) bool {
+		ia, ib := issues[idx[a]], issues[idx[b]]
+		if ia.Priority != ib.Priority {
+			return ia.Priority < ib.Priority
+		}
+		return ia.ID < ib.ID
+	}
+
+	emitted := make(map[string]bool, len(issues))
+	out := make([]beads.Issue, 0, len(issues))
+
+	// Seed the ready set with every in-degree-0 node.
+	var ready []string
+	for i := range issues {
+		if inDeg[issues[i].ID] == 0 {
+			ready = append(ready, issues[i].ID)
+		}
+	}
+	sort.Slice(ready, func(i, j int) bool { return less(ready[i], ready[j]) })
+
+	emit := func(id string) {
+		emitted[id] = true
+		out = append(out, issues[idx[id]])
+		// Decrement dependents; newly-zero ones become ready. Insert
+		// in sorted position so the per-level tiebreak holds without
+		// re-sorting the whole ready slice each time.
+		for _, dep := range dependents[id] {
+			if emitted[dep] {
+				continue
+			}
+			inDeg[dep]--
+			if inDeg[dep] == 0 {
+				pos := sort.Search(len(ready), func(i int) bool { return less(dep, ready[i]) })
+				ready = append(ready, "")
+				copy(ready[pos+1:], ready[pos:])
+				ready[pos] = dep
+			}
+		}
+	}
+
+	for len(out) < len(issues) {
+		if len(ready) > 0 {
+			id := ready[0]
+			ready = ready[1:]
+			if emitted[id] {
+				continue
+			}
+			emit(id)
+			continue
+		}
+		// No zero-in-degree node but nodes remain → a cycle. Break it
+		// by force-emitting the lowest-Priority-then-ID survivor so
+		// the loop can make progress instead of spinning forever.
+		var pick string
+		for i := range issues {
+			id := issues[i].ID
+			if emitted[id] {
+				continue
+			}
+			if pick == "" || less(id, pick) {
+				pick = id
+			}
+		}
+		if pick == "" {
+			break // defensive: nothing left to emit
+		}
+		emit(pick)
+	}
+
+	copy(issues, out)
+}
+
+// depsFullyResolved reports whether depCache holds an entry for
+// every issue in the slice. Only then is a true topological order
+// computable; otherwise the deps sort degrades to the count proxy.
+func depsFullyResolved(issues []beads.Issue, depCache map[string][]beads.Issue) bool {
+	if depCache == nil {
+		return false
+	}
+	for i := range issues {
+		if _, ok := depCache[issues[i].ID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // setPriorityCap updates the priority filter and re-runs the
@@ -2132,7 +2382,10 @@ func (m Model) setSortKey(k sortKey) (tea.Model, tea.Cmd) {
 	m.cursor = 0
 	m.recomputeVisible()
 	m.ensureCursorVisible()
-	return m, nil
+	// Entering the deps sort kicks off async resolution of any
+	// visible row's edges we don't have cached yet; the first paint
+	// uses the count proxy and re-sorts when depsResolvedMsg lands.
+	return m, m.maybeResolveDeps()
 }
 
 // reverseSort flips m.sortDesc and re-runs the visible-row
@@ -2149,6 +2402,84 @@ func (m Model) reverseSort() (tea.Model, tea.Cmd) {
 	m.recomputeVisible()
 	m.ensureCursorVisible()
 	return m, nil
+}
+
+// depsResolvedMsg carries a batch of freshly-resolved dependency
+// edge sets back to the model so the deps sort can switch from the
+// count proxy to the real topological order. deps maps issue ID →
+// its direct dependencies; failed lists IDs whose ListDeps call
+// errored (recorded so the resolver doesn't re-spin them). Both are
+// merged into m.depCache / m.depErr in Update.
+type depsResolvedMsg struct {
+	deps   map[string][]beads.Issue
+	failed []string
+}
+
+// maybeResolveDeps returns a Cmd that resolves the direct
+// dependencies of every visible row not already in m.depCache (or
+// known-failed), so the deps sort can build a real topological
+// order. Returns nil — no Cmd — when the deps sort isn't active,
+// no DepLister is wired, or every visible row is already resolved;
+// nil keeps the existing async/message conventions (a no-op Cmd
+// would still cost a round-trip through the event loop).
+//
+// Resolution runs off the Bubble Tea event loop in the Cmd
+// goroutine so the N `bd dep list` shell-outs never block input;
+// the result arrives as a depsResolvedMsg and triggers a re-sort.
+func (m Model) maybeResolveDeps() tea.Cmd {
+	if m.sortBy != sortDeps || m.depLister == nil {
+		return nil
+	}
+	// Collect the IDs we still need. Snapshot from m.visible so the
+	// scope matches what's on screen; skip anything already cached
+	// or already known to fail.
+	var want []string
+	seen := make(map[string]bool, len(m.visible))
+	for _, i := range m.visible {
+		if seen[i.ID] {
+			continue
+		}
+		seen[i.ID] = true
+		if _, ok := m.depCache[i.ID]; ok {
+			continue
+		}
+		if m.depErr[i.ID] {
+			continue
+		}
+		want = append(want, i.ID)
+	}
+	if len(want) == 0 {
+		return nil
+	}
+	dl := m.depLister
+	return func() tea.Msg {
+		// Bound concurrency the same way the HUMAN-BLOCK scan does so
+		// a large visible set doesn't fan out an unbounded number of
+		// bd subprocesses.
+		sem := make(chan struct{}, markBlockedByHumanConcurrency)
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		deps := make(map[string][]beads.Issue, len(want))
+		var failed []string
+		for _, id := range want {
+			wg.Add(1)
+			go func(id string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				d, err := dl.ListDeps(context.Background(), id)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					failed = append(failed, id)
+					return
+				}
+				deps[id] = d
+			}(id)
+		}
+		wg.Wait()
+		return depsResolvedMsg{deps: deps, failed: failed}
+	}
 }
 
 // handleYank copies the cursor issue's full ID to the system

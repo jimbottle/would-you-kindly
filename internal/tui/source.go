@@ -47,9 +47,10 @@ type BDSource struct {
 
 // Compile-time check that BDSource satisfies the three interfaces.
 var (
-	_ Source   = (*BDSource)(nil)
-	_ Mutator  = (*BDSource)(nil)
-	_ Detailer = (*BDSource)(nil)
+	_ Source    = (*BDSource)(nil)
+	_ Mutator   = (*BDSource)(nil)
+	_ Detailer  = (*BDSource)(nil)
+	_ DepLister = (*BDSource)(nil)
 )
 
 // Fetch dispatches to the right bd subcommand for the preset, then
@@ -317,6 +318,16 @@ func (s *BDSource) Create(ctx context.Context, _ /* repo */, title, assignee str
 	})
 }
 
+// ListDeps returns the direct dependencies of issue id, shelling
+// through to the underlying bd Client. Satisfies DepLister so the
+// TUI's topological deps-sort can resolve the visible set's edges
+// without reaching past the Source. Best-effort by virtue of
+// Client.ListDeps — a missing/malformed dep block yields an empty
+// slice rather than an error.
+func (s *BDSource) ListDeps(ctx context.Context, id string) ([]beads.Issue, error) {
+	return s.Client.ListDeps(ctx, id)
+}
+
 // Detail runs `bd show <id>` and decorates the resulting issue with
 // Repo/Branch so callers can treat it like any other Source-derived
 // Issue.
@@ -341,6 +352,7 @@ type fullSource interface {
 	Source
 	Mutator
 	Detailer
+	DepLister
 }
 
 // subRepo is one row in MultiBDSource's per-repo table. Held as an
@@ -421,6 +433,7 @@ var (
 	_ Source      = (*MultiBDSource)(nil)
 	_ Mutator     = (*MultiBDSource)(nil)
 	_ Detailer    = (*MultiBDSource)(nil)
+	_ DepLister   = (*MultiBDSource)(nil)
 	_ MultiSource = (*MultiBDSource)(nil)
 )
 
@@ -707,6 +720,44 @@ func (m *MultiBDSource) Detail(ctx context.Context, i beads.Issue) (beads.Issue,
 		return beads.Issue{}, err
 	}
 	return sub.Detail(ctx, i)
+}
+
+// ListDeps routes a `bd dep list` to the workspace that owns id,
+// resolved by longest-prefix match on the registered sub names
+// (the same rule FetchWithSubErrors uses to guard against foreign
+// rows). Satisfies DepLister so the TUI's topological deps-sort can
+// resolve edges across the union. Unlike the Mutator/Detailer
+// methods, ListDeps takes a bare ID — the deps sort works off
+// Issue.ID, and threading the full Repo would just duplicate the
+// prefix routing the IDs already encode. An ID that no registered
+// sub claims returns an error so a caller can degrade rather than
+// silently mis-route.
+func (m *MultiBDSource) ListDeps(ctx context.Context, id string) ([]beads.Issue, error) {
+	sub := m.subForID(id)
+	if sub == nil {
+		return nil, fmt.Errorf("no registered workspace claims issue %q", id)
+	}
+	return sub.ListDeps(ctx, id)
+}
+
+// subForID returns the sub whose name is the longest registered
+// prefix of id (matching N such that id begins with N+"-"). nil
+// means no registered sub claims the ID. Mirrors the longest-
+// prefix-match rule in FetchWithSubErrors so a nested-prefix
+// registry (foo and foo-bar) routes to the more specific repo.
+func (m *MultiBDSource) subForID(id string) fullSource {
+	var best subRepo
+	var bestLen = -1
+	for _, sub := range m.subs {
+		if strings.HasPrefix(id, sub.name+"-") && len(sub.name) > bestLen {
+			best = sub
+			bestLen = len(sub.name)
+		}
+	}
+	if bestLen < 0 {
+		return nil
+	}
+	return best.src
 }
 
 // Create routes the new issue to a specific sub by name. If repo is
