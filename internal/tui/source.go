@@ -148,6 +148,21 @@ func (s *BDSource) Fetch(ctx context.Context, p filter.Preset) ([]beads.Issue, e
 // rather than scaling as M*8 with a per-workspace cap.
 const markBlockedByHumanConcurrency = 8
 
+// fetchConcurrency caps how many per-repo `bd list` fetches run at
+// once inside FetchWithSubErrors. Each fetch can cold-start that
+// workspace's embedded-Dolt engine, and launching all N at once
+// (the old unbounded fan-out) made every engine contend for CPU/IO
+// at the same instant — a thundering herd that routinely blew past
+// the bd client's per-call 10s deadline once a few repos were
+// registered. Throttling entry to a small window keeps each
+// individual fetch under that deadline while still overlapping
+// enough to beat the sequential cost. Kept below
+// markBlockedByHumanConcurrency on purpose: the dep-scan is cheap
+// `bd dep list` calls against an already-warm engine, whereas these
+// are the expensive cold-start `bd list` calls we actually need to
+// rate-limit.
+const fetchConcurrency = 4
+
 // markBlockedByHuman runs `bd dep list <id>` for every candidate
 // issue (src:agent + NOT human + DependencyCount > 0) and stamps
 // Issue.BlockedByHuman=true on any whose blocker set includes a
@@ -456,11 +471,25 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 	results := make([]result, len(m.subs))
 	branches := make([]string, len(m.subs))
 
+	// fetchSem bounds how many sub-fetches cold-start at once. It's
+	// allocated per-call rather than held as a shared field (like
+	// depSem): in practice only one refresh is ever in flight — the
+	// model's tick chain coalesces overlapping ticks (see model.go's
+	// in-flight guard) — so a per-call channel is simpler and just as
+	// correct, and it can't accidentally serialise two legitimately
+	// concurrent FetchWithSubErrors callers against each other.
+	// Acquiring from a buffered channel never blocks past a token
+	// release, and the bd call inside already respects ctx, so a
+	// canceled fetch still unwinds promptly.
+	fetchSem := make(chan struct{}, fetchConcurrency)
+
 	var wg sync.WaitGroup
 	for i, sub := range m.subs {
 		wg.Add(1)
 		go func(i int, sub subRepo) {
 			defer wg.Done()
+			fetchSem <- struct{}{}
+			defer func() { <-fetchSem }()
 			issues, err := sub.src.Fetch(ctx, p)
 			results[i] = result{issues: issues, err: err}
 			if err == nil {

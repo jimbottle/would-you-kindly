@@ -343,6 +343,71 @@ func TestTickSuspendsOnTerminalError(t *testing.T) {
 	}
 }
 
+// TestTickCoalescesWhileRefreshing proves the in-flight guard: a tick
+// that fires while a fetch is already in flight (m.refreshing)
+// reschedules the next tick but does NOT pile on a second overlapping
+// fetch. This is the guard that stops the poll-interval-vs-timeout
+// collision from becoming self-sustaining — without it, a slow
+// refresh would be lapped by the next tick and double the cold-start
+// load on the embedded-Dolt engines.
+func TestTickCoalescesWhileRefreshing(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	// A fetch is in flight: not the first-paint load (that's
+	// cleared by applyFetched), but a previous tick / manual refresh
+	// whose fetchedMsg hasn't landed yet.
+	m.refreshing = true
+	callsBefore := src.calls
+
+	_, cmd := m.Update(tickMsg{gen: m.tickGen})
+	// drainCmd runs the returned command (and any batched children)
+	// for their side effects; if a fetch had been batched in, the
+	// stub's Fetch would bump src.calls.
+	drainCmd(cmd)
+
+	if cmd == nil {
+		t.Fatal("tick while refreshing should still reschedule the next tick")
+	}
+	if src.calls != callsBefore {
+		t.Errorf("tick dispatched a second fetch while one was already in flight; calls before=%d after=%d", callsBefore, src.calls)
+	}
+}
+
+// TestTickCoalescesWhileLoading is the same guard for the initial-
+// load case: the first-paint fetch is still outstanding (m.loading),
+// so a tick must reschedule without launching an overlapping fetch.
+func TestTickCoalescesWhileLoading(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := New(src) // loading == true by construction; no fetch has landed
+	callsBefore := src.calls
+
+	_, cmd := m.Update(tickMsg{gen: m.tickGen})
+	drainCmd(cmd)
+
+	if cmd == nil {
+		t.Fatal("tick while loading should still reschedule the next tick")
+	}
+	if src.calls != callsBefore {
+		t.Errorf("tick dispatched a fetch while the first-paint load was in flight; calls before=%d after=%d", callsBefore, src.calls)
+	}
+}
+
+// TestTickDispatchesFetchWhenIdle is the positive case: a tick that
+// fires with no fetch in flight DOES start one (and reschedules),
+// confirming the coalesce guard doesn't wedge the poll loop shut.
+func TestTickDispatchesFetchWhenIdle(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src) // loading + refreshing both cleared
+	callsBefore := src.calls
+
+	_, cmd := m.Update(tickMsg{gen: m.tickGen})
+	drainCmd(cmd)
+
+	if src.calls <= callsBefore {
+		t.Errorf("idle tick should dispatch a fetch; calls before=%d after=%d", callsBefore, src.calls)
+	}
+}
+
 func TestCtrlCQuitsFromFilterPrompt(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

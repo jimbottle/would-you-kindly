@@ -55,7 +55,17 @@ func (s descSource) Len() int            { return len(s) }
 // refreshInterval is how often the TUI polls bd for changes. A timer
 // keeps things simple and avoids a filesystem-watcher dependency;
 // .beads/issues.jsonl rewrites are cheap to re-query.
-const refreshInterval = 10 * time.Second
+//
+// Intentionally LARGER than — and decoupled from — the beads client
+// per-call timeout (beads.perCallTimeout, 10s). When the two were
+// equal, a refresh that nearly filled its 10s budget was immediately
+// re-triggered by the next tick, so the machine never idled long
+// enough to recover and the timeouts became self-sustaining. The
+// extra headroom (plus the tickMsg in-flight guard below) guarantees
+// a slow refresh finishes and the engines quiesce before the next
+// poll starts. Warm-start paints cached rows on launch, so the
+// longer poll is invisible to first paint.
+const refreshInterval = 20 * time.Second
 
 // mode tracks the user's interaction context.
 type mode int
@@ -848,6 +858,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tickGen++
 			return m, nil
 		}
+		// Coalesce ticks: if a fetch is already in flight (initial
+		// load, a manual `r`, or a previous tick whose fetch hasn't
+		// returned yet), don't pile on a second overlapping fetch —
+		// just reschedule the next tick. Overlapping fetches were a
+		// structural cause of the self-sustaining timeouts: a refresh
+		// that ran long would be lapped by the next tick, doubling the
+		// cold-start load on the embedded-Dolt engines right when they
+		// were already struggling. The next tick re-checks and fetches
+		// once the in-flight one has cleared (fetchedMsg resets both
+		// flags). Manual `r` is unaffected — it forces its own fetch
+		// and restarts the chain (see manualRefresh).
+		if m.loading || m.refreshing {
+			return m, tickCmd(m.tickGen)
+		}
+		m.refreshing = true
 		return m, tea.Batch(m.fetchCmd(), tickCmd(m.tickGen))
 
 	case fsEventMsg:

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -66,6 +68,23 @@ type fakeRepoSource struct {
 	added        []labelOp
 	removed      []labelOp
 	notes        []labelOp
+
+	// fetchDelay, when non-zero, makes Fetch sleep for that long
+	// while holding a fan-out slot — long enough for the
+	// concurrency-cap test to observe overlapping fetches via
+	// curFetch/maxFetch.
+	fetchDelay time.Duration
+	// curFetch / maxFetch track concurrent Fetch entries so a test
+	// can assert FetchWithSubErrors never runs more than
+	// fetchConcurrency sub-fetches at once. BOTH must be shared
+	// across all subs in a run (they measure the peak across the
+	// whole fan-out, not per-sub — each sub's Fetch only ever runs
+	// once, so a per-sub counter would never exceed 1). Touched via
+	// sync/atomic so the race detector stays quiet under the
+	// MultiBDSource fan-out; nil maxFetch disables the tracking
+	// entirely so the existing routing tests pay nothing.
+	curFetch *int32
+	maxFetch *int32
 }
 
 // priorityOp records a SetPriority call so multi-source tests can
@@ -76,6 +95,24 @@ type priorityOp struct {
 }
 
 func (f *fakeRepoSource) Fetch(_ context.Context, _ filter.Preset) ([]beads.Issue, error) {
+	// Track concurrent entries so the cap test can assert the
+	// observed peak never exceeds fetchConcurrency. atomic so -race
+	// is happy with the MultiBDSource fan-out reading/writing these
+	// from several goroutines at once. Skipped entirely when maxFetch
+	// is nil (the routing tests), keeping them allocation-free.
+	if f.maxFetch != nil {
+		n := atomic.AddInt32(f.curFetch, 1)
+		for {
+			old := atomic.LoadInt32(f.maxFetch)
+			if n <= old || atomic.CompareAndSwapInt32(f.maxFetch, old, n) {
+				break
+			}
+		}
+		if f.fetchDelay > 0 {
+			time.Sleep(f.fetchDelay)
+		}
+		atomic.AddInt32(f.curFetch, -1)
+	}
 	if f.fetchErr != nil {
 		return nil, f.fetchErr
 	}
