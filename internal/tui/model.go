@@ -1507,6 +1507,14 @@ func (m Model) handleRepeat() (tea.Model, tea.Cmd) {
 		return m, runWrite(fmt.Sprintf("set P%d", n), target.ID, func(ctx context.Context) error {
 			return mu.SetPriority(ctx, target, n)
 		})
+	case "type":
+		// Replay the stored type verbatim rather than re-cycling
+		// from the target's current value — matches how priority
+		// replay re-applies the stored value, so `.` is "redo the
+		// last write" not "do the same kind of action."
+		return m, runWrite(fmt.Sprintf("set type=%s", arg), target.ID, func(ctx context.Context) error {
+			return mu.SetIssueType(ctx, target, arg)
+		})
 	case "flag":
 		return m, runWrite("flag", target.ID, func(ctx context.Context) error {
 			return mu.AddLabel(ctx, target, "human")

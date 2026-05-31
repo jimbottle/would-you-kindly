@@ -3099,6 +3099,45 @@ func TestTypeCycle_DispatchesSetIssueType(t *testing.T) {
 	}
 }
 
+func TestTypeCycle_RepeatReappliesStoredType(t *testing.T) {
+	// Press T, then press .; the second write must replay the
+	// stored type verbatim (not re-cycle from the row's current
+	// type), matching how priority replay re-applies the stored
+	// value. Guards the case "type" branch in handleRepeat.
+	src := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: "rotate", Status: "open", IssueType: "task"},
+	}}}
+	m := applyFetched(New(&src.stubSource).WithMe("ev"), &src.stubSource)
+	m.src = src
+
+	// First press: T cycles task → bug.
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("T returned nil cmd")
+	}
+	cmd()
+
+	// Second press: . replays the stored type ("bug") against the
+	// same row. handleRepeat looks at the cursor row's current
+	// IssueType for context but feeds `arg` to SetIssueType, so
+	// even though the stub doesn't refetch, the dispatched value
+	// must still be "bug".
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+	_ = model
+	if cmd == nil {
+		t.Fatal(". returned nil cmd — repeat case 'type' likely missing")
+	}
+	cmd()
+
+	if len(src.issueTypes) != 2 {
+		t.Fatalf("SetIssueType called %d times, want 2; recorded=%v", len(src.issueTypes), src.issueTypes)
+	}
+	if src.issueTypes[1].label != "bug" {
+		t.Errorf("repeat call SetIssueType[1] = %q, want %q (stored type replayed)", src.issueTypes[1].label, "bug")
+	}
+}
+
 func TestYankMarkdown_OpenRowEmitsUncheckedBox(t *testing.T) {
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "a-1", Title: "rotate", Status: "open"},

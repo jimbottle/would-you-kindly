@@ -362,8 +362,8 @@ func runHandoff(args []string) int {
 		return 64
 	case *createTitle == "" && fs.NArg() != 1:
 		fmt.Fprintln(os.Stderr,
-			"usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] <issue-id>\n"+
-				"   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-file <path>]")
+			"usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <issue-id>\n"+
+				"   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-file <path>] [-dry-run]")
 		return 64
 	}
 

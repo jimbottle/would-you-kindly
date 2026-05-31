@@ -32,7 +32,7 @@ func runDashboard(args []string) int {
 	asJSON := fs.Bool("json", false, "emit a structured JSON object instead of the table")
 	days := fs.Int("days", 7, "window for the closed-recently column (default 7)")
 	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (empty = every registered repo)")
-	maxPriority := fs.Int("priority", -1, "cap rows at priority N or higher (lower number = higher priority; -1 disables)")
+	maxPriority := fs.Int("priority", -1, "drop issues below priority N before tallying counts (lower number = higher priority; -1 disables — does NOT hide empty repo rows)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
