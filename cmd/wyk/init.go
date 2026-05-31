@@ -86,6 +86,7 @@ func runInit(args []string) int {
 	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
 	scanRoot := fs.String("scan", "", "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path")
 	uninstall := fs.Bool("uninstall", false, "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks")
+	fixForeignHooks := fs.Bool("fix-foreign-hooks", false, "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -97,11 +98,32 @@ func runInit(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: wyk init [-force | -chain] [-dry-run] [-skip-bd-init] [-skip-register]")
 		fmt.Fprintln(os.Stderr, "   or: wyk init -scan <root> [-dry-run]")
 		fmt.Fprintln(os.Stderr, "   or: wyk init -uninstall [-dry-run]")
+		fmt.Fprintln(os.Stderr, "   or: wyk init -fix-foreign-hooks [-dry-run]")
 		return 64
 	}
 	if *force && *chain {
 		fmt.Fprintln(os.Stderr, "wyk init: -force and -chain are mutually exclusive")
 		return 64
+	}
+	if *fixForeignHooks {
+		// -fix-foreign-hooks is a registry-wide alternate mode; reject
+		// combinations that only make sense in the per-repo install
+		// path so the user gets a clear error rather than silent
+		// ignores.
+		var bad []string
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "force", "chain", "skip-bd-init", "skip-register", "scan", "uninstall":
+				bad = append(bad, "-"+f.Name)
+			}
+		})
+		if len(bad) > 0 {
+			fmt.Fprintf(os.Stderr,
+				"wyk init: -fix-foreign-hooks is incompatible with %s\n",
+				strings.Join(bad, ", "))
+			return 64
+		}
+		return runFixForeignHooks(*dryRun)
 	}
 	if *uninstall {
 		// -uninstall is the inverse path; reject combinations that
@@ -596,6 +618,114 @@ func runUninstall(dryRun bool) int {
 		return 1
 	}
 	fmt.Printf("wyk init: removed %s\n", hookPath)
+	return 0
+}
+
+// chainHookIntoRepo runs `wyk init -chain` inside dir. Initialized
+// from an init() function (not a top-level var) to avoid a
+// package-init cycle: chainHookIntoRepo → runInit →
+// runFixForeignHooks → chainHookIntoRepo would otherwise be
+// flagged by Go's static initializer analysis. The function value
+// is the test seam — tests assign their own implementation before
+// calling runFixForeignHooks, then restore.
+var chainHookIntoRepo func(dir string) int
+
+func init() {
+	chainHookIntoRepo = func(dir string) int {
+		prev, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: getwd:", err)
+			return 1
+		}
+		defer func() { _ = os.Chdir(prev) }()
+		if err := os.Chdir(dir); err != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: chdir:", err)
+			return 1
+		}
+		return runInit([]string{"-chain", "-skip-bd-init", "-skip-register"})
+	}
+}
+
+// runFixForeignHooks walks the registry and runs `wyk init -chain`
+// in every repo whose post-commit hook is foreign (exists but
+// doesn't carry the wyk marker). Repos with a wyk-installed hook
+// (plain or chained), and repos missing a hook entirely, are left
+// alone — the missing case is what `wyk doctor -fix` handles; the
+// already-wyk case is a no-op.
+//
+// The inverse of doctor -fix: doctor's auto-install refuses to
+// touch foreign hooks, while this command targets exactly that
+// set. Reuses the installHookIn seam so tests can substitute the
+// install side effect.
+//
+// Exit codes:
+//
+//	0  every foreign hook chained (or, with dryRun, would be)
+//	1  per-repo failure for at least one repo (partial work still done)
+//	2  registry resolvable but unreadable, or no registered repos
+func runFixForeignHooks(dryRun bool) int {
+	regPath, err := registry.DefaultPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init:", err)
+		return 2
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init:", err)
+		return 2
+	}
+	if len(reg.Repos) == 0 {
+		fmt.Fprintln(os.Stderr, "wyk init: no repos registered — nothing to fix")
+		return 2
+	}
+
+	hadError := false
+	chained, alreadyWyk, missing := 0, 0, 0
+	for _, r := range reg.Repos {
+		hookPath, herr := resolveGitHookPath(r.Path, "post-commit")
+		if herr != nil {
+			fmt.Fprintf(os.Stderr, "wyk init: %s: resolve hook path: %v\n", r.Name, herr)
+			hadError = true
+			continue
+		}
+		body, rerr := os.ReadFile(hookPath)
+		switch {
+		case errors.Is(rerr, os.ErrNotExist):
+			// Missing hook isn't a foreign hook; doctor -fix is the
+			// command for that case. Leave it alone here.
+			missing++
+		case rerr != nil:
+			fmt.Fprintf(os.Stderr, "wyk init: %s: read hook: %v\n", r.Name, rerr)
+			hadError = true
+		case bytes.Contains(body, []byte(hookMarker)):
+			alreadyWyk++
+		default:
+			// Foreign hook — chain wyk after it.
+			if dryRun {
+				fmt.Printf("wyk init: would chain wyk into %s (%s)\n", r.Name, r.Path)
+				chained++
+				continue
+			}
+			if code := chainHookIntoRepo(r.Path); code != 0 {
+				fmt.Fprintf(os.Stderr, "wyk init: %s: chain failed (exit %d)\n", r.Name, code)
+				hadError = true
+				continue
+			}
+			chained++
+		}
+	}
+
+	prefix := "init -fix-foreign-hooks"
+	verb := "chained"
+	if dryRun {
+		prefix += " (dry-run)"
+		verb = "to chain"
+	}
+	fmt.Printf("%s: %d %s, %d already-wyk, %d missing (run `wyk doctor -fix` to install those)\n",
+		prefix, chained, verb, alreadyWyk, missing)
+	if hadError {
+		return 1
+	}
 	return 0
 }
 

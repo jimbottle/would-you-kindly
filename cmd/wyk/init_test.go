@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
 // gitInit creates a fresh git repo in a tempdir and returns its root.
@@ -338,5 +340,129 @@ func TestInit_OutsideRepoFailsCleanly(t *testing.T) {
 	dir := t.TempDir() // not a git repo
 	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 2 {
 		t.Errorf("expected exit 2 outside a repo; got %d", code)
+	}
+}
+
+func TestRunFixForeignHooks_ChainsForeignSkipsWykAndMissing(t *testing.T) {
+	// Three registered repos: one with a foreign hook (chain target),
+	// one with wyk's hook (skip), one with no hook (missing — left
+	// alone; doctor -fix handles that case). The stubbed chain seam
+	// records which repos the fix actually touched so we don't have
+	// to invoke real bd.
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+
+	foreign := gitInit(t)
+	wykd := gitInit(t)
+	missing := gitInit(t)
+
+	forHook := filepath.Join(foreign, ".git", "hooks", "post-commit")
+	if err := os.MkdirAll(filepath.Dir(forHook), 0o755); err != nil {
+		t.Fatalf("mkdir hooks dir: %v", err)
+	}
+	if err := os.WriteFile(forHook, []byte("#!/bin/sh\n# roborev hook\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write foreign hook: %v", err)
+	}
+	wykHook := filepath.Join(wykd, ".git", "hooks", "post-commit")
+	if err := os.MkdirAll(filepath.Dir(wykHook), 0o755); err != nil {
+		t.Fatalf("mkdir hooks dir: %v", err)
+	}
+	if err := os.WriteFile(wykHook, []byte("#!/bin/sh\n# "+hookMarker+"\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write wyk hook: %v", err)
+	}
+
+	regPath, _ := registry.DefaultPath()
+	reg := &registry.Registry{Repos: []registry.Repo{
+		{Name: "foreign", Path: foreign},
+		{Name: "wykd", Path: wykd},
+		{Name: "missing", Path: missing},
+	}}
+	if err := reg.Save(regPath); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	var chained []string
+	prev := chainHookIntoRepo
+	chainHookIntoRepo = func(dir string) int {
+		chained = append(chained, dir)
+		return 0
+	}
+	defer func() { chainHookIntoRepo = prev }()
+
+	if code := runFixForeignHooks(false); code != 0 {
+		t.Errorf("runFixForeignHooks exit %d, want 0", code)
+	}
+	if len(chained) != 1 || chained[0] != foreign {
+		t.Errorf("chainHookIntoRepo called for %v, want [%q] (foreign only)", chained, foreign)
+	}
+	// wyk hook untouched.
+	if body, _ := os.ReadFile(wykHook); !strings.Contains(string(body), hookMarker) {
+		t.Errorf("wyk hook was modified; got:\n%s", body)
+	}
+}
+
+func TestRunFixForeignHooks_DryRunSkipsWrites(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	foreign := gitInit(t)
+	forHook := filepath.Join(foreign, ".git", "hooks", "post-commit")
+	if err := os.MkdirAll(filepath.Dir(forHook), 0o755); err != nil {
+		t.Fatalf("mkdir hooks dir: %v", err)
+	}
+	if err := os.WriteFile(forHook, []byte("#!/bin/sh\n# foreign\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write foreign hook: %v", err)
+	}
+	regPath, _ := registry.DefaultPath()
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "foreign", Path: foreign}}}
+	if err := reg.Save(regPath); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	called := false
+	prev := chainHookIntoRepo
+	chainHookIntoRepo = func(_ string) int { called = true; return 0 }
+	defer func() { chainHookIntoRepo = prev }()
+
+	if code := runFixForeignHooks(true); code != 0 {
+		t.Errorf("dry-run exit %d, want 0", code)
+	}
+	if called {
+		t.Error("dry-run must not call chainHookIntoRepo")
+	}
+}
+
+func TestRunFixForeignHooks_NoRegistryReturns2(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	stderr := captureStderr(t, func() {
+		if code := runFixForeignHooks(false); code != 2 {
+			t.Errorf("missing-registry exit %d, want 2", code)
+		}
+	})
+	if !strings.Contains(stderr, "no repos registered") && !strings.Contains(stderr, "registry") {
+		t.Errorf("stderr should mention the missing registry; got %q", stderr)
+	}
+}
+
+func TestInit_FixForeignHooksFlagGuards(t *testing.T) {
+	// -fix-foreign-hooks is a registry-wide alternate mode; combined
+	// with per-repo install flags it must error out with exit 64
+	// rather than silently ignore them.
+	old := os.Stderr
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	os.Stderr = devnull
+	defer func() {
+		os.Stderr = old
+		_ = devnull.Close()
+	}()
+	for _, args := range [][]string{
+		{"-fix-foreign-hooks", "-chain"},
+		{"-fix-foreign-hooks", "-force"},
+		{"-fix-foreign-hooks", "-scan", "/tmp"},
+		{"-fix-foreign-hooks", "-uninstall"},
+	} {
+		if code := runInit(args); code != 64 {
+			t.Errorf("runInit %v exit %d, want 64", args, code)
+		}
 	}
 }

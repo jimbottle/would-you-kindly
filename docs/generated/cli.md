@@ -28,7 +28,7 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <
 Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.
 
 ```
-wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>] [-uninstall]
+wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>] [-uninstall] [-fix-foreign-hooks]
 ```
 
 | Flag | Default | Description |
@@ -40,6 +40,7 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <r
 | `-skip-register` | `false` | do not add this repo to ~/.config/wyk/repos.json |
 | `-scan` | `_(empty)_` | scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path |
 | `-uninstall` | `false` | remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks |
+| `-fix-foreign-hooks` | `false` | scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone) |
 
 ## `wyk inbox`
 
