@@ -121,6 +121,103 @@ func applyFetched(m Model, src *stubSource) Model {
 	return model.(Model)
 }
 
+func TestWithSession_HydratesPresetAndSort(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := New(src).WithSession(SessionState{
+		Version: sessionVersion,
+		Preset:  "human",
+		Sort:    "priority",
+	}, "")
+	if m.preset != filter.PresetHuman {
+		t.Errorf("preset = %q, want human", m.preset)
+	}
+	if m.sortBy != sortPriority {
+		t.Errorf("sortBy = %v, want sortPriority", m.sortBy)
+	}
+}
+
+func TestWithSession_IgnoresUnknownPresetAndSort(t *testing.T) {
+	// A bogus preset / sort (e.g. from a hand-mangled file or an older
+	// wyk's vocabulary) must leave the defaults intact rather than
+	// snap to PresetAll / sortNone, which would silently lose the
+	// user's actual default view.
+	src := &stubSource{issues: sampleIssues()}
+	base := New(src)
+	m := base.WithSession(SessionState{Preset: "nonsense", Sort: "nonsense"}, "")
+	if m.preset != base.preset {
+		t.Errorf("unknown preset changed it to %q, want unchanged %q", m.preset, base.preset)
+	}
+	if m.sortBy != base.sortBy {
+		t.Errorf("unknown sort changed it to %v, want unchanged %v", m.sortBy, base.sortBy)
+	}
+}
+
+func TestWithSession_RestoresCursorOnFetch(t *testing.T) {
+	issues := []beads.Issue{{ID: "a-1"}, {ID: "a-2"}, {ID: "a-3"}}
+	src := &stubSource{issues: issues}
+	m := New(src).WithSession(SessionState{Version: sessionVersion, CursorID: "a-3"}, "")
+	// Before the fetch the visible set is empty, so the cursor stays
+	// staged — restoration happens once the rows land.
+	m = applyFetched(m, src)
+	if m.cursor != 2 {
+		t.Errorf("cursor = %d, want 2 (the saved a-3 row)", m.cursor)
+	}
+	// One-shot: a subsequent refresh must not re-snap the cursor if
+	// the user has since moved it.
+	m.cursor = 0
+	m = applyFetched(m, src)
+	if m.cursor != 0 {
+		t.Errorf("cursor re-snapped to %d on refresh; restore should be one-shot", m.cursor)
+	}
+}
+
+func TestWithSession_CursorFallsBackWhenIDGone(t *testing.T) {
+	// The saved issue is closed / filtered out / deleted — restoring
+	// must fall back to the top, never index out of range.
+	issues := []beads.Issue{{ID: "a-1"}, {ID: "a-2"}}
+	src := &stubSource{issues: issues}
+	m := New(src).WithSession(SessionState{Version: sessionVersion, CursorID: "a-99"}, "")
+	m = applyFetched(m, src)
+	if m.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 fallback for a vanished saved ID", m.cursor)
+	}
+}
+
+func TestQuit_PersistsSessionState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	issues := []beads.Issue{{ID: "a-1"}, {ID: "a-2"}, {ID: "a-3"}}
+	src := &stubSource{issues: issues}
+	m := applyFetched(New(src).WithSession(SessionState{Version: sessionVersion}, path), src)
+	// Drive the model into a non-default state: cursor on a-2, sort by id.
+	m.cursor = 1
+	m.sortBy = sortID
+	m.preset = filter.PresetHuman
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_ = model
+	if cmd == nil {
+		t.Fatal("q should return the tea.Quit command")
+	}
+	got, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession after quit: %v", err)
+	}
+	want := SessionState{Version: sessionVersion, Preset: "human", Sort: "id", CursorID: "a-2"}
+	if got != want {
+		t.Errorf("persisted session:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestQuit_NoSessionPathIsNoOp(t *testing.T) {
+	// An empty sessionPath (tests, read-only runs) must not panic or
+	// write anywhere on quit.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src) // no WithSession → sessionPath==""
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}); cmd == nil {
+		t.Error("q should still quit even with no session path")
+	}
+}
+
 func TestHumanKeyJumpsToHumanPreset(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

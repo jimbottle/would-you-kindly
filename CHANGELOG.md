@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lookup degrades to a single `(… unavailable)` line so the body
   still flows. Pairs with the topological deps-sort: sort by deps,
   drill in, and see why a row landed where it did.
+- **Session restore across restarts** — the TUI now remembers the
+  active filter preset, sort key, and selected issue between launches
+  via `$XDG_CONFIG_HOME/wyk/state.json` (atomic write, mirrors the
+  `theme`/`ui.json` pattern). On start it rehydrates that state; the
+  cursor restore is best-effort (a vanished issue falls back to the
+  top, never crashes). An explicit `-preset` flag still wins over the
+  saved view. A missing file restores nothing; a corrupt one logs and
+  starts fresh — never fatal.
 
 ## [0.4.1] — 2026-05-31
 

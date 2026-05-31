@@ -154,6 +154,21 @@ func main() {
 	}
 
 	model := tui.NewWithHint(src, hint).WithMe(*me)
+	// Restore the last session (filter preset, sort key, cursor) from
+	// ~/.config/wyk/state.json so a re-opened tab lands where the user
+	// left off. Applied BEFORE the -preset flag so an explicit flag
+	// still wins, and before WithCacheSnapshot so the warm-start cache
+	// is matched against the restored preset. A missing file restores
+	// nothing; a corrupt one logs and falls back to defaults — never
+	// fatal. We still wire the path on a load error so the next quit
+	// REPAIRS the bad file.
+	if sPath, err := tui.SessionDefaultPath(); err == nil {
+		st, err := tui.LoadSession(sPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk: state.json:", err, "(starting fresh)")
+		}
+		model = model.WithSession(st, sPath)
+	}
 	if *startupPreset != "" {
 		model = model.WithPreset(filter.Preset(*startupPreset))
 	}

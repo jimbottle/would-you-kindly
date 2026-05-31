@@ -321,6 +321,20 @@ type Model struct {
 	// reverse).
 	sortDesc bool
 
+	// sessionPath is where persistSession writes the last
+	// filter/sort/cursor on quit so the next launch can restore it;
+	// empty disables persistence (tests, read-only runs). Wired by
+	// WithSession. See internal/tui/session.go.
+	sessionPath string
+
+	// pendingCursorID is the issue ID restored from the session file,
+	// consumed once when the first successful fetch populates
+	// m.visible: restoreCursorFromSession finds the row and moves the
+	// cursor there (or falls back to the top if it's gone), then
+	// clears this so subsequent refresh ticks don't keep yanking the
+	// cursor back. Empty means "no cursor to restore".
+	pendingCursorID string
+
 	// depLister resolves an issue's direct dependencies for the
 	// topological deps-sort. Set in New from m.src when the Source
 	// satisfies DepLister (both BDSource and MultiBDSource do); nil
@@ -574,6 +588,11 @@ func (m Model) WithCacheSnapshot(c Cache, path string) Model {
 	m.all = c.Issues
 	m.commonPrefix = commonIDPrefix(m.all)
 	m.recomputeVisible()
+	// Warm-start seeded the visible set, so a session-restored cursor
+	// can land on the very first frame. Don't consume it — the
+	// authoritative live fetch re-runs the (idempotent) restore and
+	// owns the clear.
+	m.restoreCursorFromSession(false)
 	m.cacheStale = true
 	m.cacheSavedAt = c.SavedAt
 	return m
@@ -589,6 +608,88 @@ func (m Model) WithCacheSnapshot(c Cache, path string) Model {
 func (m Model) WithPreset(p filter.Preset) Model {
 	m.preset = p
 	return m
+}
+
+// WithSession hydrates the model from a persisted SessionState and
+// records the path persistSession writes back to on quit. It restores
+// the filter preset (only when it names a known preset — an unknown
+// value is ignored rather than coerced), the sort key (matched by its
+// label), and stages the cursor ID for restoreCursorFromSession to
+// apply once the first fetch lands. main applies this BEFORE WithPreset
+// so an explicit `-preset` flag still wins over the persisted view, and
+// before WithCacheSnapshot so the warm-start cache is matched against
+// the restored preset. An empty path leaves persistence disabled.
+func (m Model) WithSession(s SessionState, path string) Model {
+	m.sessionPath = path
+	if filter.IsPreset(s.Preset) {
+		m.preset = filter.Preset(s.Preset)
+	}
+	if k, ok := sortKeyFromLabel(s.Sort); ok {
+		m.sortBy = k
+	}
+	m.pendingCursorID = s.CursorID
+	return m
+}
+
+// quitNow persists the session state (best-effort) and returns the
+// tea.Quit command. Every exit path routes through here — `q`,
+// ctrl-c, and the per-mode quit handlers — so the last
+// filter/sort/cursor is written regardless of which mode the user
+// left from. The save is synchronous on purpose: dispatching it as a
+// tea.Cmd alongside tea.Quit races the program's teardown, which can
+// terminate before the Cmd goroutine runs and silently drop the
+// write. A state.json write is a few hundred bytes and the user is
+// leaving anyway, so the cost is invisible.
+func (m Model) quitNow() (tea.Model, tea.Cmd) {
+	m.persistSession()
+	return m, tea.Quit
+}
+
+// persistSession writes the current filter/sort/cursor to
+// m.sessionPath. Best-effort and defensive: a nil/empty path
+// disables it, and the cursor ID is only captured when the cursor
+// indexes a real visible row (an error or empty-list state persists
+// no cursor, so the next launch falls back to the top). A write
+// failure is swallowed — there's no good place to surface it during
+// teardown, and a missing restore is a cosmetic loss, not a failure.
+func (m Model) persistSession() {
+	if m.sessionPath == "" {
+		return
+	}
+	st := SessionState{
+		Version: sessionVersion,
+		Preset:  string(m.preset),
+		Sort:    m.sortBy.label(),
+	}
+	if m.cursor >= 0 && m.cursor < len(m.visible) {
+		st.CursorID = m.visible[m.cursor].ID
+	}
+	_ = SaveSession(m.sessionPath, st)
+}
+
+// restoreCursorFromSession moves the cursor to the row matching the
+// session-restored pendingCursorID, once. Called after the visible
+// set is (re)built on the first fetch / cache seed. Best-effort: if
+// the ID is no longer visible (closed, filtered out, deleted) the
+// cursor falls back to the top — never a crash. Clears
+// pendingCursorID when consume is true so later refresh ticks don't
+// keep snapping the cursor back to the saved position; the cache-seed
+// caller passes false so the authoritative live fetch still gets to
+// run the (idempotent) restore.
+func (m *Model) restoreCursorFromSession(consume bool) {
+	if m.pendingCursorID == "" {
+		return
+	}
+	m.cursor = 0
+	for i, iss := range m.visible {
+		if iss.ID == m.pendingCursorID {
+			m.cursor = i
+			break
+		}
+	}
+	if consume {
+		m.pendingCursorID = ""
+	}
 }
 
 // WithMe returns a copy of the model with the current-user
@@ -740,6 +841,21 @@ func (k sortKey) label() string {
 	}
 }
 
+// sortKeyFromLabel is the inverse of label: it maps a persisted sort
+// label back to its sortKey. The bool is false for an empty or
+// unrecognised label so session hydration can leave the default sort
+// untouched rather than silently snapping to sortNone. sortNone has
+// no label (label returns "") and so is never produced here — a saved
+// session with no sort simply doesn't carry the field.
+func sortKeyFromLabel(s string) (sortKey, bool) {
+	for _, k := range []sortKey{sortPriority, sortUpdated, sortRepo, sortID, sortDeps} {
+		if k.label() == s {
+			return k, true
+		}
+	}
+	return sortNone, false
+}
+
 // flashClearMsg auto-clears m.status after a short delay so a
 // "closed wyk-42" banner doesn't linger forever when the user
 // goes idle. Tagged with statusGen so a stale clear (status was
@@ -833,6 +949,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.all = msg.issues
 			m.commonPrefix = commonIDPrefix(m.all)
 			m.recomputeVisible()
+			// First successful fetch is where a session-restored
+			// cursor lands: the visible set finally exists, so move
+			// the cursor onto the saved issue (consume so refresh
+			// ticks don't keep yanking it back).
+			m.restoreCursorFromSession(true)
 			// New row count → cursor may now sit outside the
 			// viewport, or m.scroll may exceed maxScroll.
 			m.ensureCursorVisible()
@@ -1146,7 +1267,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case keyHit(msg, m.keys.Quit):
-		return m, tea.Quit
+		return m.quitNow()
 	case keyHit(msg, m.keys.Back):
 		// esc in modeList clears the multi-select. Without a
 		// dedicated escape, the only way to drop a botched mark
@@ -1447,7 +1568,7 @@ func (m Model) beginClose() (tea.Model, tea.Cmd) {
 
 func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	bulk := len(m.marked) > 0
 	target := m.pendingTarget
@@ -1557,7 +1678,7 @@ func (m Model) beginQuickAdd() (tea.Model, tea.Cmd) {
 
 func (m Model) updateQuickAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc":
@@ -1636,7 +1757,7 @@ func (m Model) beginNote() (tea.Model, tea.Cmd) {
 // matches the close/defer/assign flows.
 func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	if msg.Type == tea.KeyEsc {
 		m.mode = modeList
@@ -1968,7 +2089,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// dispatched when entering modeDetail (see enterDetail).
 		return m, tea.EnableMouseCellMotion
 	case keyHit(msg, m.keys.Quit):
-		return m, tea.Quit
+		return m.quitNow()
 	case keyHit(msg, m.keys.Help):
 		return m.openHelp()
 	case keyHit(msg, m.keys.Yank):
@@ -2030,7 +2151,7 @@ func (m Model) openHelp() (tea.Model, tea.Cmd) {
 
 func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc", "?", "q":
@@ -2053,7 +2174,7 @@ func (m Model) updateColumns(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// instead of esc. Best-effort; we're exiting anyway, so a
 		// save error has nowhere useful to surface.
 		_ = m.persistColumns()
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc", "o", "q":
@@ -2111,7 +2232,7 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ctrl+c quits unconditionally; the status bar advertises it and
 	// the textinput wouldn't otherwise intercept it.
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc":
@@ -2975,7 +3096,7 @@ func (m Model) beginCommand() (tea.Model, tea.Cmd) {
 // names the known set so the user can recover.
 func (m Model) updateCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc":
@@ -3284,7 +3405,7 @@ type rawBDMsg struct {
 // enter all close it; any other key is dropped.
 func (m Model) updateOutput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc", "q", "enter":
@@ -3592,7 +3713,7 @@ func (m Model) beginLabel() (tea.Model, tea.Cmd) {
 // submission cancels.
 func (m Model) updateLabel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc":
@@ -3681,7 +3802,7 @@ func (m Model) beginAssign() (tea.Model, tea.Cmd) {
 // `--assignee ""`).
 func (m Model) updateAssign(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc":
@@ -3758,7 +3879,7 @@ func (m Model) beginDefer() (tea.Model, tea.Cmd) {
 // --defer — bd is the source of truth on what parses).
 func (m Model) updateDefer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	switch msg.String() {
 	case "esc":
