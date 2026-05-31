@@ -587,7 +587,7 @@ const (
 )
 
 // next returns the next sort key in the cycle so `s` rotates
-// through {none, priority, updated, repo, id, deps, deps, none, ...}.
+// through {none, priority, updated, repo, id, deps, none, ...}.
 func (k sortKey) next() sortKey {
 	if k == sortDeps {
 		return sortNone
@@ -836,16 +836,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		// Mouse routes by mode:
 		// - modeList: wheel scrolls the cursor; left-click sets it
-		// - modeDetail: wheel scrolls the viewport body so a long
-		//   description doesn't force the user to hunt for j/k
 		// - modeOutput: wheel scrolls the :bd output viewport so
 		//   the overlay's footer hint matches behaviour
+		// - modeDetail: mouse capture is DISABLED on entry (see
+		//   the Open case) so the host terminal handles native
+		//   click-drag text selection; wheel-scroll inside the
+		//   detail view is intentionally given up in exchange,
+		//   the user navigates with j/k/PgUp/PgDn. No MouseMsg
+		//   should reach this handler while in detail mode, but
+		//   we keep the case explicit so the routing table stays
+		//   self-documenting and a future re-enable wires back to
+		//   the right place in one edit.
 		// - other modes (help, modals, prompts): keyboard-focused,
 		//   mouse is dropped
 		switch m.mode {
 		case modeList:
 			return m.handleMouse(msg)
 		case modeDetail:
+			// Defensive: mouse is disabled on entry; if a stray
+			// MouseMsg does land here (race between DisableMouse
+			// and the next paint), forward to the viewport so the
+			// behavior at least isn't a hard drop.
 			var cmd tea.Cmd
 			m.detailVP, cmd = m.detailVP.Update(msg)
 			return m, cmd
