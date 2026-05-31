@@ -8,6 +8,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (nothing yet)
 
+## [0.4.1] — 2026-05-31
+
+Bug-fix and resilience round: visible-error cleanups, doctor /
+refresh polish, and a TUI warm-start that eliminates the
+"loading…" beat on every launch.
+
+### Added
+
+- **TUI warm-start cache** — every successful fetch persists to
+  `$XDG_CACHE_HOME/wyk/last-fetch.json` (atomic write, 7-day TTL,
+  5000-issue cap). On launch, the cached snapshot paints the first
+  frame immediately; the live fetch swaps in fresh data when it
+  returns. A subtle "cached `<age>`" indicator replaces the
+  "synced HH:MM:SS" line until the first live fetch lands.
+- **`wyk init -fix-foreign-hooks`** — bulk-chain wyk into every
+  registered repo with a foreign post-commit hook. The inverse of
+  `wyk doctor -fix` (which leaves foreign hooks alone).
+- **Detail-view word wrap** — long descriptions and notes now wrap
+  to the viewport width instead of overflowing horizontally.
+- **`y` in detail mode** — yank the visible body to the system
+  clipboard. Mouse capture is dropped on detail entry so native
+  click-drag text selection also works.
+- **`s` cycle: `deps`** — sort the visible list so issues with
+  fewer dependencies come first (DependencyCount ASC; Priority +
+  ID tiebreaks). Pragmatic approximation; true topological order
+  is open as a follow-up.
+- **`T`** in the TUI cycles the cursor issue's type
+  (task → bug → feature → chore → epic → decision → spike → story
+  → milestone → task).
+
+### Fixed
+
+- **`refresh failed: ... bd list --json: signal: killed`** — the
+  context timeout in `beads.Client.run` is now classified as
+  "timed out after `<elapsed>`" / "canceled" instead of leaking
+  exec's SIGKILL flavor. The reported duration is the actual
+  elapsed time so the message stays accurate when a shorter parent
+  deadline fires before our own.
+- **Multi-repo failure banner** — when every sub returned the same
+  underlying error (typical case: every repo hit the 10s deadline
+  because the machine is under load), the banner now coalesces to
+  `N repos all failed: <shared-error>` instead of a noisy
+  per-repo name list. Mixed errors still render names.
+- **`wyk doctor` per-repo timeout** — bumped from 5s to 10s
+  (matched to `beads.NewClient()`'s default `Timeout`) and
+  extracted as a named constant. A repo that doctor passes but
+  the TUI fails on would be a confusing false signal; aligning
+  both means a doctor warning predicts a TUI refresh failure.
+- **`.beads/.~issues.jsonl.*`** dolt scratch files are gitignored
+  — they were showing up as untracked on every `git status`.
+- **Cached rows + failed fetch** — the status bar now keeps
+  showing "cached `<age>`" instead of misleading "synced
+  HH:MM:SS" when the first live fetch after a warm-start fails.
+- **SaveCache off the event loop** — the cache persist is
+  dispatched as a `tea.Cmd` so the fsync no longer blocks the
+  Bubble Tea input/render path.
+
+### Internal
+
+- `applyImportUpdate`, `filterByMaxPriority`, `filterRegistryByName`,
+  `filterDumpByName`, `filterDumpSince`, `limitByPriority`,
+  `limitActivityEvents` extracted as small shared helpers so tests
+  exercise production code, not parallel inline copies.
+- Hand-maintained `cliSubcommandDocs` table + committed
+  `docs/generated/cli.md` snapshot drives the docs site; drift is
+  caught by `make docs-check` in CI.
+
 ## [0.4.0] — 2026-05-29
 
 Largest round since v0.1.0 — `wyk` graduates from "TUI over the inbox" to
