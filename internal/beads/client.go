@@ -329,6 +329,25 @@ func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) ([]by
 		return stdout, nil
 	}
 
+	// Context-driven cancellation surfaces from cmd.Run as a
+	// SIGKILL-shaped *exec.ExitError whose .Error() is "signal:
+	// killed" — exec.CommandContext kills the process when ctx
+	// fires. Without this branch the user-visible error reads
+	// "signal: killed", looking like bd crashed when in fact OUR
+	// timeout fired. Check ctx.Err() before the exec error so the
+	// real cause wins.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		switch {
+		case errors.Is(ctxErr, context.DeadlineExceeded):
+			if c.Timeout > 0 {
+				return nil, fmt.Errorf("bd %s: timed out after %s", strings.Join(args, " "), c.Timeout)
+			}
+			return nil, fmt.Errorf("bd %s: timed out (parent deadline)", strings.Join(args, " "))
+		case errors.Is(ctxErr, context.Canceled):
+			return nil, fmt.Errorf("bd %s: canceled", strings.Join(args, " "))
+		}
+	}
+
 	// exec.ErrNotFound surfaces as *exec.Error with Err == ErrNotFound;
 	// be liberal about how we recognise it.
 	if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "executable file not found") {

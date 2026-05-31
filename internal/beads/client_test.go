@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRunner records every invocation so tests can assert the exact
@@ -201,6 +202,60 @@ func TestWriteSurfacesNoWorkspaceAsTypedErr(t *testing.T) {
 	err := c.AddLabel(context.Background(), "wyk-1", "human")
 	if !errors.Is(err, ErrNoWorkspace) {
 		t.Errorf("expected ErrNoWorkspace, got %v", err)
+	}
+}
+
+// blockingRunner waits for ctx to fire, then returns the
+// SIGKILL-shaped error string exec.CommandContext would produce
+// when it kills its child. Lets the run-timeout test exercise the
+// ctx.Err() classification branch without spawning a real process.
+type blockingRunner struct{}
+
+func (b *blockingRunner) run(ctx context.Context, _ string, _ []string, _ io.Reader) ([]byte, []byte, error) {
+	<-ctx.Done()
+	return nil, nil, errors.New("signal: killed")
+}
+
+func TestRunClassifiesContextDeadlineAsTimeout(t *testing.T) {
+	// User-facing bug: when our 10s timeout fires on a slow `bd
+	// list --json`, the error surfaced as "signal: killed" because
+	// exec.CommandContext SIGKILLs the child on ctx.Done. The user
+	// can't tell that's OUR timeout, not bd crashing. The fix
+	// checks ctx.Err() before exec's error and synthesizes a
+	// timed-out classification. This test pins it.
+	c := &Client{Binary: "bd", Timeout: 30 * time.Millisecond, runner: (&blockingRunner{}).run}
+	_, err := c.Query(context.Background(), "status=open")
+	if err == nil {
+		t.Fatal("expected timeout error from blocked runner")
+	}
+	if !strings.Contains(err.Error(), "timed out after 30ms") {
+		t.Errorf("expected 'timed out after 30ms' classification; got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "signal: killed") {
+		t.Errorf("error should not leak 'signal: killed'; got %q", err.Error())
+	}
+}
+
+func TestRunClassifiesParentCancelation(t *testing.T) {
+	// When the PARENT context is canceled (e.g. TUI quit while a
+	// Fetch is in flight), the exec error is still "signal:
+	// killed". The classification branch must catch
+	// context.Canceled too, not only DeadlineExceeded.
+	c := &Client{Binary: "bd", Timeout: 0, runner: (&blockingRunner{}).run}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	_, err := c.Query(ctx, "status=open")
+	if err == nil {
+		t.Fatal("expected canceled error from blocked runner")
+	}
+	if !strings.Contains(err.Error(), "canceled") {
+		t.Errorf("expected 'canceled' classification; got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "signal: killed") {
+		t.Errorf("error should not leak 'signal: killed'; got %q", err.Error())
 	}
 }
 

@@ -18,6 +18,10 @@ push-state.json
 # Lock files (various runtime locks)
 *.lock
 
+# Dolt scratch files (transient tilde-prefixed copies of issues.jsonl
+# created during in-flight writes; cleaned up by bd itself eventually)
+.~issues.jsonl.*
+
 # Credential key (encryption key for federation peer auth — never commit)
 .beads-credential-key
 
