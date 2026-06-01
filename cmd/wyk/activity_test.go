@@ -158,7 +158,7 @@ func TestCollectActivity_StatusFilter(t *testing.T) {
 	}
 	for _, c := range []tc{
 		{"all", 3, ""},
-		{"open", 2, ""},        // open-1 + ip-1
+		{"open", 2, ""}, // open-1 + ip-1
 		{"closed", 1, "closed-1"},
 	} {
 		events, _ := collectActivity(reg, cutoff, -1, c.filter, mk)

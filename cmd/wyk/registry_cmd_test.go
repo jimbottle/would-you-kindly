@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
@@ -211,4 +214,115 @@ func TestFindDeadEntries(t *testing.T) {
 	if names["missing"] != "path missing" {
 		t.Errorf("missing reason = %q, want %q", names["missing"], "path missing")
 	}
+}
+
+func TestFindBrokenWorkspaces_DropsOnlyDefinitiveNoWorkspace(t *testing.T) {
+	reg := &registry.Registry{Repos: []registry.Repo{
+		{Name: "good", Path: "/a"},
+		{Name: "broken", Path: "/b"},
+		{Name: "wrapped", Path: "/e"},
+		{Name: "timeout", Path: "/c"},
+		{Name: "skipped", Path: "/d"},
+	}}
+	probe := func(dir string) error {
+		switch dir {
+		case "/a":
+			return nil // responds → keep
+		case "/b":
+			return beads.ErrNoWorkspace // definitive → drop
+		case "/e":
+			return fmt.Errorf("bd query: %w", beads.ErrNoWorkspace) // wrapped → drop
+		case "/c":
+			return errors.New("timed out after 5s") // transient → keep
+		}
+		return nil
+	}
+	skip := map[string]bool{"/d": true} // already filesystem-dead → not probed
+	got := findBrokenWorkspaces(reg, skip, probe)
+
+	gotPaths := map[string]bool{}
+	for _, d := range got {
+		gotPaths[d.Path] = true
+		if d.reason != "no bd workspace" {
+			t.Errorf("unexpected reason for %s: %q", d.Path, d.reason)
+		}
+	}
+	if len(got) != 2 || !gotPaths["/b"] || !gotPaths["/e"] {
+		t.Errorf("only definitive (incl. wrapped) ErrNoWorkspace entries should be flagged; got %+v", got)
+	}
+}
+
+func TestRegistry_Prune_BrokenDropsNonWorkspaceKeepsHealthy(t *testing.T) {
+	// Two repos, both with a real path + .git (so the filesystem prune
+	// leaves them alone). The bd probe reports one as having no
+	// workspace; `prune -broken` must drop only that one.
+	// Resolve symlinks up front (macOS /tmp -> /private/tmp) so the
+	// planted paths match what registry.Remove normalizes to, the way
+	// `wyk init`'s Add already stores them in production.
+	healthy := mustResolve(t, t.TempDir())
+	broken := mustResolve(t, t.TempDir())
+	for _, d := range []string{healthy, broken} {
+		if err := os.Mkdir(filepath.Join(d, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	regPath := withTempRegistry(t, []registry.Repo{
+		{Name: "healthy", Path: healthy},
+		{Name: "broken", Path: broken},
+	})
+
+	orig := defaultWorkspaceProbe
+	defaultWorkspaceProbe = func(dir string) error {
+		if dir == broken {
+			return beads.ErrNoWorkspace
+		}
+		return nil
+	}
+	t.Cleanup(func() { defaultWorkspaceProbe = orig })
+
+	if code := runRegistryPrune([]string{"-broken", "-y"}, strings.NewReader("")); code != 0 {
+		t.Fatalf("prune -broken -y should exit 0; got %d", code)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reg.Repos) != 1 || reg.Repos[0].Name != "healthy" {
+		t.Errorf("expected only 'healthy' to remain; got %+v", reg.Repos)
+	}
+}
+
+func TestRegistry_Prune_WithoutBrokenLeavesNonWorkspace(t *testing.T) {
+	// Default prune (no -broken) must NOT probe bd or drop a
+	// present-but-no-workspace entry — that's the opt-in behavior.
+	broken := t.TempDir()
+	if err := os.Mkdir(filepath.Join(broken, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	regPath := withTempRegistry(t, []registry.Repo{{Name: "broken", Path: broken}})
+
+	probed := false
+	orig := defaultWorkspaceProbe
+	defaultWorkspaceProbe = func(string) error { probed = true; return beads.ErrNoWorkspace }
+	t.Cleanup(func() { defaultWorkspaceProbe = orig })
+
+	if code := runRegistryPrune([]string{"-y"}, strings.NewReader("")); code != 0 {
+		t.Fatalf("prune -y should exit 0; got %d", code)
+	}
+	if probed {
+		t.Error("default prune must not probe bd")
+	}
+	reg, _ := registry.Load(regPath)
+	if len(reg.Repos) != 1 {
+		t.Errorf("default prune should leave the present-but-broken entry; got %+v", reg.Repos)
+	}
+}
+
+func mustResolve(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

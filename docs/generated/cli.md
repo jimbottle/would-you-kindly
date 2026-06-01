@@ -91,12 +91,13 @@ wyk doctor [-json] [-fix [-dry-run]]
 List, remove, or prune entries in the wyk repo registry (~/.config/wyk/repos.json).
 
 ```
-wyk registry <list | remove <name> | prune> [-y] [-json]
+wyk registry <list | remove <name> | prune> [-broken] [-y] [-json]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-y` | `false` | skip the [y/N] confirmation prompt on prune (for scripts) |
+| `-broken` | `false` | on prune, also drop entries whose path exists but holds no bd workspace (probes bd; only definitive 'no workspace' results qualify, not timeouts) |
 | `-json` | `false` | emit structured JSON instead of the human-readable list |
 
 ## `wyk conventions`

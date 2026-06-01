@@ -2,15 +2,19 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
@@ -56,7 +60,8 @@ func registryUsage(w io.Writer) {
 Subcommands:
   list             print registered repos (-json for structured output)
   remove <name>    remove the entry with the given display name
-  prune            remove entries whose path / .git is missing (-y to skip confirm)
+  prune            remove entries whose path / .git is missing
+                   (-broken also drops present-but-no-bd-workspace entries; -y to skip confirm)
 
 The registry lives at ~/.config/wyk/repos.json (XDG-aware).
 `)
@@ -133,6 +138,7 @@ func runRegistryRemove(args []string) int {
 func runRegistryPrune(args []string, stdin io.Reader) int {
 	fs := flag.NewFlagSet("registry prune", flag.ContinueOnError)
 	yes := fs.Bool("y", false, "skip the [y/N] confirmation prompt")
+	broken := fs.Bool("broken", false, "also drop entries whose path exists but holds no bd workspace (probes bd; only definitive 'no workspace' results qualify, not timeouts)")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
@@ -142,6 +148,15 @@ func runRegistryPrune(args []string, stdin io.Reader) int {
 		return 1
 	}
 	dead := findDeadEntries(reg)
+	if *broken {
+		// Probe only the entries that survived the filesystem checks —
+		// an already-dead path can't be probed and is covered anyway.
+		skip := make(map[string]bool, len(dead))
+		for _, d := range dead {
+			skip[d.Path] = true
+		}
+		dead = append(dead, findBrokenWorkspaces(reg, skip, defaultWorkspaceProbe)...)
+	}
 	if len(dead) == 0 {
 		fmt.Println("wyk registry prune: nothing to prune; every registered repo is reachable")
 		return 0
@@ -228,6 +243,48 @@ func findDeadEntries(reg *registry.Registry) []deadEntry {
 		}
 	}
 	return dead
+}
+
+// pruneProbeTimeout bounds each `-broken` bd probe so a locked or
+// slow workspace can't hang the prune. Matches doctor's per-repo
+// timeout so a repo that doctor flags as non-responsive and one prune
+// would probe behave consistently.
+const pruneProbeTimeout = 5 * time.Second
+
+// defaultWorkspaceProbe is the production bd probe used by
+// `registry prune -broken`: it runs a trivial bd query in dir and
+// returns the resulting error (nil when the workspace responds). A
+// package-level var so tests inject a stub without a real bd binary,
+// mirroring beads.Client's runner seam.
+var defaultWorkspaceProbe = func(dir string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), pruneProbeTimeout)
+	defer cancel()
+	c := beads.NewClient()
+	c.Dir = dir
+	_, err := c.Query(ctx, `status!=closed`)
+	return err
+}
+
+// findBrokenWorkspaces returns registry entries whose path is present
+// (not in skip — those are already covered by findDeadEntries) but
+// which bd reports as having no workspace. It deliberately drops ONLY
+// on beads.ErrNoWorkspace: a definitive "this .beads has no database"
+// (an aborted `bd init`, the google_workspace_mcp case). A timeout,
+// lock, or any other error is left ALONE — those are plausibly
+// transient (syncing, slow FS) and pruning them would silently drop a
+// repo the user still wants. This is why the bd probe is opt-in
+// (`-broken`) rather than folded into the default filesystem prune.
+func findBrokenWorkspaces(reg *registry.Registry, skip map[string]bool, probe func(dir string) error) []deadEntry {
+	var broken []deadEntry
+	for _, r := range reg.Repos {
+		if skip[r.Path] {
+			continue
+		}
+		if errors.Is(probe(r.Path), beads.ErrNoWorkspace) {
+			broken = append(broken, deadEntry{Repo: r, reason: "no bd workspace"})
+		}
+	}
+	return broken
 }
 
 // loadRegistryForCmd centralises the boilerplate around resolving

@@ -14,10 +14,10 @@ package main
 //  2. Add or update the matching entry below.
 //  3. Run `make docs-snapshot` and commit docs/generated/cli.md.
 type cliSubcommandDoc struct {
-	Name    string     // subcommand name, no "wyk " prefix
-	Summary string     // one-line description; sentence case, no trailing period
-	Usage   string     // canonical usage line, including "wyk <name>" prefix
-	Flags   []cliFlag  // ordered as they appear in the runX
+	Name    string    // subcommand name, no "wyk " prefix
+	Summary string    // one-line description; sentence case, no trailing period
+	Usage   string    // canonical usage line, including "wyk <name>" prefix
+	Flags   []cliFlag // ordered as they appear in the runX
 }
 
 // cliFlag is one flag row in the per-subcommand table.
@@ -96,9 +96,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "registry",
 		Summary: "List, remove, or prune entries in the wyk repo registry (~/.config/wyk/repos.json).",
-		Usage:   "wyk registry <list | remove <name> | prune> [-y] [-json]",
+		Usage:   "wyk registry <list | remove <name> | prune> [-broken] [-y] [-json]",
 		Flags: []cliFlag{
 			{Name: "-y", Default: "false", Description: "skip the [y/N] confirmation prompt on prune (for scripts)"},
+			{Name: "-broken", Default: "false", Description: "on prune, also drop entries whose path exists but holds no bd workspace (probes bd; only definitive 'no workspace' results qualify, not timeouts)"},
 			{Name: "-json", Default: "false", Description: "emit structured JSON instead of the human-readable list"},
 		},
 	},
