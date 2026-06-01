@@ -97,6 +97,15 @@ a missing piece of convention documentation, and both deserve
 durable fixes. The implicit rule the user follows: the agent's
 behaviour against wyk is data about wyk itself.
 
+**Every task has an owner.** bd auto-sets `owner` (who filed it) but
+NOT `assignee` (who's responsible for doing it), and there's no bd
+validation to require one — so set the assignee yourself on every
+`bd create`. Don't file orphan tasks. Claim it (`bd update <id>
+--claim --dolt-auto-commit=on`, sets assignee + `in_progress`) if
+you're starting now, or `bd create … -a <assignee>` to assign it
+without starting. A human task is owned through `wyk handoff`. When
+you review the backlog, treat a missing assignee as a defect to fix.
+
 **Status lifecycle.** When filing or updating bd issues from this
 project, follow the lifecycle documented in `docs/CONTRACT.md` —
 default to `open`, reach for `deferred` when the blocker is "the

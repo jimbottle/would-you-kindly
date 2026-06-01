@@ -34,7 +34,11 @@ For every open issue, assign a verdict and the bd action it implies:
 - **duplicate** — `bd supersede <dup> --with=<keep> --dolt-auto-commit=on`.
 - **wrong status** — open vs blocked vs deferred. Add the real blocker
   (`bd dep add <id> <blocker>`) or `bd defer <id> --until "…"`.
-- **missing** — work you know is needed but isn't filed → `bd create`.
+- **unowned** — open issue with no `assignee` → assign it
+  (`bd update <id> -a <assignee> --dolt-auto-commit=on`, or `--claim`
+  if it's yours to start). Every task should have an owner.
+- **missing** — work you know is needed but isn't filed → `bd create`
+  (with an assignee).
 
 ## 3. Check the plan's coherence
 

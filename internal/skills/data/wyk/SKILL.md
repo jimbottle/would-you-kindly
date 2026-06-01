@@ -39,14 +39,26 @@ for the authoritative label/inbox contract rather than guessing.
 
 ## File new work
 
-- Agent-owned task:
+**Every task gets an owner.** bd auto-sets `owner` (who filed it) but
+NOT `assignee` (who's responsible for doing it) — so always set the
+assignee when you create work. Don't leave orphan tasks.
+
+- A task you'll start now → claim it (sets assignee + in_progress):
 
   ```bash
   bd create --title "…" --description "why + what" --type task --dolt-auto-commit=on
+  bd update <new-id> --claim --dolt-auto-commit=on
+  ```
+
+- A task for later → assign without starting it:
+
+  ```bash
+  bd create --title "…" --description "…" --type task -a <assignee> --dolt-auto-commit=on
   ```
 
 - A task that needs a **human**: don't hand-roll labels — use the
-  **wyk-handoff** skill (`wyk handoff -create "…"`).
+  **wyk-handoff** skill (`wyk handoff -create "…"`), which owns the
+  human handoff.
 
 ## Finish a task
 
