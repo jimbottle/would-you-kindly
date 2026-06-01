@@ -5553,7 +5553,7 @@ func TestSortByDeps_ChainRespectsEdges(t *testing.T) {
 	if len(m.visible) != len(rows) {
 		t.Fatalf("expected %d visible rows, got %d", len(rows), len(m.visible))
 	}
-	if !(pos["a-a"] < pos["a-b"] && pos["a-b"] < pos["a-c"]) {
+	if pos["a-a"] >= pos["a-b"] || pos["a-b"] >= pos["a-c"] {
 		t.Errorf("chain order violated: a-a=%d a-b=%d a-c=%d (want a<b<c)", pos["a-a"], pos["a-b"], pos["a-c"])
 	}
 }
@@ -5714,7 +5714,7 @@ func TestSortByDeps_RefreshReResolvesNewRows(t *testing.T) {
 	for i, iss := range m.visible {
 		pos[iss.ID] = i
 	}
-	if !(pos["a-1"] < pos["a-2"] && pos["a-2"] < pos["a-3"]) {
+	if pos["a-1"] >= pos["a-2"] || pos["a-2"] >= pos["a-3"] {
 		t.Errorf("topo order not restored after refresh: a-1=%d a-2=%d a-3=%d", pos["a-1"], pos["a-2"], pos["a-3"])
 	}
 }
