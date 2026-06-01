@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -47,9 +48,9 @@ func TestCollectActivity_FiltersAndSorts(t *testing.T) {
 	}
 	mk := func(dir string) activityClient { return stubs[dir] }
 
-	events, hadError := collectActivity(reg, cutoff, -1, "all", mk)
-	if !hadError {
-		t.Errorf("hadError should be true when any sub failed")
+	events, repoErrs := collectActivity(reg, cutoff, -1, "all", mk)
+	if len(repoErrs) != 1 || repoErrs[0].Error != "boom" {
+		t.Errorf("the failed repo should be captured by name; got %+v", repoErrs)
 	}
 	if len(events) != 2 {
 		t.Fatalf("expected 2 in-window events; got %d", len(events))
@@ -73,10 +74,14 @@ func TestEmitActivityJSON_EmptyEventsRendersArrayNotNull(t *testing.T) {
 	// special-case `null` — pin the empty-window shape as [].
 	var buf bytes.Buffer
 	cutoff := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
-	emitActivityJSON(&buf, []activityEvent{}, cutoff)
+	emitActivityJSON(&buf, []activityEvent{}, cutoff, nil)
 
 	if !strings.Contains(buf.String(), `"events": []`) {
 		t.Errorf("empty events should encode as []; got %q", buf.String())
+	}
+	// No failures → the errors key is omitted entirely.
+	if strings.Contains(buf.String(), "errors") {
+		t.Errorf("clean run should omit the errors key; got %q", buf.String())
 	}
 	if !strings.Contains(buf.String(), `"cutoff"`) {
 		t.Errorf("output should include the cutoff field; got %q", buf.String())
@@ -258,5 +263,21 @@ func TestEmitActivityTable_RendersRowsInOrder(t *testing.T) {
 	// Header includes the cutoff.
 	if !strings.Contains(out, "since 2026-05-29 00:00") {
 		t.Errorf("header should include the cutoff; got %q", out)
+	}
+}
+
+func TestEmitActivityJSON_SurfacesErrors(t *testing.T) {
+	var buf bytes.Buffer
+	cutoff := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
+	emitActivityJSON(&buf, []activityEvent{}, cutoff, []repoError{{Repo: "broken", Error: "timed out"}})
+	var got struct {
+		Events []activityEvent `json:"events"`
+		Errors []repoError     `json:"errors"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("envelope should parse: %v\n%s", err, buf.String())
+	}
+	if len(got.Errors) != 1 || got.Errors[0].Repo != "broken" {
+		t.Errorf("errors array should name the failed repo; got %+v", got.Errors)
 	}
 }

@@ -53,7 +53,7 @@ wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N]
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
-| `-json` | `false` | emit a JSON array of issues for LLM consumption |
+| `-json` | `false` | emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated) |
 | `-priority` | `-1` | cap the inbox at priority N or higher (lower number = higher priority; -1 disables) |
 | `-repo` | `_(empty)_` | restrict the inbox to the registered repo with this name (mutually exclusive with -C) |
 | `-limit` | `-1` | cap the inbox at N rows (after priority/repo filtering; -1 disables) |

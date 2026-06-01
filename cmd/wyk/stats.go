@@ -58,33 +58,63 @@ func runStats(args []string) int {
 		return code
 	}
 
-	all, firstErr := fetchAllIssues(subs)
-	if len(all) == 0 && firstErr != nil {
+	all, subErrs := fetchAllIssues(subs)
+	if len(all) == 0 && len(subErrs) > 0 {
+		// Total failure: classify the typed bd sentinels for the
+		// documented exit codes.
+		first := subErrs[0].err
 		switch {
-		case errors.Is(firstErr, beads.ErrBDNotFound):
+		case errors.Is(first, beads.ErrBDNotFound):
 			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
 			return 2
-		case errors.Is(firstErr, beads.ErrNoWorkspace):
+		case errors.Is(first, beads.ErrNoWorkspace):
 			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
 			return 2
-		default:
-			fmt.Fprintln(os.Stderr, "wyk stats:", firstErr)
-			return 1
 		}
+		// Other total failures still emit a parseable (zero) stats
+		// object carrying the errors so an agent isn't left with
+		// nothing; exit 1 to flag it.
+		if *asJSON {
+			s := computeStats(nil, time.Now())
+			attachStatsErrors(&s, subErrs)
+			emitStatsJSON(s)
+		} else {
+			fmt.Fprintln(os.Stderr, "wyk stats:", joinSubErrors(subErrs))
+		}
+		return 1
 	}
 
 	s := computeStats(all, time.Now())
+	// Partial success: the aggregate is real but covers fewer repos —
+	// attach the errors so a consumer knows the numbers are a partial
+	// snapshot rather than the whole registry.
+	attachStatsErrors(&s, subErrs)
 	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(s); err != nil {
-			fmt.Fprintln(os.Stderr, "wyk stats: encode:", err)
-			return 1
-		}
+		emitStatsJSON(s)
 		return 0
 	}
 	renderStatsText(s, len(subs))
+	if len(subErrs) > 0 {
+		fmt.Printf("\n%d repo(s) failed (totals are a partial snapshot): %s\n", len(subErrs), joinSubErrors(subErrs))
+	}
 	return 0
+}
+
+// attachStatsErrors copies the per-repo failures onto the Stats result
+// as repoError rows so the -json output names them.
+func attachStatsErrors(s *Stats, subErrs []subError) {
+	for _, e := range subErrs {
+		s.Errors = append(s.Errors, repoError{Repo: e.repo, Error: e.err.Error()})
+	}
+}
+
+// emitStatsJSON writes the stats object to stdout.
+func emitStatsJSON(s Stats) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(s); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk stats: encode:", err)
+	}
 }
 
 type statsSub struct {
@@ -131,43 +161,41 @@ func statsSubs(dir, repoName string) ([]statsSub, int) {
 
 // fetchAllIssues calls ListAll across every sub in parallel — needed
 // because stats covers closed history (not just active work).
-func fetchAllIssues(subs []statsSub) ([]beads.Issue, error) {
-	type result struct {
-		issues []beads.Issue
-		err    error
-	}
-	results := make([]result, len(subs))
+func fetchAllIssues(subs []statsSub) ([]beads.Issue, []subError) {
+	issues := make([][]beads.Issue, len(subs))
+	errs := make([]error, len(subs))
 	var wg sync.WaitGroup
 	for i, s := range subs {
 		wg.Add(1)
 		go func(i int, s statsSub) {
 			defer wg.Done()
-			issues, err := s.client.ListAll(context.Background())
-			results[i] = result{issues: issues, err: err}
+			issues[i], errs[i] = s.client.ListAll(context.Background())
 		}(i, s)
 	}
 	wg.Wait()
+	return splitStatsResults(subs, issues, errs)
+}
 
+// splitStatsResults is the pure half of fetchAllIssues, mirroring
+// splitInboxResults: it merges the healthy repos' issues (stamped with
+// their repo) and collects EVERY per-repo error. Surfacing all errors
+// matters more for stats than inbox — a silently-dropped repo
+// undercounts the whole aggregate, so the caller must be able to tell
+// the numbers are partial.
+func splitStatsResults(subs []statsSub, issues [][]beads.Issue, errs []error) ([]beads.Issue, []subError) {
 	var all []beads.Issue
-	var firstErr error
+	var subErrs []subError
 	for i, s := range subs {
-		r := results[i]
-		if r.err != nil {
-			if firstErr == nil {
-				if s.name != "" {
-					firstErr = fmt.Errorf("%s: %w", s.name, r.err)
-				} else {
-					firstErr = r.err
-				}
-			}
+		if errs[i] != nil {
+			subErrs = append(subErrs, subError{repo: s.name, err: errs[i]})
 			continue
 		}
-		for j := range r.issues {
-			r.issues[j].Repo = s.name
+		for j := range issues[i] {
+			issues[i][j].Repo = s.name
 		}
-		all = append(all, r.issues...)
+		all = append(all, issues[i]...)
 	}
-	return all, firstErr
+	return all, subErrs
 }
 
 // Stats is the computed snapshot, kept exported-shape friendly so
@@ -182,6 +210,11 @@ type Stats struct {
 	ClosedLast7d     int            `json:"closed_last_7d"`
 	ClosedLast30d    int            `json:"closed_last_30d"`
 	TimeToCloseHuman *Timings       `json:"time_to_close_human,omitempty"`
+	// Errors names any workspaces that failed to respond. When
+	// non-empty the aggregate above is computed over FEWER repos than
+	// registered — the numbers are a partial snapshot, not the whole
+	// registry. Omitted when every repo responded.
+	Errors []repoError `json:"errors,omitempty"`
 }
 
 // Timings is the median + p95 + sample count for a population of

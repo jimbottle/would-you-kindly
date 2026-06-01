@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -159,5 +160,26 @@ func TestHumanizeDuration(t *testing.T) {
 		if got := humanizeDuration(c.d); got != c.want {
 			t.Errorf("humanizeDuration(%v) = %q, want %q", c.d, got, c.want)
 		}
+	}
+}
+
+func TestSplitStatsResults_CollectsAllErrors(t *testing.T) {
+	subs := []statsSub{{name: "a"}, {name: "b"}, {name: "c"}}
+	issues := [][]beads.Issue{{{ID: "a-1"}}, nil, nil}
+	errs := []error{nil, errors.New("e1"), errors.New("e2")}
+	all, subErrs := splitStatsResults(subs, issues, errs)
+	if len(all) != 1 || all[0].Repo != "a" {
+		t.Errorf("healthy repo's issue should survive, stamped; got %+v", all)
+	}
+	if len(subErrs) != 2 {
+		t.Errorf("both failures should be collected; got %+v", subErrs)
+	}
+}
+
+func TestAttachStatsErrors_PopulatesErrorsField(t *testing.T) {
+	s := Stats{}
+	attachStatsErrors(&s, []subError{{repo: "x", err: errors.New("boom")}})
+	if len(s.Errors) != 1 || s.Errors[0].Repo != "x" || s.Errors[0].Error != "boom" {
+		t.Errorf("stats Errors not populated; got %+v", s.Errors)
 	}
 }

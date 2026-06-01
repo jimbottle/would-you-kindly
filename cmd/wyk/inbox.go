@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -24,19 +25,23 @@ const inboxQuery = `label=src:agent AND NOT label=human AND status!=closed`
 // runInbox implements `wyk inbox`: the agent-side view of the
 // handoff loop. Prints issues across every registered workspace
 // that have been bounced back by a human. Defaults to a tabular
-// human-readable format; --json emits the raw bd issue array
-// (decorated with Repo/Branch) for LLM consumption.
+// human-readable format; --json emits a {issues, errors} envelope
+// (issues decorated with Repo/Branch) for LLM consumption — the errors
+// array names any workspaces that failed so a partial multi-repo
+// result is honestly labelled rather than silently truncated.
 //
 // Exit codes:
 //
-//	0   success (any count, including zero — empty inbox is normal)
-//	1   filesystem / bd error
+//	0   success, including a PARTIAL result (some repos failed but at
+//	    least one responded — the errors array / text footer says so)
+//	1   total failure (every queried repo errored); -json still emits
+//	    the envelope with an empty issues array so output stays parseable
 //	2   bd missing or no workspace
 //	64  usage error
 func runInbox(args []string) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
-	asJSON := fs.Bool("json", false, "emit a JSON array of issues for LLM consumption")
+	asJSON := fs.Bool("json", false, "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed)")
 	// -priority caps the inbox at priority N or higher (lower N
 	// = higher priority in bd's convention). -1 (the default)
 	// disables the cap. A user passing -priority 1 gets P0 + P1
@@ -65,22 +70,30 @@ func runInbox(args []string) int {
 		return code
 	}
 
-	all, firstErr := fetchInbox(subs)
-	if len(all) == 0 && firstErr != nil {
+	all, subErrs := fetchInbox(subs)
+	if len(all) == 0 && len(subErrs) > 0 {
+		// Total failure (nothing gathered, every queried repo errored).
 		// Distinguish the typed bd sentinels so the documented exit
 		// codes (2 for bd-missing / no-workspace) actually fire,
 		// matching wyk handoff's behavior.
+		first := subErrs[0].err
 		switch {
-		case errors.Is(firstErr, beads.ErrBDNotFound):
+		case errors.Is(first, beads.ErrBDNotFound):
 			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
 			return 2
-		case errors.Is(firstErr, beads.ErrNoWorkspace):
+		case errors.Is(first, beads.ErrNoWorkspace):
 			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
 			return 2
-		default:
-			fmt.Fprintln(os.Stderr, "wyk inbox:", firstErr)
-			return 1
 		}
+		// Other total failures: in -json still emit the envelope (empty
+		// issues + the errors array) so an agent gets parseable output
+		// rather than nothing; exit 1 to signal the failure.
+		if *asJSON {
+			emitInboxJSON(nil, subErrs)
+		} else {
+			fmt.Fprintln(os.Stderr, "wyk inbox:", joinSubErrors(subErrs))
+		}
+		return 1
 	}
 
 	if *maxPriority >= 0 {
@@ -88,17 +101,47 @@ func runInbox(args []string) int {
 	}
 	all = limitByPriority(all, *limit)
 
+	// Partial success (some repos failed, some succeeded) falls through
+	// here: emit what we have AND the errors so the result is honestly
+	// labelled incomplete. Exit 0 — the agent got actionable data.
 	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(all); err != nil {
-			fmt.Fprintln(os.Stderr, "wyk inbox: encode:", err)
-			return 1
-		}
+		emitInboxJSON(all, subErrs)
 		return 0
 	}
-	renderInboxText(all)
+	renderInboxText(all, subErrs)
 	return 0
+}
+
+// emitInboxJSON writes the inbox envelope ({issues, errors}) to stdout.
+// A nil/empty issues slice still renders as `"issues": []` (not null)
+// so a consumer can iterate unconditionally.
+func emitInboxJSON(all []beads.Issue, subErrs []subError) {
+	if all == nil {
+		all = []beads.Issue{}
+	}
+	res := inboxResult{Issues: all}
+	for _, e := range subErrs {
+		res.Errors = append(res.Errors, repoError{Repo: e.repo, Error: e.err.Error()})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(res); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk inbox: encode:", err)
+	}
+}
+
+// joinSubErrors renders the per-repo failures as one "repo: err; …"
+// line for the text/stderr paths.
+func joinSubErrors(subErrs []subError) string {
+	parts := make([]string, 0, len(subErrs))
+	for _, e := range subErrs {
+		if e.repo != "" {
+			parts = append(parts, e.repo+": "+e.err.Error())
+		} else {
+			parts = append(parts, e.err.Error())
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // inboxSub bundles a client with its display name — same shape as
@@ -156,44 +199,68 @@ func inboxSubs(dir, repoName string) ([]inboxSub, int) {
 // with its Repo so a JSON consumer can disambiguate cross-repo IDs.
 // Returns the first per-sub error only when no sub produced data —
 // otherwise partial failures are tolerated, matching MultiBDSource.
-func fetchInbox(subs []inboxSub) ([]beads.Issue, error) {
-	type result struct {
-		issues []beads.Issue
-		err    error
-	}
-	results := make([]result, len(subs))
+// subError pairs a failing repo's name with its error so the inbox
+// can report EVERY per-repo failure (not just the first), both for the
+// -json `errors` array and for the text footer. The typed err is kept
+// so the caller can still classify bd sentinels (ErrBDNotFound /
+// ErrNoWorkspace) for the documented exit codes.
+type subError struct {
+	repo string
+	err  error
+}
 
+// repoError is the JSON shape of one per-repo failure in the inbox
+// envelope: {"repo": "...", "error": "..."}.
+type repoError struct {
+	Repo  string `json:"repo,omitempty"`
+	Error string `json:"error"`
+}
+
+// inboxResult is the -json envelope: the gathered issues plus an
+// errors array naming any repos that failed. The envelope (rather than
+// a bare issue array) lets an agent reading stdout SEE that a result
+// is partial and which workspaces it's missing, instead of silently
+// receiving an incomplete inbox. errors is omitted when every repo
+// responded.
+type inboxResult struct {
+	Issues []beads.Issue `json:"issues"`
+	Errors []repoError   `json:"errors,omitempty"`
+}
+
+func fetchInbox(subs []inboxSub) ([]beads.Issue, []subError) {
+	issues := make([][]beads.Issue, len(subs))
+	errs := make([]error, len(subs))
 	var wg sync.WaitGroup
 	for i, s := range subs {
 		wg.Add(1)
 		go func(i int, s inboxSub) {
 			defer wg.Done()
-			issues, err := s.client.Query(context.Background(), inboxQuery)
-			results[i] = result{issues: issues, err: err}
+			issues[i], errs[i] = s.client.Query(context.Background(), inboxQuery)
 		}(i, s)
 	}
 	wg.Wait()
+	return splitInboxResults(subs, issues, errs)
+}
 
+// splitInboxResults is the pure half of fetchInbox: it partitions the
+// parallel per-sub (issues, err) results into the merged issue list
+// (each row stamped with its repo) and EVERY per-repo error — not just
+// the first — preserving sub order. Collecting all errors is what lets
+// the envelope honestly name every failed workspace.
+func splitInboxResults(subs []inboxSub, issues [][]beads.Issue, errs []error) ([]beads.Issue, []subError) {
 	var all []beads.Issue
-	var firstErr error
+	var subErrs []subError
 	for i, s := range subs {
-		r := results[i]
-		if r.err != nil {
-			if firstErr == nil {
-				if s.name != "" {
-					firstErr = fmt.Errorf("%s: %w", s.name, r.err)
-				} else {
-					firstErr = r.err
-				}
-			}
+		if errs[i] != nil {
+			subErrs = append(subErrs, subError{repo: s.name, err: errs[i]})
 			continue
 		}
-		for j := range r.issues {
-			r.issues[j].Repo = s.name
+		for j := range issues[i] {
+			issues[i][j].Repo = s.name
 		}
-		all = append(all, r.issues...)
+		all = append(all, issues[i]...)
 	}
-	return all, firstErr
+	return all, subErrs
 }
 
 // filterByMaxPriority keeps only issues at priority <= max. bd
@@ -236,25 +303,31 @@ func limitByPriority(issues []beads.Issue, limit int) []beads.Issue {
 }
 
 // renderInboxText prints the inbox as a compact list — one line per
-// issue, repo-prefixed when multiple workspaces are in scope.
-func renderInboxText(all []beads.Issue) {
+// issue, repo-prefixed when multiple workspaces are in scope. A
+// trailing "N repo(s) failed" line warns when the result is partial so
+// the human (like the agent reading the -json errors array) knows the
+// list may be incomplete.
+func renderInboxText(all []beads.Issue, subErrs []subError) {
 	if len(all) == 0 {
 		fmt.Println("inbox empty (no agent-filed issues currently bounced back).")
-		return
-	}
-	multiRepo := false
-	for _, i := range all {
-		if i.Repo != "" {
-			multiRepo = true
-			break
+	} else {
+		multiRepo := false
+		for _, i := range all {
+			if i.Repo != "" {
+				multiRepo = true
+				break
+			}
+		}
+		fmt.Printf("%d issue(s) in inbox:\n", len(all))
+		for _, i := range all {
+			if multiRepo {
+				fmt.Printf("  [%s] %-22s P%d  %s\n", i.Repo, i.ID, i.Priority, i.Title)
+			} else {
+				fmt.Printf("  %-22s P%d  %s\n", i.ID, i.Priority, i.Title)
+			}
 		}
 	}
-	fmt.Printf("%d issue(s) in inbox:\n", len(all))
-	for _, i := range all {
-		if multiRepo {
-			fmt.Printf("  [%s] %-22s P%d  %s\n", i.Repo, i.ID, i.Priority, i.Title)
-		} else {
-			fmt.Printf("  %-22s P%d  %s\n", i.ID, i.Priority, i.Title)
-		}
+	if len(subErrs) > 0 {
+		fmt.Printf("\n%d repo(s) failed (inbox may be incomplete): %s\n", len(subErrs), joinSubErrors(subErrs))
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -82,14 +83,21 @@ func runActivity(args []string) int {
 	}
 
 	cutoff := time.Now().Add(-*since)
-	events, hadError := collectActivity(reg, cutoff, *maxPriority, *status, defaultActivityClient)
+	events, repoErrs := collectActivity(reg, cutoff, *maxPriority, *status, defaultActivityClient)
 	events = limitActivityEvents(events, *limit)
 	if *asJSON {
-		emitActivityJSON(os.Stdout, events, cutoff)
+		emitActivityJSON(os.Stdout, events, cutoff, repoErrs)
 	} else {
 		emitActivityTable(os.Stdout, events, cutoff)
+		if len(repoErrs) > 0 {
+			fmt.Fprintf(os.Stdout, "\n%d repo(s) failed (stream may be incomplete): %s\n", len(repoErrs), joinRepoErrors(repoErrs))
+		}
 	}
-	if hadError {
+	// Exit 0 on partial success (events + errors surfaced) — matching
+	// inbox/stats; reserve a non-zero exit for a TOTAL failure where
+	// every registered repo errored, so a caller can still tell the
+	// difference while always getting parseable output.
+	if len(reg.Repos) > 0 && len(repoErrs) == len(reg.Repos) {
 		return 1
 	}
 	return 0
@@ -131,19 +139,23 @@ var defaultActivityClient = func(dir string) activityClient {
 // statusFilter is "all" (no filter), "open" (drop closed), or
 // "closed" (drop everything except closed). The caller is
 // expected to have validated the string.
-func collectActivity(reg *registry.Registry, cutoff time.Time, maxPriority int, statusFilter string, mk func(dir string) activityClient) ([]activityEvent, bool) {
+func collectActivity(reg *registry.Registry, cutoff time.Time, maxPriority int, statusFilter string, mk func(dir string) activityClient) ([]activityEvent, []repoError) {
 	// Initialize as an empty (non-nil) slice so the JSON shape is
 	// always `[]` rather than `null` when the window is empty —
 	// downstream tools iterating events don't need a null guard.
 	events := make([]activityEvent, 0)
-	hadError := false
+	var repoErrs []repoError
 	for _, r := range reg.Repos {
 		c := mk(r.Path)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		issues, err := c.ListAll(ctx)
 		cancel()
 		if err != nil {
-			hadError = true
+			// Capture WHICH repo failed (not just a bool) so the
+			// -json envelope and the text footer can name it — a
+			// silently-dropped repo means the stream is missing
+			// events with no clue why.
+			repoErrs = append(repoErrs, repoError{Repo: r.Name, Error: err.Error()})
 			continue
 		}
 		for _, i := range issues {
@@ -169,7 +181,7 @@ func collectActivity(reg *registry.Registry, cutoff time.Time, maxPriority int, 
 		}
 	}
 	sort.Slice(events, func(i, j int) bool { return events[i].UpdatedAt.After(events[j].UpdatedAt) })
-	return events, hadError
+	return events, repoErrs
 }
 
 // limitActivityEvents truncates events to the first `limit`
@@ -207,12 +219,28 @@ func emitActivityTable(w io.Writer, events []activityEvent, cutoff time.Time) {
 
 // emitActivityJSON prints the structured stream. Includes the
 // cutoff so a downstream consumer can stamp its data feed.
-func emitActivityJSON(w io.Writer, events []activityEvent, cutoff time.Time) {
+func emitActivityJSON(w io.Writer, events []activityEvent, cutoff time.Time, repoErrs []repoError) {
 	out := struct {
 		Cutoff time.Time       `json:"cutoff"`
 		Events []activityEvent `json:"events"`
-	}{Cutoff: cutoff, Events: events}
+		Errors []repoError     `json:"errors,omitempty"`
+	}{Cutoff: cutoff, Events: events, Errors: repoErrs}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(out)
+}
+
+// joinRepoErrors renders []repoError as one "repo: err; …" line for
+// the text footer. (subError has its own joiner that works off the
+// typed error; this one works off the already-stringified repoError.)
+func joinRepoErrors(errs []repoError) string {
+	parts := make([]string, 0, len(errs))
+	for _, e := range errs {
+		if e.Repo != "" {
+			parts = append(parts, e.Repo+": "+e.Error)
+		} else {
+			parts = append(parts, e.Error)
+		}
+	}
+	return strings.Join(parts, "; ")
 }

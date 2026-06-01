@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent `-json` commands degrade gracefully on partial multi-repo
+  failure** — `wyk inbox`, `stats`, and `activity` no longer drop a
+  failed workspace silently (and `inbox`/`stats` no longer emit
+  *nothing* when one repo errors). Each now surfaces an `errors:
+  [{repo, error}]` array alongside its data so an agent reading stdout
+  can tell a result is partial and which workspaces are missing.
+  `inbox -json` changes shape from a bare issue array to a
+  `{issues, errors}` envelope; `stats -json` gains an `errors` field;
+  `activity -json` gains `errors`. Partial failures exit 0 (data was
+  returned); total failure exits 1 but still emits a parseable
+  payload. (`export` and `dashboard` already carried per-repo errors.)
+  Part of the agent-token-efficiency epic.
+
 ### Added
 
 - **Dependency context in the detail view** — opening an issue now

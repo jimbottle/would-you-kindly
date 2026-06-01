@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -104,5 +107,76 @@ func TestLimitByPriority(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSplitInboxResults_CollectsAllErrorsAndStampsRepo(t *testing.T) {
+	subs := []inboxSub{{name: "a"}, {name: "broken1"}, {name: "c"}, {name: "broken2"}}
+	issues := [][]beads.Issue{
+		{{ID: "a-1"}},
+		nil,
+		{{ID: "c-1"}, {ID: "c-2"}},
+		nil,
+	}
+	errs := []error{nil, errors.New("boom1"), nil, errors.New("boom2")}
+
+	all, subErrs := splitInboxResults(subs, issues, errs)
+	if len(all) != 3 {
+		t.Errorf("expected 3 issues from the healthy repos; got %d", len(all))
+	}
+	// Every issue must be stamped with its repo for the multi-repo view.
+	for _, i := range all {
+		if i.Repo == "" {
+			t.Errorf("issue %s not stamped with repo", i.ID)
+		}
+	}
+	// BOTH failures must surface — not just the first.
+	if len(subErrs) != 2 || subErrs[0].repo != "broken1" || subErrs[1].repo != "broken2" {
+		t.Errorf("expected both failures in order; got %+v", subErrs)
+	}
+}
+
+func TestInboxResult_OmitsErrorsWhenAllHealthy(t *testing.T) {
+	b, err := json.Marshal(inboxResult{Issues: []beads.Issue{{ID: "a-1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "errors") {
+		t.Errorf("clean result should omit the errors key; got %s", b)
+	}
+	// And it must always carry an issues key (even when empty).
+	b2, _ := json.Marshal(inboxResult{Issues: []beads.Issue{}})
+	if !strings.Contains(string(b2), `"issues":[]`) {
+		t.Errorf("empty result should still render issues:[]; got %s", b2)
+	}
+}
+
+func TestEmitInboxJSON_EnvelopeShapeWithErrors(t *testing.T) {
+	out := captureStdout(t, func() {
+		emitInboxJSON(
+			[]beads.Issue{{ID: "a-1", Title: "one"}},
+			[]subError{{repo: "broken", err: errors.New("timed out")}},
+		)
+	})
+	var res inboxResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("envelope should parse: %v\n%s", err, out)
+	}
+	if len(res.Issues) != 1 || res.Issues[0].ID != "a-1" {
+		t.Errorf("issues lost: %+v", res.Issues)
+	}
+	if len(res.Errors) != 1 || res.Errors[0].Repo != "broken" || res.Errors[0].Error != "timed out" {
+		t.Errorf("errors array wrong: %+v", res.Errors)
+	}
+}
+
+func TestEmitInboxJSON_TotalFailureEmitsParseableEnvelope(t *testing.T) {
+	// Total failure (nil issues) must still emit issues:[] + errors so
+	// an agent gets parseable output instead of nothing.
+	out := captureStdout(t, func() {
+		emitInboxJSON(nil, []subError{{repo: "a", err: errors.New("x")}})
+	})
+	if !strings.Contains(out, `"issues": []`) || !strings.Contains(out, `"errors"`) {
+		t.Errorf("total-failure envelope should be parseable with issues:[] + errors; got %s", out)
 	}
 }

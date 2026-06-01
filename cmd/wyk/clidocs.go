@@ -67,7 +67,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Usage:   "wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
-			{Name: "-json", Default: "false", Description: "emit a JSON array of issues for LLM consumption"},
+			{Name: "-json", Default: "false", Description: "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated)"},
 			{Name: "-priority", Default: "-1", Description: "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)"},
 			{Name: "-repo", Default: "", Description: "restrict the inbox to the registered repo with this name (mutually exclusive with -C)"},
 			{Name: "-limit", Default: "-1", Description: "cap the inbox at N rows (after priority/repo filtering; -1 disables)"},
