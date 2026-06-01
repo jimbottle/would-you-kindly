@@ -17,7 +17,9 @@ make check                    # the full local gate — run this before pushing
 
 `make check` mirrors the `test` CI workflow exactly (gofmt, docs-check,
 `go vet`, **golangci-lint**, build, `test -race`) plus the plugin-skills
-drift guard, so a green `make check` means a green push. It exists because
+drift guard, so a green `make check` means a green push — provided your
+golangci-lint matches CI's pinned version (`make lint` warns if it
+doesn't). It exists because
 the linter gate (golangci-lint / staticcheck) used to run only in CI — a
 red `test` workflow shipped unnoticed for a long time because local runs
 skipped it. Don't push on a bare `go test`; run `make check`.

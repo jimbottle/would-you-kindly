@@ -6,6 +6,14 @@
 
 .PHONY: docs-snapshot docs-check plugin-skills plugin-skills-check lint check help
 
+# golangci-lint version CI pins (.github/workflows/test.yml). Single
+# source of truth: the `lint` target warns when the locally-installed
+# binary differs, and the install hints reference it — so "a green
+# `make check` == a green push" can't be quietly undermined by a stray
+# local linter version running different default checks than CI. Bump
+# here AND in test.yml together.
+GOLANGCI_VERSION := v2.12.2
+
 # Regenerate the markdown snapshots under docs/generated/. Build a
 # fresh binary into /tmp so this target works from a dirty tree
 # without polluting ./bin or relying on `go run` per call (which
@@ -67,9 +75,15 @@ plugin-skills-check: plugin-skills
 lint:
 	@command -v golangci-lint >/dev/null 2>&1 || { \
 		echo "lint: golangci-lint not found — install the CI-pinned version:"; \
-		echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2"; \
+		echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)"; \
 		exit 1; \
 	}
+	@have=$$(golangci-lint version 2>/dev/null | sed -n 's/.*version \([0-9][0-9.]*\).*/\1/p'); \
+	want=$$(echo "$(GOLANGCI_VERSION)" | sed 's/^v//'); \
+	if [ -n "$$have" ] && [ "$$have" != "$$want" ]; then \
+		echo "lint: WARNING local golangci-lint $$have != CI-pinned $$want — results may diverge from CI"; \
+		echo "      install the pinned version: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)"; \
+	fi
 	@golangci-lint run
 
 # The full local gate. Runs the same checks as the `test` CI workflow,
