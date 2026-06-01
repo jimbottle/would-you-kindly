@@ -944,11 +944,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.lastSync = time.Now()
 		m.lastErr = msg.err
-		var cacheCmd tea.Cmd
+		var cacheCmd, depsCmd tea.Cmd
 		if msg.err == nil {
 			m.all = msg.issues
 			m.commonPrefix = commonIDPrefix(m.all)
 			m.recomputeVisible()
+			// A refresh that introduces new rows while the deps sort is
+			// active leaves those IDs uncached, so depsFullyResolved
+			// fails and recomputeVisible silently falls back to the
+			// DependencyCount proxy. Re-kick resolution here so the real
+			// topological order is restored once the new edges land —
+			// without this the order quietly degrades on every refresh
+			// until the user re-presses `s`. nil (not deps-sort, or all
+			// rows already cached) batches harmlessly.
+			depsCmd = m.maybeResolveDeps()
 			// First successful fetch is where a session-restored
 			// cursor lands: the visible set finally exists, so move
 			// the cursor onto the saved issue (consume so refresh
@@ -977,9 +986,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fetchErrors = msg.subErrs
 		if recovered {
 			m.tickGen++
-			return m, tea.Batch(tickCmd(m.tickGen), cacheCmd)
+			return m, tea.Batch(tickCmd(m.tickGen), cacheCmd, depsCmd)
 		}
-		return m, cacheCmd
+		return m, tea.Batch(cacheCmd, depsCmd)
 
 	case tickMsg:
 		// Drop ticks from a chain we've already replaced — this
@@ -2499,8 +2508,10 @@ func sortByDeps(issues []beads.Issue, depCache map[string][]beads.Issue) {
 	}
 	sort.Slice(ready, func(i, j int) bool { return less(ready[i], ready[j]) })
 
+	usedIdx := make(map[int]bool, len(issues))
 	emit := func(id string) {
 		emitted[id] = true
+		usedIdx[idx[id]] = true
 		out = append(out, issues[idx[id]])
 		// Decrement dependents; newly-zero ones become ready. Insert
 		// in sorted position so the per-level tiebreak holds without
@@ -2546,6 +2557,20 @@ func sortByDeps(issues []beads.Issue, depCache map[string][]beads.Issue) {
 			break // defensive: nothing left to emit
 		}
 		emit(pick)
+	}
+
+	// When two visible rows share a bare ID (a cross-repo collision),
+	// idx keeps only the last index, so the duplicate's slot is never
+	// emitted and out stays short — copy would then leave a stale row
+	// in the tail. Append any input row whose index wasn't consumed so
+	// every original row survives exactly once (the collided duplicate
+	// lands unsorted at the end rather than vanishing).
+	if len(out) < len(issues) {
+		for i := range issues {
+			if !usedIdx[i] {
+				out = append(out, issues[i])
+			}
+		}
 	}
 
 	copy(issues, out)

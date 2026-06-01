@@ -2539,16 +2539,15 @@ func TestFSEventMsg_SuspendedOnTerminalError(t *testing.T) {
 }
 
 // drainCmd walks a tea.Cmd (and any nested tea.BatchMsg) so every
-// inner func() runs and produces its side effects. Used by the
-// fsEventMsg suspension test to detect whether a fetchCmd is
-// hiding inside a batch; a single non-batch cmd is just consumed.
-// drainCmd runs cmd (and any batched children) for their side
-// effects. Each command runs in its own goroutine with a short
-// deadline so a long-lived timer like tickCmd's tea.Tick(refreshInterval)
-// — which would otherwise block the test for the full poll interval —
-// is abandoned once it's clear it isn't going to return promptly. The
-// side effects the tick tests assert on (the stub's synchronous Fetch
-// bumping src.calls) all complete well within the deadline.
+// inner func() runs and produces its side effects — used by the
+// fsEventMsg suspension and tick tests to detect whether a fetchCmd
+// is hiding inside a batch (the stub's synchronous Fetch bumps
+// src.calls); a single non-batch cmd is just consumed. Each command
+// runs in its own goroutine with a short deadline so a long-lived
+// timer like tickCmd's tea.Tick(refreshInterval) — which would
+// otherwise block the test for the full poll interval — is abandoned
+// once it's clear it won't return promptly. The asserted side effects
+// all complete well within the deadline.
 func drainCmd(cmd tea.Cmd) {
 	if cmd == nil {
 		return
@@ -5544,5 +5543,96 @@ func TestSortByDeps_FallbackToCountProxyWhenUnresolved(t *testing.T) {
 		if m.visible[i].ID != id {
 			t.Errorf("fallback row %d: want %s, got %s", i, id, m.visible[i].ID)
 		}
+	}
+}
+
+// applyResolveCmd executes a (possibly batched) Cmd returned by
+// Update and feeds any depsResolvedMsg back into the model, so a test
+// can observe the topo order after an async resolution lands. Handles
+// the tea.Batch wrapper the fetchedMsg handler emits (cacheCmd +
+// depsCmd) and a bare resolve Cmd alike.
+func applyResolveCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	switch v := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range v {
+			m = applyResolveCmd(t, m, c)
+		}
+	case depsResolvedMsg:
+		updated, _ := m.Update(v)
+		m = updated.(Model)
+	}
+	return m
+}
+
+func TestSortByDeps_RefreshReResolvesNewRows(t *testing.T) {
+	// Regression for the silent revert-to-count-proxy bug: with the
+	// deps sort active and resolved, an auto-refresh that introduces a
+	// new dependent row must re-kick resolution from the fetchedMsg
+	// handler so the real topological order is restored — not left
+	// degraded until the user re-presses `s`.
+	rows := []beads.Issue{
+		{ID: "a-1", Priority: 0, DependencyCount: 0},
+		{ID: "a-2", Priority: 1, DependencyCount: 1},
+	}
+	src := &stubDepSource{
+		stubSource: stubSource{issues: rows},
+		edges:      map[string][]string{"a-2": {"a-1"}},
+	}
+	m := New(src)
+	m.all = rows
+	m.recomputeVisible()
+	m = resolveDepsForTest(t, m)
+
+	// Refresh brings a-3, which depends on a-2 (edge added to source).
+	src.edges["a-3"] = []string{"a-2"}
+	newRows := []beads.Issue{
+		{ID: "a-1", Priority: 0, DependencyCount: 0},
+		{ID: "a-2", Priority: 1, DependencyCount: 1},
+		{ID: "a-3", Priority: 0, DependencyCount: 1},
+	}
+	model, cmd := m.Update(fetchedMsg{preset: m.preset, issues: newRows})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("refresh while deps-sort active should return a resolve Cmd for the new row")
+	}
+	m = applyResolveCmd(t, m, cmd)
+
+	pos := map[string]int{}
+	for i, iss := range m.visible {
+		pos[iss.ID] = i
+	}
+	if !(pos["a-1"] < pos["a-2"] && pos["a-2"] < pos["a-3"]) {
+		t.Errorf("topo order not restored after refresh: a-1=%d a-2=%d a-3=%d", pos["a-1"], pos["a-2"], pos["a-3"])
+	}
+}
+
+func TestSortByDeps_DuplicateIDKeepsAllRows(t *testing.T) {
+	// Two visible rows share a bare ID (a cross-repo collision). The
+	// topo sort must neither drop a row nor leave a stale duplicate in
+	// the tail: every input row survives exactly once.
+	issues := []beads.Issue{
+		{ID: "x-1", Repo: "a", Priority: 0},
+		{ID: "x-2", Repo: "a", Priority: 1, DependencyCount: 1},
+		{ID: "x-1", Repo: "b", Priority: 2}, // collision on x-1
+	}
+	depCache := map[string][]beads.Issue{
+		"x-1": {},
+		"x-2": {{ID: "x-1"}},
+	}
+	sortByDeps(issues, depCache)
+	if len(issues) != 3 {
+		t.Fatalf("row count changed: got %d, want 3", len(issues))
+	}
+	// IDs collide, so count by Repo to prove no row was lost/duplicated.
+	repos := map[string]int{}
+	for _, iss := range issues {
+		repos[iss.Repo]++
+	}
+	if repos["a"] != 2 || repos["b"] != 1 {
+		t.Errorf("rows lost/duplicated on collision: repo counts %v, want a=2 b=1", repos)
 	}
 }
