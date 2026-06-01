@@ -2569,6 +2569,9 @@ func TestFSEventMsg_IdleDispatchesAndMarksRefreshing(t *testing.T) {
 	events := make(chan struct{}, 1)
 	events <- struct{}{}
 	m := applyFetched(New(src).WithFSEvents(events), src) // clears loading+refreshing
+	// Push lastSync past the rate-limit floor so this models a quiet
+	// period (the common single-write case), not a burst.
+	m.lastSync = time.Now().Add(-2 * minFSRefreshGap)
 
 	callsBefore := src.calls
 	model, cmd := m.Update(fsEventMsg{})
@@ -2579,6 +2582,29 @@ func TestFSEventMsg_IdleDispatchesAndMarksRefreshing(t *testing.T) {
 	drainCmd(cmd)
 	if src.calls != callsBefore+1 {
 		t.Errorf("idle fsEvent should dispatch exactly one fetch; calls=%d before=%d", src.calls, callsBefore)
+	}
+}
+
+func TestFSEventMsg_RateLimitsBurstRefreshes(t *testing.T) {
+	// A fs event arriving within minFSRefreshGap of the last fetch
+	// completion must NOT dispatch a refetch — only re-arm the wait.
+	// This is what stops a chatty writer (a single bd write emits
+	// ~130 fsnotify events; agents/git-pulls stream many writes) from
+	// churning the multi-repo fetch back-to-back.
+	src := &stubSource{issues: sampleIssues()}
+	events := make(chan struct{}, 1)
+	events <- struct{}{}
+	m := applyFetched(New(src).WithFSEvents(events), src)
+	m.lastSync = time.Now() // just synced → inside the cooldown
+
+	callsBefore := src.calls
+	_, cmd := m.Update(fsEventMsg{})
+	if cmd == nil {
+		t.Fatal("fsEvent should still re-arm the wait while rate-limited")
+	}
+	drainCmd(cmd)
+	if src.calls != callsBefore {
+		t.Errorf("fsEvent within the refresh gap must NOT refetch; calls=%d before=%d", src.calls, callsBefore)
 	}
 }
 

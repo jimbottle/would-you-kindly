@@ -68,6 +68,21 @@ func (s descSource) Len() int            { return len(s) }
 // longer poll is invisible to first paint.
 const refreshInterval = 20 * time.Second
 
+// minFSRefreshGap is the floor between two fs-watch-driven refreshes.
+// The watcher's 250ms debounce coalesces ONE write's event storm (a
+// single bd write emits ~130 fsnotify events as it streams the
+// issues.jsonl export) into one refresh, but it can't rate-limit
+// ACROSS writes: a chatty writer touching any registered repo's
+// .beads/ — an agent looping bd commands, a git pull importing
+// several repos, a sync daemon — would otherwise fire a full
+// cross-repo refetch per write and churn the view continuously. This
+// caps fs-driven refreshes to one per gap; the first event after a
+// quiet period still refreshes near-instantly, and the poll tick
+// backstops any change that lands during the cooldown. Measured from
+// the last fetch's COMPLETION (m.lastSync) so a slow multi-repo fetch
+// gets a real idle window after it before the next fs refresh.
+const minFSRefreshGap = 5 * time.Second
+
 // mode tracks the user's interaction context.
 type mode int
 
@@ -1042,6 +1057,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// backstop. Setting m.refreshing also lets the tick path see
 		// this fetch as in-flight so the two can't double up.
 		if m.loading || m.refreshing {
+			return m, waitFSEvent(m.fsEvents)
+		}
+		// Rate-limit fs-driven refreshes to one per minFSRefreshGap.
+		// A single bd write emits ~130 fsnotify events and a chatty
+		// writer streams many writes; without this floor every write
+		// drives a full cross-repo refetch back-to-back. The first
+		// event after a quiet spell still refreshes near-instantly
+		// (gap already elapsed); a burst collapses to one refresh, and
+		// the poll tick catches whatever lands mid-cooldown. Measured
+		// from the last fetch's completion so a slow fetch gets a real
+		// idle window after it.
+		if !m.lastSync.IsZero() && time.Since(m.lastSync) < minFSRefreshGap {
 			return m, waitFSEvent(m.fsEvents)
 		}
 		m.refreshing = true
