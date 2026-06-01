@@ -7,8 +7,25 @@ import (
 )
 
 var (
+	// Semantic color tokens. Each is background-adaptive: the Dark
+	// variant is the original value (tuned for dark terminals, where
+	// most TUI users live); the Light variant is a deeper shade that
+	// holds ≥4.5:1 contrast on a light terminal, so dimmed and
+	// saturated text doesn't wash out on a white background. Lipgloss
+	// resolves the variant from the terminal's detected background.
+	// Self-contained elements (badges, chips, status bar) set both
+	// fg+bg and stay legible on any background.
+	cAccent    = lipgloss.AdaptiveColor{Light: "162", Dark: "212"} // pink — title, cursor, headers
+	cInfo      = lipgloss.AdaptiveColor{Light: "25", Dark: "39"}   // blue — open status
+	cWarn      = lipgloss.AdaptiveColor{Light: "130", Dark: "214"} // amber — wip, prompts, hints, soft errors
+	cDanger    = lipgloss.AdaptiveColor{Light: "160", Dark: "203"} // red — blocked, fatal error
+	cSuccess   = lipgloss.AdaptiveColor{Light: "28", Dark: "84"}   // green — write-success banner
+	cDim       = lipgloss.AdaptiveColor{Light: "240", Dark: "244"} // secondary-but-readable grey
+	cFaint     = lipgloss.AdaptiveColor{Light: "248", Dark: "240"} // de-emphasised (closed rows): dim = toward the bg
+	cHighlight = lipgloss.AdaptiveColor{Light: "91", Dark: "135"}  // violet — fuzzy-match runes, off the overloaded amber
+
 	titleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("212")).
+			Foreground(cAccent).
 			Bold(true)
 
 	// idStyle is unstyled — table data cells use the terminal's
@@ -18,11 +35,11 @@ var (
 	// preference is a flat uniform white table.
 	idStyle = lipgloss.NewStyle()
 
-	statusOpen       = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	statusInProgress = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	statusBlocked    = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	statusClosed     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Strikethrough(true)
-	statusOther      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	statusOpen       = lipgloss.NewStyle().Foreground(cInfo)
+	statusInProgress = lipgloss.NewStyle().Foreground(cWarn)
+	statusBlocked    = lipgloss.NewStyle().Foreground(cDanger)
+	statusClosed     = lipgloss.NewStyle().Foreground(cDim).Strikethrough(true)
+	statusOther      = lipgloss.NewStyle().Foreground(cDim)
 
 	// humanBadge is the fallback rendering when an issue carries the
 	// `human` label but no `src:` source label — older issues from
@@ -57,32 +74,35 @@ var (
 			Padding(0, 1)
 
 	cursorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("212")).
+			Foreground(cAccent).
 			Bold(true)
 
+	// statusBarStyle: a filled bar with its own fg+bg, so it reads on
+	// any terminal — but flip light/dark so a light terminal gets a
+	// light-grey bar with dark text instead of a heavy dark slab.
 	statusBarStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("252")).
+			Background(lipgloss.AdaptiveColor{Light: "252", Dark: "236"}).
+			Foreground(lipgloss.AdaptiveColor{Light: "238", Dark: "252"}).
 			Padding(0, 1)
 
 	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("203")).
+			Foreground(cDanger).
 			Bold(true)
 
 	emptyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
+			Foreground(cDim).
 			Italic(true)
 
 	detailHeaderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("212")).
+				Foreground(cAccent).
 				Bold(true).
 				MarginBottom(1)
 
 	detailLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244"))
+				Foreground(cDim)
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
+			Foreground(cDim)
 
 	// tableHeaderStyle renders the column-header row above the issue
 	// list — underlined for visual separation from the data rows,
@@ -99,13 +119,13 @@ var (
 	// (e.g. "close wyk-42? [y/N]") with enough emphasis that the user
 	// notices it before pressing the next key.
 	confirmStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
+			Foreground(cWarn).
 			Bold(true)
 
 	// statusBannerStyle renders transient write feedback ("closed wyk-42",
 	// "note failed: …") above the status bar. Subtle but visible.
 	statusBannerStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("84")).
+				Foreground(cSuccess).
 				Italic(true)
 
 	// setupHintStyle renders the onboarding nag (e.g. "no repos
@@ -113,16 +133,16 @@ var (
 	// be noticed on first run; not loud enough to keep dominating
 	// the eye on every subsequent paint.
 	setupHintStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
+			Foreground(cWarn).
 			Italic(true)
 
-	// chipActiveStyle renders an active filter chip above the
-	// table (e.g. "human" preset, "≤P1" priority cap). Bright
-	// background + dark text so it reads as a pill the eye can
-	// land on, distinct from the muted header row below.
+	// chipActiveStyle renders an active filter chip above the table
+	// (e.g. "human" preset, "≤P1" priority cap). A steel-blue pill the
+	// eye can land on — deliberately NOT amber, so an active filter
+	// doesn't read like the amber wip/blocked/attention statuses.
 	chipActiveStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("214")).
-			Foreground(lipgloss.Color("232")).
+			Background(lipgloss.Color("67")).
+			Foreground(lipgloss.Color("231")).
 			Bold(true)
 
 	// fetchErrorStyle renders the multi-repo per-sub failure banner.
@@ -130,16 +150,16 @@ var (
 	// without screaming over the rest of the table — distinct from
 	// the bright red errorStyle used for whole-fetch fatal errors.
 	fetchErrorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
+			Foreground(cWarn).
 			Italic(true)
 
-	// fuzzyMatchStyle highlights individual runes inside a Title
-	// cell when a fuzzy-filter match landed there. Bright amber +
-	// bold so the matched runes catch the eye against the default
-	// foreground — at a glance the user can confirm "yes, this row
-	// is here because of `xyz` and the match is in /these/ runes".
+	// fuzzyMatchStyle highlights individual runes inside a Title cell
+	// when a fuzzy-filter match landed there. Violet + bold so the
+	// matched runes catch the eye against the default foreground and
+	// read as a search hit, not as an amber status — at a glance the
+	// user confirms "this row is here because of `xyz`, matched here".
 	fuzzyMatchStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
+			Foreground(cHighlight).
 			Bold(true)
 
 	// closedRowStyle dims a row in the list when its Status is
@@ -149,7 +169,7 @@ var (
 	// (statusClosed strikethrough, badges, fuzzy-match highlight)
 	// already set their own foregrounds and stay vivid — this
 	// envelope only paints the unstyled runs.
-	closedRowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	closedRowStyle = lipgloss.NewStyle().Foreground(cFaint)
 )
 
 // ApplyTheme overlays a user theme.json onto the built-in styles.
