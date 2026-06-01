@@ -348,3 +348,39 @@ func TestPersistLatest_PreservesChannelWhenEmptyArg(t *testing.T) {
 		t.Errorf("background check should preserve stored channel; got %q", got)
 	}
 }
+
+func TestClassifyUpdate(t *testing.T) {
+	cases := []struct {
+		name    string
+		current string
+		latest  string
+		want    updateClass
+	}{
+		{"older → available", "v0.4.0", "v0.4.1", updateAvailable},
+		{"equal → up to date", "v0.4.1", "v0.4.1", updateUpToDate},
+		{"newer tag → ahead", "v0.5.0", "v0.4.1", updateBuildAhead},
+		{
+			// The reported case: a go-install pseudo-version built from
+			// an untagged commit after v0.4.1 sorts ahead of the tag.
+			name:    "pseudo-version ahead of tag → ahead",
+			current: "v0.4.2-0.20260601153810-25fe7dae1968",
+			latest:  "v0.4.1",
+			want:    updateBuildAhead,
+		},
+		{
+			// A pseudo-version BEHIND the latest tag (e.g. an old dev
+			// build) should still offer the update.
+			name:    "pseudo-version behind tag → available",
+			current: "v0.4.0-0.20260101000000-aaaaaaaaaaaa",
+			latest:  "v0.4.1",
+			want:    updateAvailable,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := classifyUpdate(c.current, c.latest); got != c.want {
+				t.Errorf("classifyUpdate(%q, %q) = %v, want %v", c.current, c.latest, got, c.want)
+			}
+		})
+	}
+}

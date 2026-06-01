@@ -113,10 +113,27 @@ func runUpdate(args []string) int {
 	}
 	current := versionString()
 	currentTag := extractCurrentTag(current)
-	if !updater.IsNewer(currentTag, rel.TagName) {
-		fmt.Printf("wyk update: already on %s (latest %s is %s)\n", currentTag, *channel, rel.TagName)
+	// "latest release" for -channel any (which includes prereleases);
+	// "latest stable release" for -channel stable. Avoids the awkward
+	// "latest any release" reading.
+	relDesc := "latest release"
+	if *channel == "stable" {
+		relDesc = "latest stable release"
+	}
+	switch classifyUpdate(currentTag, rel.TagName) {
+	case updateBuildAhead:
+		// The running build sorts NEWER than the latest release — a
+		// local `go install` pseudo-version (vX.Y.Z-0.<ts>-<commit>)
+		// built from an untagged commit after the last tag. Say so
+		// plainly instead of "already on X (latest is Y)", which reads
+		// as if the release were behind you.
+		fmt.Printf("wyk update: on a development build ahead of the %s (%s); nothing to install (run `wyk version` for the build id)\n", relDesc, rel.TagName)
+		return 0
+	case updateUpToDate:
+		fmt.Printf("wyk update: already on the %s (%s)\n", relDesc, rel.TagName)
 		return 0
 	}
+	// updateAvailable falls through to the install flow below.
 	cmd := updater.InstallCommand(rel.TagName)
 	fmt.Printf("wyk update: %s → %s\n", currentTag, rel.TagName)
 	fmt.Printf("            %s\n", cmd)
@@ -173,6 +190,32 @@ func extractCurrentTag(s string) string {
 		s = s[:i]
 	}
 	return s
+}
+
+// updateClass is the relationship between the running build and the
+// latest release for the channel.
+type updateClass int
+
+const (
+	updateAvailable  updateClass = iota // current is older → an install would upgrade
+	updateBuildAhead                    // current sorts newer (a dev/pseudo build ahead of any tag)
+	updateUpToDate                      // current == latest
+)
+
+// classifyUpdate compares the running build's version against the
+// latest release tag. Pulled out of runUpdate so the three-way
+// decision — and in particular the "dev build ahead of the latest
+// tag" case that a `go install` pseudo-version produces — is unit-
+// testable without hitting the network.
+func classifyUpdate(currentTag, latestTag string) updateClass {
+	switch {
+	case updater.IsNewer(currentTag, latestTag):
+		return updateAvailable
+	case updater.IsNewer(latestTag, currentTag):
+		return updateBuildAhead
+	default:
+		return updateUpToDate
+	}
 }
 
 // readUpdateNudge consults the cache (no live fetch) and returns a
