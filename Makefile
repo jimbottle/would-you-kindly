@@ -1,10 +1,10 @@
-# wyk Makefile. Intentionally narrow — `go build`, `go test`, and
-# `golangci-lint run` cover the day-to-day. Targets here exist for
-# tasks Go's default tooling doesn't: regenerating committed
-# documentation snapshots the would-you-kindly.raylytics.io docs
-# agent reads, and the matching drift check CI runs.
+# wyk Makefile. `make check` is the one local gate that mirrors the
+# `test` CI workflow — run it before pushing. The rest are the pieces
+# it composes plus tasks Go's default tooling doesn't cover: the
+# committed doc snapshots the would-you-kindly.raylytics.io docs agent
+# reads, and the plugin-skills sync.
 
-.PHONY: docs-snapshot docs-check plugin-skills plugin-skills-check help
+.PHONY: docs-snapshot docs-check plugin-skills plugin-skills-check lint check help
 
 # Regenerate the markdown snapshots under docs/generated/. Build a
 # fresh binary into /tmp so this target works from a dirty tree
@@ -60,9 +60,38 @@ plugin-skills-check: plugin-skills
 	fi
 	@echo "plugin-skills-check: plugin/skills/ is up to date"
 
+# golangci-lint pinned to the version CI runs (.github/workflows/test.yml,
+# .golangci.yml: govet, staticcheck, errcheck, ineffassign, unused).
+# Catches what `go vet` alone misses — the gate that sat red-but-unwatched
+# in CI because the local gates didn't run it.
+lint:
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "lint: golangci-lint not found — install the CI-pinned version:"; \
+		echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2"; \
+		exit 1; \
+	}
+	@golangci-lint run
+
+# The full local gate. Runs the same checks as the `test` CI workflow,
+# in the same order, so a green `make check` means a green push — the
+# missing link that let a golangci-lint failure ship unnoticed. Also runs
+# the plugin-skills drift guard (a local check CI doesn't yet run).
+check:
+	@echo "==> gofmt"; out=$$(gofmt -l .); if [ -n "$$out" ]; then \
+		echo "gofmt: non-conforming files (run \`gofmt -w .\`):"; echo "$$out"; exit 1; fi
+	@$(MAKE) --no-print-directory docs-check
+	@echo "==> go vet"; go vet ./...
+	@$(MAKE) --no-print-directory lint
+	@echo "==> go build"; go build ./...
+	@$(MAKE) --no-print-directory plugin-skills-check
+	@echo "==> go test -race"; go test -race -timeout 5m ./...
+	@echo "check: all local gates passed (mirrors the test CI workflow)"
+
 help:
 	@echo "Targets:"
+	@echo "  check                run the full local gate (mirrors the test CI workflow) — use before pushing"
+	@echo "  lint                 golangci-lint run (CI-pinned version)"
 	@echo "  docs-snapshot        regenerate docs/generated/{keymap.md,cli.md}"
-	@echo "  docs-check           fail if docs/generated/ is stale (used by CI)"
+	@echo "  docs-check           fail if docs/generated/ is stale (run by CI + make check)"
 	@echo "  plugin-skills        sync plugin/skills/ from internal/skills/data/"
-	@echo "  plugin-skills-check  fail if plugin/skills/ is stale (used by CI)"
+	@echo "  plugin-skills-check  fail if plugin/skills/ is stale (run by make check)"

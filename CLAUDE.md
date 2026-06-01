@@ -12,15 +12,29 @@ conventions below are the delta on top of that.
 ## Build & Test
 
 ```bash
-go build ./...                # all packages compile
-go build -o ./bin/wyk ./cmd/wyk   # produce the CLI binary
-go test ./...                 # full suite
-go test -race ./...           # race detector (load-bearing for MultiBDSource)
-go vet ./...
+make check                    # the full local gate — run this before pushing
 ```
 
-CI runs vet + build + `test -race` on every PR; keep them green locally
-before pushing.
+`make check` mirrors the `test` CI workflow exactly (gofmt, docs-check,
+`go vet`, **golangci-lint**, build, `test -race`) plus the plugin-skills
+drift guard, so a green `make check` means a green push. It exists because
+the linter gate (golangci-lint / staticcheck) used to run only in CI — a
+red `test` workflow shipped unnoticed for a long time because local runs
+skipped it. Don't push on a bare `go test`; run `make check`.
+
+Individual pieces, when you want them à la carte:
+
+```bash
+go build -o ./bin/wyk ./cmd/wyk   # produce the CLI binary
+go build ./...                # all packages compile
+go test ./...                 # full suite (no race)
+go test -race ./...           # race detector (load-bearing for MultiBDSource)
+go vet ./...
+make lint                     # golangci-lint at the CI-pinned version
+```
+
+Two CI workflows currently run per push: `CI` (build/vet/test) and `test`
+(the full gate above). They overlap; `test` is the authoritative one.
 
 Most bd-shelling code uses a swappable runner field so tests can
 inject a stub command without needing a real `bd` binary on PATH —
