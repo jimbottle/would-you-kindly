@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-01
+
 ### Added
 
 - **Claude Code plugin** — the agent skills are now also packaged as a
@@ -1031,7 +1033,10 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.5.0
+[0.4.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.4.1
+[0.4.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.4.0
 [0.3.3]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.3
 [0.3.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.2
 [0.3.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.1
