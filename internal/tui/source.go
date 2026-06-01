@@ -3,11 +3,13 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
@@ -162,6 +164,19 @@ const markBlockedByHumanConcurrency = 8
 // are the expensive cold-start `bd list` calls we actually need to
 // rate-limit.
 const fetchConcurrency = 4
+
+// fetchRetryBaseBackoff is the floor delay before a transient-timeout
+// retry. fetchRetryBackoff staggers per-index on top of it so a wave
+// of simultaneous timeouts doesn't all retry at the same instant and
+// re-create the thundering herd. By retry time the first wave has
+// warmed the OS/Dolt cache, so a single concurrency-capped retry
+// almost always lands well under the deadline — the same thing the
+// user's manual `r` does.
+const fetchRetryBaseBackoff = 150 * time.Millisecond
+
+func fetchRetryBackoff(i int) time.Duration {
+	return fetchRetryBaseBackoff + time.Duration(i%fetchConcurrency)*80*time.Millisecond
+}
 
 // markBlockedByHuman runs `bd dep list <id>` for every candidate
 // issue (src:agent + NOT human + DependencyCount > 0) and stamps
@@ -497,9 +512,30 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 		wg.Add(1)
 		go func(i int, sub subRepo) {
 			defer wg.Done()
-			fetchSem <- struct{}{}
-			defer func() { <-fetchSem }()
-			issues, err := sub.src.Fetch(ctx, p)
+			// Each attempt acquires the semaphore for its own duration
+			// so the retry stays concurrency-capped too — a retry wave
+			// can't blow past fetchConcurrency.
+			fetchOnce := func() ([]beads.Issue, error) {
+				fetchSem <- struct{}{}
+				defer func() { <-fetchSem }()
+				return sub.src.Fetch(ctx, p)
+			}
+			issues, err := fetchOnce()
+			// Retry ONCE on a transient timeout (cold Dolt engine under
+			// concurrent-cold-start contention). errors.Is gates strictly
+			// on ErrTimedOut so permanent failures (ErrNoWorkspace,
+			// ErrBDNotFound, real bd errors) fail fast without doubling
+			// latency. ctx.Err() guards against retrying a fetch the
+			// caller already abandoned.
+			if err != nil && errors.Is(err, beads.ErrTimedOut) && ctx.Err() == nil {
+				select {
+				case <-time.After(fetchRetryBackoff(i)):
+				case <-ctx.Done():
+				}
+				if ctx.Err() == nil {
+					issues, err = fetchOnce()
+				}
+			}
 			results[i] = result{issues: issues, err: err}
 			if err == nil {
 				branches[i] = sub.branchFn(ctx)

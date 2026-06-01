@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -85,6 +86,14 @@ type fakeRepoSource struct {
 	// entirely so the existing routing tests pay nothing.
 	curFetch *int32
 	maxFetch *int32
+
+	// timeoutThenOK, when > 0, makes the next that-many Fetch calls
+	// return beads.ErrTimedOut before succeeding — exercises the
+	// transient-timeout retry in FetchWithSubErrors. fetchCount
+	// records total Fetch invocations so a test can assert the retry
+	// actually fired. atomic so the fan-out's goroutine is race-clean.
+	timeoutThenOK int32
+	fetchCount    int32
 }
 
 // priorityOp records a SetPriority call so multi-source tests can
@@ -112,6 +121,9 @@ func (f *fakeRepoSource) Fetch(_ context.Context, _ filter.Preset) ([]beads.Issu
 			time.Sleep(f.fetchDelay)
 		}
 		atomic.AddInt32(f.curFetch, -1)
+	}
+	if atomic.AddInt32(&f.fetchCount, 1) <= atomic.LoadInt32(&f.timeoutThenOK) {
+		return nil, fmt.Errorf("bd list --json: timed out after 10.001s: %w", beads.ErrTimedOut)
 	}
 	if f.fetchErr != nil {
 		return nil, f.fetchErr
@@ -362,6 +374,52 @@ func TestMultiBDSource_FetchWithSubErrors_ClearsOnSuccess(t *testing.T) {
 	}
 	if len(errs2) != 0 {
 		t.Errorf("second fetch should clear errs; got %d (%+v)", len(errs2), errs2)
+	}
+}
+
+func TestMultiBDSource_FetchRetriesTransientTimeout(t *testing.T) {
+	// A sub that times out ONCE then succeeds must end with its issues
+	// and no surfaced error — FetchWithSubErrors retries a transient
+	// beads.ErrTimedOut once (the warm second attempt wins), exactly
+	// what the user's manual `r` does.
+	sub := &fakeRepoSource{issues: []beads.Issue{{ID: "a-1"}}, timeoutThenOK: 1}
+	m := newMultiForTest(t, struct {
+		name   string
+		branch string
+		src    *fakeRepoSource
+	}{"a", "main", sub})
+
+	issues, subErrs, err := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err != nil {
+		t.Fatalf("a transient timeout should be cleared by the retry; got %v", err)
+	}
+	if len(subErrs) != 0 {
+		t.Errorf("no sub error should survive a successful retry; got %+v", subErrs)
+	}
+	if len(issues) != 1 || issues[0].ID != "a-1" {
+		t.Errorf("expected the retried sub's issue; got %v", idsOf(issues))
+	}
+	if n := atomic.LoadInt32(&sub.fetchCount); n != 2 {
+		t.Errorf("expected 2 Fetch calls (timeout + retry); got %d", n)
+	}
+}
+
+func TestMultiBDSource_FetchDoesNotRetryNonTimeout(t *testing.T) {
+	// A permanent (non-timeout) error must fail fast — one Fetch, no
+	// retry, so a genuinely broken repo doesn't double the refresh cost.
+	sub := &fakeRepoSource{fetchErr: errors.New("workspace gone")}
+	m := newMultiForTest(t, struct {
+		name   string
+		branch string
+		src    *fakeRepoSource
+	}{"a", "main", sub})
+
+	_, subErrs, _ := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if len(subErrs) != 1 {
+		t.Fatalf("a permanent error should surface as a sub error; got %+v", subErrs)
+	}
+	if n := atomic.LoadInt32(&sub.fetchCount); n != 1 {
+		t.Errorf("a non-timeout error must NOT retry; got %d Fetch calls", n)
 	}
 }
 

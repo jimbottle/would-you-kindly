@@ -234,6 +234,11 @@ func TestRunClassifiesContextDeadlineAsTimeout(t *testing.T) {
 	if strings.Contains(err.Error(), "signal: killed") {
 		t.Errorf("error should not leak 'signal: killed'; got %q", err.Error())
 	}
+	// The timeout must wrap ErrTimedOut so the fetch fan-out can
+	// errors.Is it and retry a transient cold-start timeout.
+	if !errors.Is(err, ErrTimedOut) {
+		t.Errorf("timeout error should wrap ErrTimedOut; got %q", err.Error())
+	}
 }
 
 func TestRunClassifiesParentCancelation(t *testing.T) {

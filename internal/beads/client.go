@@ -23,6 +23,17 @@ var ErrBDNotFound = errors.New("bd binary not found in PATH")
 // rather than a panic.
 var ErrNoWorkspace = errors.New("no bd workspace in this directory")
 
+// ErrTimedOut is wrapped into the error returned when a bd call
+// exceeds its deadline (the per-call Client.Timeout, or a shorter
+// parent context). It's a distinct sentinel so callers can tell a
+// TRANSIENT timeout — typically a cold embedded-Dolt engine under
+// concurrent-cold-start contention, which a warm retry clears — apart
+// from a permanent failure (ErrBDNotFound, ErrNoWorkspace, a real bd
+// error), and retry only the former. The human-readable message still
+// reports the elapsed time; errors.Is(err, ErrTimedOut) is the
+// machine check.
+var ErrTimedOut = errors.New("bd call timed out")
+
 // dolt-auto-commit=on is the project-wide policy for every write the
 // client issues. bd defaults to "off", and writes silently revert if
 // it isn't passed — see the saved bd memory.
@@ -360,7 +371,10 @@ func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) ([]by
 		switch {
 		case errors.Is(ctxErr, context.DeadlineExceeded):
 			elapsed := time.Since(start).Round(time.Millisecond)
-			return nil, fmt.Errorf("bd %s: timed out after %s", strings.Join(args, " "), elapsed)
+			// Wrap ErrTimedOut so the fetch fan-out can retry a
+			// transient cold-start timeout (errors.Is) while keeping
+			// the elapsed-time message for the user.
+			return nil, fmt.Errorf("bd %s: timed out after %s: %w", strings.Join(args, " "), elapsed, ErrTimedOut)
 		case errors.Is(ctxErr, context.Canceled):
 			return nil, fmt.Errorf("bd %s: canceled", strings.Join(args, " "))
 		}
