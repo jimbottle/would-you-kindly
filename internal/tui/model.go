@@ -971,6 +971,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.all = msg.issues
 			m.commonPrefix = commonIDPrefix(m.all)
+			// Freshen cached detail-view dependency rows from the new
+			// list so a status that drifted (an external write, or a
+			// prior mutation) doesn't linger stale under an issue's
+			// deps sections (would-you-kindly-1ym).
+			m.refreshDepCachesFromList()
 			m.recomputeVisible()
 			// A refresh that introduces new rows while the deps sort is
 			// active leaves those IDs uncached, so depsFullyResolved
@@ -2104,6 +2109,15 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 			m.setStatus(msg.action + " " + msg.id)
 		}
 	}
+	// A status-changing mutation (close/reopen/defer) leaves cached
+	// detail-view dependency rows showing the OLD status; patch them
+	// immediately so re-opening a related issue's detail is accurate
+	// even before the refetch lands — and so a just-closed issue
+	// (which drops out of the open-only list) gets corrected at all,
+	// since refreshDepCachesFromList can't see it there.
+	if st, ok := statusForAction(msg.action); ok && msg.id != "" {
+		m.patchDepCacheStatus(msg.id, st)
+	}
 	// Refetch so the list reflects the write. Loading flag isn't set
 	// here because the existing data is still valid until the new
 	// fetch arrives — flashing "loading…" would just be noise.
@@ -2786,6 +2800,71 @@ func (m Model) maybeResolveDeps() tea.Cmd {
 // shell-outs never block input. Unlike maybeResolveDeps this is a
 // single issue's two lookups, not a fan-out over visible rows, so it
 // needs no semaphore.
+// statusForAction maps a status-changing mutator action to the status
+// the issue now carries, so cached dependency rows that mention it can
+// be patched in place rather than re-fetched. Returns ("", false) for
+// actions that leave status untouched (assign, label, note, edit, …),
+// which therefore need no cache surgery.
+func statusForAction(action string) (string, bool) {
+	switch action {
+	case "close":
+		return "closed", true
+	case "reopen":
+		return "open", true
+	case "defer":
+		return "deferred", true
+	}
+	return "", false
+}
+
+// patchDepCacheStatus updates the rendered Status of every cached
+// dependency/dependent row matching id, across both caches. The detail
+// view renders these cached rows as `ID — title (status)`; without
+// this, closing/reopening/deferring an issue would keep showing it
+// with its old status under every issue it relates to until the cache
+// entry was evicted (would-you-kindly-1ym). Handles the case the
+// list-refresh path below can't: a just-closed issue leaves the
+// default (open-only) list, so it would never be refreshed from m.all.
+func (m *Model) patchDepCacheStatus(id, status string) {
+	for _, lists := range []map[string][]beads.Issue{m.depCache, m.dependentCache} {
+		for _, rows := range lists {
+			for i := range rows {
+				if rows[i].ID == id {
+					rows[i].Status = status
+				}
+			}
+		}
+	}
+}
+
+// refreshDepCachesFromList freshens the Status/Title of cached
+// dependency rows from the just-fetched m.all, by ID. This keeps the
+// detail view's dep sections current after ANY refresh — a 20s poll,
+// an fs-event, or an external process's write — not just this TUI's
+// own mutations, so a status that drifted underneath a cached row
+// updates the next time the list refreshes. A dep that isn't in the
+// current list (closed-and-filtered, or cross-repo) keeps its cached
+// value; the explicit patchDepCacheStatus covers the close case.
+func (m *Model) refreshDepCachesFromList() {
+	if len(m.depCache) == 0 && len(m.dependentCache) == 0 {
+		return
+	}
+	byID := make(map[string]beads.Issue, len(m.all))
+	for _, iss := range m.all {
+		byID[iss.ID] = iss
+	}
+	for _, lists := range []map[string][]beads.Issue{m.depCache, m.dependentCache} {
+		for _, rows := range lists {
+			for i := range rows {
+				if live, ok := byID[rows[i].ID]; ok {
+					rows[i].Status = live.Status
+					rows[i].Title = live.Title
+				}
+			}
+		}
+	}
+}
+
 func (m Model) resolveDetailDeps(id string) tea.Cmd {
 	if m.depLister == nil || id == "" {
 		return nil

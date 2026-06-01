@@ -5745,3 +5745,60 @@ func TestSortByDeps_DuplicateIDKeepsAllRows(t *testing.T) {
 		t.Errorf("rows lost/duplicated on collision: repo counts %v, want a=2 b=1", repos)
 	}
 }
+
+func TestPatchDepCacheStatus_OnCloseMutation(t *testing.T) {
+	// Closing an issue must update its cached (status) wherever it
+	// appears as a dependency/dependent row, so re-opening a related
+	// issue's detail shows "closed", not the stale "open". Covers the
+	// case refreshDepCachesFromList can't: a closed issue leaves the
+	// open-only list, so only the explicit patch corrects it.
+	src := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(src), src)
+	// Seed caches: issue a-1 depends on b-2 (open); b-2 is a dependent
+	// of a-3. Both cached rows mention b-2 with the now-stale status.
+	m.depCache["a-1"] = []beads.Issue{{ID: "b-2", Title: "blocker", Status: "open"}}
+	m.dependentCache["a-3"] = []beads.Issue{{ID: "b-2", Title: "blocker", Status: "open"}}
+
+	model, _ := m.Update(writeMsg{action: "close", id: "b-2"})
+	m = model.(Model)
+
+	if got := m.depCache["a-1"][0].Status; got != "closed" {
+		t.Errorf("depCache row for b-2 = %q, want closed", got)
+	}
+	if got := m.dependentCache["a-3"][0].Status; got != "closed" {
+		t.Errorf("dependentCache row for b-2 = %q, want closed", got)
+	}
+}
+
+func TestPatchDepCacheStatus_NonStatusActionNoOp(t *testing.T) {
+	// A non-status mutation (e.g. note) must NOT touch cached dep
+	// statuses — statusForAction returns false for it.
+	src := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(src), src)
+	m.depCache["a-1"] = []beads.Issue{{ID: "b-2", Status: "open"}}
+
+	model, _ := m.Update(writeMsg{action: "note", id: "b-2"})
+	m = model.(Model)
+	if got := m.depCache["a-1"][0].Status; got != "open" {
+		t.Errorf("a non-status mutation should leave the cached status alone; got %q", got)
+	}
+}
+
+func TestRefreshDepCachesFromList_FreshensOnFetch(t *testing.T) {
+	// An external status change arrives via a list refresh: the cached
+	// dep row for that ID must pick up the new status (and title) from
+	// the fetched list, so the detail view doesn't render stale data.
+	src := &stubSource{issues: []beads.Issue{{ID: "a-1"}, {ID: "b-2", Title: "new title", Status: "in_progress"}}}
+	m := applyFetched(New(src), src)
+	m.depCache["a-1"] = []beads.Issue{{ID: "b-2", Title: "old title", Status: "open"}}
+
+	// Re-deliver the fetch (simulating a refresh that carries b-2's
+	// updated status).
+	model, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	m = model.(Model)
+
+	row := m.depCache["a-1"][0]
+	if row.Status != "in_progress" || row.Title != "new title" {
+		t.Errorf("cached dep row not freshened from list: got status=%q title=%q", row.Status, row.Title)
+	}
+}
