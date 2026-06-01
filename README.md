@@ -419,16 +419,13 @@ window into it; `wyk handoff` and `wyk inbox` are the agent's.
 
 ## Screenshots
 
-<!--
-Drop screenshots of the TUI here. Good captures:
-1. The default `all` preset across multiple registered repos —
-   shows the Repo / Branch columns and the `← HUMAN` / `· HUMAN`
-   badges side-by-side.
-2. The detail view (enter on a human-flagged issue) — shows the
-   runbook as the description and the source-label hint.
-3. The `?` help overlay — captures the full keymap at a glance.
-4. The `/` filter prompt with a fuzzy query narrowing the list.
--->
+![wyk multi-repo view](docs/screenshots/wyk-tui.png)
+
+The default `all` preset across registered repos. The **owner** column
+carries the "whose move is it" badge — `HUMAN` for handed-off work,
+`AGENT` for issues the agent filed, `HUMAN-BLOCK` for agent issues
+blocked on a human — next to the Repo / Branch / Status columns and the
+`[all] · N human · M mine` status bar.
 
 ## Status
 
