@@ -318,6 +318,19 @@ func runInit(args []string) int {
 			fmt.Printf("wyk init: installed post-commit hook at %s\n", hookPath)
 			fmt.Println("  Commits whose message includes `Closes: <id>`, `Fixes: <id>`, or")
 			fmt.Println("  `Resolves: <id>` will now auto-close the referenced bd issue.")
+			// If git's core.hooksPath redirects hooks elsewhere, the hook
+			// we just wrote to .git/hooks will never run — warn loudly
+			// rather than letting auto-close silently no-op.
+			if activeDir, redirected, inside, _ := hooksPathRedirect(repoRoot); redirected &&
+				filepath.Clean(activeDir) != filepath.Clean(filepath.Dir(hookPath)) {
+				fmt.Fprintf(os.Stderr, "wyk init: WARNING git's core.hooksPath redirects hooks to %s —\n", activeDir)
+				fmt.Fprintf(os.Stderr, "          the hook just installed in %s will NOT run.\n", filepath.Dir(hookPath))
+				if inside {
+					fmt.Fprintln(os.Stderr, "          Point core.hooksPath at this dir, or unset it: git -C "+repoRoot+" config --unset core.hooksPath")
+				} else {
+					fmt.Fprintln(os.Stderr, "          That path is outside this repo (likely stale): git -C "+repoRoot+" config --unset core.hooksPath")
+				}
+			}
 		}
 	}
 
@@ -551,6 +564,62 @@ func resolveGitHookPath(repoDir, hook string) (string, error) {
 		p = filepath.Join(repoDir, p)
 	}
 	return p, nil
+}
+
+// coreHooksPath returns git's configured core.hooksPath for repoDir
+// (value, true) or ("", false) when unset. When set, git runs hooks
+// from there instead of the default .git/hooks — silently bypassing the
+// post-commit hook wyk installs in .git/hooks unless wyk also installed
+// into that dir. This is the root of the "Closes: auto-close did
+// nothing" class of failure when another tool (e.g. bd) points
+// core.hooksPath at its own managed hooks dir.
+func coreHooksPath(repoDir string) (string, bool) {
+	out, err := exec.Command("git", "-C", repoDir, "config", "--get", "core.hooksPath").Output()
+	if err != nil {
+		return "", false // exit status 1 == key unset
+	}
+	v := strings.TrimSpace(string(out))
+	return v, v != ""
+}
+
+// pathWithin reports whether child is parent itself or nested under it.
+// Used to tell an in-repo core.hooksPath (e.g. .beads/hooks — a real
+// setup wyk should install into) from one pointing outside the repo
+// (almost always stale/misconfigured — wyk must not write there).
+func pathWithin(parent, child string) bool {
+	pa, err1 := filepath.Abs(parent)
+	ca, err2 := filepath.Abs(child)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(pa, ca)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// hooksPathRedirect classifies how git's core.hooksPath affects the
+// post-commit hook wyk installs in .git/hooks. installDir is wyk's
+// install target (the repo's default hooks dir). Returns redirected =
+// true when git will run hooks from somewhere wyk's hook is NOT, with a
+// human-facing reason and whether the active dir is inside the repo
+// (which decides the remediation: install-there vs unset-the-stale-config).
+func hooksPathRedirect(repoDir string) (active string, redirected, insideRepo, wykHookActive bool) {
+	hp, set := coreHooksPath(repoDir)
+	if !set {
+		return "", false, false, false
+	}
+	activePost, err := resolveGitHookPath(repoDir, "post-commit")
+	if err != nil {
+		return hp, true, false, false
+	}
+	activeDir := filepath.Dir(activePost)
+	insideRepo = pathWithin(repoDir, activeDir)
+	if body, rerr := os.ReadFile(activePost); rerr == nil {
+		wykHookActive = bytes.Contains(body, []byte(hookMarker))
+	}
+	return activeDir, true, insideRepo, wykHookActive
 }
 
 // scanProbeTimeout caps each candidate's bd-readiness probe. Tight

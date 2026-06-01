@@ -706,5 +706,22 @@ func checkRepo(r registry.Repo) []check {
 			})
 		}
 	}
+
+	// Surface a core.hooksPath that redirects hooks away from where wyk
+	// installs its hook. This is the silent cause of "`Closes:` did
+	// nothing": git runs hooks from the redirected dir, so wyk's hook in
+	// .git/hooks never executes. (resolveGitHookPath above already follows
+	// core.hooksPath, so the classification reflects the *active* hook —
+	// but it doesn't explain WHY wyk's hook is bypassed; this does.)
+	if activeDir, redirected, inside, wykActive := hooksPathRedirect(r.Path); redirected && !wykActive {
+		detail := "git's core.hooksPath redirects post-commit hooks to " + activeDir +
+			", so wyk's hook in .git/hooks is bypassed and `Closes:`/`Fixes:` auto-close won't run. "
+		if inside {
+			detail += "Re-run `wyk init -C " + r.Path + "` to install into the active hooks dir, or unset core.hooksPath."
+		} else {
+			detail += "That path is outside this repo (likely stale) — clear it: `git -C " + r.Path + " config --unset core.hooksPath`."
+		}
+		out = append(out, check{name: prefix + ": core.hooksPath redirect", status: statusWarn, detail: detail})
+	}
 	return out
 }
