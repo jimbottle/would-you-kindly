@@ -33,7 +33,7 @@ func runExport(args []string) int {
 	// the full dump, matching the historical behavior.
 	since := fs.String("since", "", "filter issues to those updated within this duration (e.g. 24h, 168h)")
 	compact := fs.Bool("compact", false, "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)")
-	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels/timestamps); ~75%+ smaller for an LLM scanning the backlog")
+	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels); ~75%+ smaller for an LLM scanning the backlog")
 	includeClosed := fs.Bool("closed", false, "include closed issues (default: open issues only — the actionable set)")
 	repoName := fs.String("repo", "", "restrict the dump to the registered repo with this name (empty = full registry)")
 	fs.SetOutput(os.Stderr)
@@ -257,9 +257,16 @@ func slimIssue(i beads.Issue) beads.Issue {
 // slimDump applies slimIssue to every issue in the dump in place.
 func slimDump(dump *exportDump) {
 	for r := range dump.Repos {
-		for j := range dump.Repos[r].Issues {
-			dump.Repos[r].Issues[j] = slimIssue(dump.Repos[r].Issues[j])
-		}
+		slimIssues(dump.Repos[r].Issues)
+	}
+}
+
+// slimIssues applies slimIssue to every issue in the slice in place.
+// Shared by export (slimDump) and the inbox -slim path so both get the
+// same elision (and the same regression coverage).
+func slimIssues(issues []beads.Issue) {
+	for i := range issues {
+		issues[i] = slimIssue(issues[i])
 	}
 }
 

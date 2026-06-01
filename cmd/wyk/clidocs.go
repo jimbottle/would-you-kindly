@@ -143,7 +143,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Flags: []cliFlag{
 			{Name: "-since", Default: "", Description: "filter issues to those updated within this duration (e.g. 24h, 168h)"},
 			{Name: "-compact", Default: "false", Description: "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)"},
-			{Name: "-slim", Default: "false", Description: "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels/timestamps); ~75%+ smaller for an LLM scanning the backlog"},
+			{Name: "-slim", Default: "false", Description: "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels); ~75%+ smaller for an LLM scanning the backlog"},
 			{Name: "-closed", Default: "false", Description: "include closed issues (default: open issues only — the actionable set)"},
 			{Name: "-repo", Default: "", Description: "restrict the dump to the registered repo with this name (empty = full registry)"},
 		},

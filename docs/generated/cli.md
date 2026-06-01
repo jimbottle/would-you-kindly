@@ -157,7 +157,7 @@ wyk export [-since 24h] [-compact] [-slim] [-closed] [-repo name]
 | --- | --- | --- |
 | `-since` | `_(empty)_` | filter issues to those updated within this duration (e.g. 24h, 168h) |
 | `-compact` | `false` | emit non-indented JSON (smaller; better for piping into jq / streaming consumers) |
-| `-slim` | `false` | drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels/timestamps); ~75%+ smaller for an LLM scanning the backlog |
+| `-slim` | `false` | drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels); ~75%+ smaller for an LLM scanning the backlog |
 | `-closed` | `false` | include closed issues (default: open issues only — the actionable set) |
 | `-repo` | `_(empty)_` | restrict the dump to the registered repo with this name (empty = full registry) |
 

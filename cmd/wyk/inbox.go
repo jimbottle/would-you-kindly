@@ -106,9 +106,7 @@ func runInbox(args []string) int {
 	if *slim {
 		// Drop the heavy bodies; only meaningful in -json mode (the
 		// text view never prints description/notes anyway).
-		for i := range all {
-			all[i] = slimIssue(all[i])
-		}
+		slimIssues(all)
 	}
 
 	// Partial success (some repos failed, some succeeded) falls through

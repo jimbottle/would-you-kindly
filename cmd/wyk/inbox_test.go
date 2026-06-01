@@ -214,3 +214,22 @@ func TestInbox_TotalFailureIsCountBased(t *testing.T) {
 		t.Errorf("one healthy + one broken must be partial, not total; subErrs=%d subs=%d", len(subErrs), len(subs))
 	}
 }
+
+func TestInboxSlim_ClearsBodiesKeepsCore(t *testing.T) {
+	// Pins the inbox -slim wiring: the applied slimIssues must clear
+	// description/notes on the emitted issues while keeping the core
+	// metadata (mirrors export's TestSlimDump_AppliesToEveryIssue).
+	all := []beads.Issue{
+		{ID: "a-1", Title: "t", Status: "open", Priority: 0, Description: "body", Notes: "n"},
+		{ID: "a-2", Title: "u", Status: "open", Priority: 2, Description: "body2"},
+	}
+	slimIssues(all)
+	for _, i := range all {
+		if i.Description != "" || i.Notes != "" {
+			t.Errorf("slim should clear description/notes; got %+v", i)
+		}
+	}
+	if all[0].ID != "a-1" || all[0].Title != "t" || all[0].Status != "open" || all[0].Priority != 0 {
+		t.Errorf("slim dropped a core field: %+v", all[0])
+	}
+}
