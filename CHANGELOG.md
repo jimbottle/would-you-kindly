@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Leaner issue JSON** — the agent-facing `-json` outputs (`export`,
+  `inbox`, `activity`) now elide empty/zero fields per issue:
+  open issues no longer carry `closed_at:"0001-01-01T00:00:00Z"`, and
+  zero `dependency_count`/`dependent_count`/`comment_count`, empty
+  `notes`/`description`/`owner`/`created_by`, and empty `labels` are
+  dropped. `id`/`title`/`status`/`priority` are always present
+  (`priority:0` = P0 is never dropped). Marshaling-only — bd JSON still
+  parses unchanged, and export→import round-trips. Part of the
+  agent-token-efficiency epic.
+
 - **Agent `-json` commands degrade gracefully on partial multi-repo
   failure** — `wyk inbox`, `stats`, and `activity` no longer drop a
   failed workspace silently (and `inbox`/`stats` no longer emit

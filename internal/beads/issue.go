@@ -9,23 +9,37 @@ import "time"
 // fields are silently ignored, which absorbs forward-compatible
 // additions in newer bd versions without breaking the TUI.
 type Issue struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Status      string    `json:"status"`
-	Priority    int       `json:"priority"`
-	IssueType   string    `json:"issue_type"`
-	Owner       string    `json:"owner"`
-	CreatedAt   time.Time `json:"created_at"`
-	CreatedBy   string    `json:"created_by"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	ClosedAt    time.Time `json:"closed_at"`
-	Notes       string    `json:"notes"`
-	Labels      []string  `json:"labels"`
+	// Always-present identity/state fields carry no omit option — id,
+	// title, status, and priority in particular are load-bearing for
+	// every consumer, and priority MUST stay (0 == P0/critical, which
+	// omitempty would silently drop).
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	Priority  int       `json:"priority"`
+	IssueType string    `json:"issue_type"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
-	DependencyCount int `json:"dependency_count"`
-	DependentCount  int `json:"dependent_count"`
-	CommentCount    int `json:"comment_count"`
+	// Optional/often-empty fields are elided when empty to cut the
+	// per-issue token cost of the agent-facing -json outputs (export,
+	// inbox, activity). omitempty/omitzero affect MARSHALING only —
+	// bd's JSON still parses into these fields unchanged. ClosedAt uses
+	// omitzero (Go 1.24+) because time.Time is a struct omitempty can't
+	// elide: this drops the `closed_at:"0001-01-01T00:00:00Z"` that
+	// every OPEN issue would otherwise emit (a closed issue's non-zero
+	// ClosedAt is still serialised). Description/Notes are the heaviest
+	// optional fields; an empty one now costs nothing.
+	Description string    `json:"description,omitempty"`
+	Owner       string    `json:"owner,omitempty"`
+	CreatedBy   string    `json:"created_by,omitempty"`
+	ClosedAt    time.Time `json:"closed_at,omitzero"`
+	Notes       string    `json:"notes,omitempty"`
+	Labels      []string  `json:"labels,omitempty"`
+
+	DependencyCount int `json:"dependency_count,omitempty"`
+	DependentCount  int `json:"dependent_count,omitempty"`
+	CommentCount    int `json:"comment_count,omitempty"`
 
 	// Repo and Branch are decorations a multi-repo Source attaches
 	// after fetching — they are NOT part of bd's JSON. The json:"-"
