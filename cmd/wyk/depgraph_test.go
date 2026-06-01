@@ -267,6 +267,35 @@ func TestCollectDepGraph_SkipsListDepsForFilteredIssues(t *testing.T) {
 	}
 }
 
+func TestCollectDepGraph_SkipsListDepsAbovePriorityCap(t *testing.T) {
+	// The collect-side skip has a second branch (priority > cap) that
+	// the closed-status test doesn't cover. A P2 issue under a cap of 0
+	// must NOT trigger `bd dep list` — its edges are pruned in finalize
+	// anyway — while a P0 issue still resolves.
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "wyk", Path: "/tmp/wyk"}}}
+	stub := &stubDepGraphClient{
+		issues: []beads.Issue{
+			{ID: "a-crit", Status: "open", Priority: 0, DependencyCount: 1},
+			{ID: "a-low", Status: "open", Priority: 2, DependencyCount: 1},
+		},
+		deps: map[string][]beads.Issue{
+			"a-crit": {{ID: "a-dep", Status: "open"}},
+			"a-low":  {{ID: "a-dep", Status: "open"}},
+		},
+	}
+	collectDepGraph(reg, func(_ string) depGraphClient { return stub }, false, 0)
+	if len(stub.depCalls) != 1 || stub.depCalls[0] != "a-crit" {
+		t.Errorf("priority cap 0 should resolve only the P0 issue; got %v", stub.depCalls)
+	}
+
+	// Raising the cap to include P2 resolves both.
+	stub.depCalls = nil
+	collectDepGraph(reg, func(_ string) depGraphClient { return stub }, false, 2)
+	if len(stub.depCalls) != 2 {
+		t.Errorf("cap 2 should resolve both issues; got %v", stub.depCalls)
+	}
+}
+
 func TestEmitDepTree_DeduplicatesSharedSubtree(t *testing.T) {
 	// Diamond: a-4 depends on both a-2 and a-3, which both depend on
 	// a-1. a-4's subtree must print in full once and as "(see above)"

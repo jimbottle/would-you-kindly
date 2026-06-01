@@ -321,9 +321,13 @@ func emitDepDOT(w io.Writer, g depGraph) {
 
 // emitDepTree writes the graph as an indented text forest: roots
 // (issues that depend on nothing in the set) first, each followed by
-// its dependents nested beneath it. A node reached twice on the same
-// path (a dependency cycle) is printed once more with a "(cycle)"
-// marker and not descended into, so the walk always terminates.
+// its dependents nested beneath it. A node reachable from multiple
+// parents (a diamond/DAG) is printed in full once and rendered as a
+// "(see above)" pointer thereafter, without re-descending, so dense
+// graphs don't duplicate whole subtrees. A node reached twice on the
+// same path (a dependency cycle) is printed once more with a
+// "(cycle)" marker and not descended into, so the walk always
+// terminates.
 func emitDepTree(w io.Writer, g depGraph) {
 	if len(g.Nodes) == 0 {
 		fmt.Fprintln(w, "(no dependencies)")
