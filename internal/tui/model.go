@@ -243,6 +243,20 @@ type Model struct {
 	// slim Issue from m.visible.
 	detailIssue beads.Issue
 
+	// detailLinkIdx is the cursor over the detail view's selectable
+	// dependency/dependent rows (the flattened deps++dependents list
+	// for detailIssue). -1 means no link is highlighted (the default
+	// on entry); Tab/Shift-Tab cycle it, Enter opens the highlighted
+	// link. j/k still scroll the body — link selection is the separate
+	// Tab axis (see updateDetail).
+	detailLinkIdx int
+
+	// detailStack is the drill-in history: opening a highlighted link
+	// pushes the current detailIssue here so Esc/Back pops to the
+	// issue you came from rather than all the way out to the list.
+	// Empty stack → Back returns to the list as before.
+	detailStack []beads.Issue
+
 	// tickGen identifies the currently-live tick chain. Each suspend
 	// or restart bumps it; stale ticks (e.g. one scheduled before a
 	// refresh restart) carry an older gen and are dropped, preventing
@@ -534,6 +548,7 @@ func New(src Source) Model {
 		spinner:        sp,
 		help:           h,
 		priorityCap:    -1,
+		detailLinkIdx:  -1,
 		depCache:       map[string][]beads.Issue{},
 		depErr:         map[string]bool{},
 		dependentCache: map[string][]beads.Issue{},
@@ -1174,12 +1189,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Preserve scroll offset: a user who'd already paged
 			// to line 40 shouldn't be yanked back to the top.
 			prev := m.detailVP.YOffset
-			id := m.detailIssue.ID
-			m.detailVP.SetContent(detailBody(
-				m.detailIssue, m.detailVP.Width,
-				m.depCache[id], m.dependentCache[id],
-				m.depErr[id], m.dependentErr[id],
-			))
+			m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
 			m.detailVP.SetYOffset(prev)
 		}
 		return m, nil
@@ -1241,11 +1251,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			failedDependents := slices.Contains(msg.dependentsFailed, id)
 			if gotDeps || gotDependents || failedDeps || failedDependents {
 				prev := m.detailVP.YOffset
-				m.detailVP.SetContent(detailBody(
-					m.detailIssue, m.detailVP.Width,
-					m.depCache[id], m.dependentCache[id],
-					m.depErr[id], m.dependentErr[id],
-				))
+				m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
 				m.detailVP.SetYOffset(prev)
 			}
 		}
@@ -1371,6 +1377,10 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyHit(msg, m.keys.Open):
 		if len(m.visible) > 0 {
 			m.mode = modeDetail
+			// Fresh entry from the list: no link highlighted, and an
+			// empty drill-in stack (Back goes straight to the list).
+			m.detailLinkIdx = -1
+			m.detailStack = nil
 			// Stage the slim row immediately so the view renders
 			// with title/description from the list, then dispatch
 			// a Detail call to enrich with notes asynchronously.
@@ -1379,11 +1389,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// may be empty until the Detail Cmd resolves); reset
 			// scroll to the top so a previous detail view's scroll
 			// position doesn't bleed in.
-			m.detailVP.SetContent(detailBody(
-				m.detailIssue, m.detailVP.Width,
-				m.depCache[m.detailIssue.ID], m.dependentCache[m.detailIssue.ID],
-				m.depErr[m.detailIssue.ID], m.dependentErr[m.detailIssue.ID],
-			))
+			m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
 			m.detailVP.GotoTop()
 			// Drop mouse capture while in detail mode so the host
 			// terminal (VS Code, Terminal.app, iTerm) handles
@@ -2177,18 +2183,25 @@ func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case keyHit(msg, m.keys.Back), keyHit(msg, m.keys.Open):
-		m.mode = modeList
-		// Re-enable mouse capture on return to list so row-clicks
-		// and wheel-scroll work again. Pair with the DisableMouse
-		// dispatched when entering modeDetail (see enterDetail).
-		return m, tea.EnableMouseCellMotion
 	case keyHit(msg, m.keys.Quit):
 		return m.quitNow()
 	case keyHit(msg, m.keys.Help):
 		return m.openHelp()
 	case keyHit(msg, m.keys.Yank):
 		return m.handleYankDetailBody()
+	case msg.Type == tea.KeyTab, msg.String() == "n":
+		// Cycle the dependency/dependent link selection forward. j/k
+		// stay as body scroll — link nav is the separate Tab axis.
+		return m.cycleDetailLink(+1)
+	case msg.Type == tea.KeyShiftTab, msg.String() == "p":
+		return m.cycleDetailLink(-1)
+	case keyHit(msg, m.keys.Open):
+		// Enter opens the highlighted link (drill into the graph); with
+		// nothing highlighted it backs out one level, preserving the
+		// old enter==back muscle memory.
+		return m.openDetailLink()
+	case keyHit(msg, m.keys.Back):
+		return m.detailBackOrPop()
 	}
 	// Forward any other key (j/k/PgUp/PgDn/g/G inside the
 	// detail view, mouse wheel events, etc.) to the viewport so
@@ -2196,6 +2209,112 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.detailVP, cmd = m.detailVP.Update(msg)
 	return m, cmd
+}
+
+// cycleDetailLink moves the dependency/dependent selection by delta
+// (wrapping), seeds the body with the new highlight, and scrolls the
+// viewport so the selected link stays visible. A first press from the
+// no-selection state lands on the first link (forward) or last
+// (backward). No-op when the issue has no links.
+func (m Model) cycleDetailLink(delta int) (tea.Model, tea.Cmd) {
+	links := m.detailLinks()
+	if len(links) == 0 {
+		return m, nil
+	}
+	switch {
+	case m.detailLinkIdx < 0 && delta < 0:
+		m.detailLinkIdx = len(links) - 1
+	case m.detailLinkIdx < 0:
+		m.detailLinkIdx = 0
+	default:
+		m.detailLinkIdx = (m.detailLinkIdx + delta + len(links)) % len(links)
+	}
+	content := m.renderDetailBody(m.detailIssue)
+	m.detailVP.SetContent(content)
+	m.ensureDetailLinkVisible(content)
+	return m, nil
+}
+
+// ensureDetailLinkVisible scrolls the detail viewport the minimum
+// amount needed to bring the highlighted link's line into view. The
+// selected row is the only one carrying the ▶ marker, so we locate it
+// by that rune (present in the rendered string amid the styling ANSI).
+func (m *Model) ensureDetailLinkVisible(content string) {
+	h := m.detailVP.Height
+	if h <= 0 {
+		return
+	}
+	sel := -1
+	for i, ln := range strings.Split(content, "\n") {
+		if strings.Contains(ln, "▶") {
+			sel = i
+			break
+		}
+	}
+	if sel < 0 {
+		return
+	}
+	switch {
+	case sel < m.detailVP.YOffset:
+		m.detailVP.SetYOffset(sel)
+	case sel >= m.detailVP.YOffset+h:
+		m.detailVP.SetYOffset(sel - h + 1)
+	}
+}
+
+// openDetailLink drills into the highlighted dependency/dependent: it
+// pushes the current (enriched) issue onto detailStack so Back returns
+// here, swaps detailIssue to the link, and dispatches Detail +
+// dep-resolution for it (cross-repo targets route by ID prefix through
+// the Detailer / DepLister). With no valid selection it falls back to
+// backing out one level, so Enter still means "back" when no link is
+// highlighted.
+func (m Model) openDetailLink() (tea.Model, tea.Cmd) {
+	links := m.detailLinks()
+	if m.detailLinkIdx < 0 || m.detailLinkIdx >= len(links) {
+		return m.detailBackOrPop()
+	}
+	target := links[m.detailLinkIdx]
+	m.detailStack = append(m.detailStack, m.detailIssue)
+	m.detailIssue = target
+	m.detailLinkIdx = -1
+	m.detailVP.SetContent(m.renderDetailBody(target))
+	m.detailVP.GotoTop()
+	var cmds []tea.Cmd
+	if d, ok := m.src.(Detailer); ok {
+		t := target
+		cmds = append(cmds, func() tea.Msg {
+			full, err := d.Detail(context.Background(), t)
+			return detailMsg{issue: full, err: err}
+		})
+	}
+	if c := m.resolveDetailDeps(target.ID); c != nil {
+		cmds = append(cmds, c)
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// detailBackOrPop is the Back/Esc behaviour: if we drilled into a link
+// it pops the stack back to the issue we came from (already enriched,
+// its deps cached — no refetch); otherwise it leaves the detail view
+// for the list and re-enables mouse capture.
+func (m Model) detailBackOrPop() (tea.Model, tea.Cmd) {
+	if n := len(m.detailStack); n > 0 {
+		prev := m.detailStack[n-1]
+		m.detailStack = m.detailStack[:n-1]
+		m.detailIssue = prev
+		m.detailLinkIdx = -1
+		m.detailVP.SetContent(m.renderDetailBody(prev))
+		m.detailVP.GotoTop()
+		return m, nil
+	}
+	m.mode = modeList
+	m.detailLinkIdx = -1
+	m.detailStack = nil
+	// Re-enable mouse capture on return to list so row-clicks and
+	// wheel-scroll work again. Pair with the DisableMouse dispatched
+	// when entering modeDetail.
+	return m, tea.EnableMouseCellMotion
 }
 
 // handleYankDetailBody yanks the current detail issue's
@@ -2889,6 +3008,31 @@ func (m *Model) refreshDepCachesFromList() {
 			}
 		}
 	}
+}
+
+// detailLinks returns the flattened, ordered list of selectable links
+// for the current detail issue — its cached dependencies followed by
+// its cached dependents — matching the render order in detailBody. The
+// detailLinkIdx cursor and Enter-to-open both index into this slice.
+func (m Model) detailLinks() []beads.Issue {
+	id := m.detailIssue.ID
+	links := make([]beads.Issue, 0, len(m.depCache[id])+len(m.dependentCache[id]))
+	links = append(links, m.depCache[id]...)
+	links = append(links, m.dependentCache[id]...)
+	return links
+}
+
+// renderDetailBody builds the detail body for issue i with the current
+// link selection applied. Centralises the detailBody call so the
+// several re-seed sites don't each re-thread the caches + selection.
+func (m Model) renderDetailBody(i beads.Issue) string {
+	id := i.ID
+	return detailBody(
+		i, m.detailVP.Width,
+		m.depCache[id], m.dependentCache[id],
+		m.depErr[id], m.dependentErr[id],
+		m.detailLinkIdx,
+	)
 }
 
 func (m Model) resolveDetailDeps(id string) tea.Cmd {
@@ -4918,7 +5062,10 @@ const detailChromeHeight = 9
 // show — zero rows and no error. On error a single dimmed
 // `(… unavailable)` line stands in for the list so the body still
 // flows.
-func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsErr, dependentsErr bool) string {
+// selectedLink is the index into the flattened deps++dependents list
+// of the currently-highlighted link (-1 = none). The matching row gets
+// a cursor prefix so the user can see which link Enter will open.
+func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsErr, dependentsErr bool, selectedLink int) string {
 	wrap := func(s string) string {
 		if width <= 0 {
 			return s
@@ -4939,8 +5086,10 @@ func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsEr
 		b.WriteString("\n")
 		b.WriteString(wrap(i.Notes))
 	}
-	writeDepSection(&b, width, "dependencies", deps, depsErr, "(deps unavailable)")
-	writeDepSection(&b, width, "dependents", dependents, dependentsErr, "(dependents unavailable)")
+	// deps occupy global indices [0, len(deps)); dependents follow, so
+	// the dependents section's selection offset is len(deps).
+	writeDepSection(&b, width, "dependencies", deps, depsErr, "(deps unavailable)", selectedLink, 0)
+	writeDepSection(&b, width, "dependents", dependents, dependentsErr, "(dependents unavailable)", selectedLink, len(deps))
 	return b.String()
 }
 
@@ -4950,7 +5099,12 @@ func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsEr
 // line (isErr) or one dimmed `ID — title (status)` row per edge,
 // truncated rune-aware to the body width so a long title can't
 // overflow the viewport.
-func writeDepSection(b *strings.Builder, width int, header string, rows []beads.Issue, isErr bool, unavailable string) {
+// selectedLink is the global link index highlighted across both
+// sections; base is this section's offset into that flattened space
+// (0 for dependencies, len(deps) for dependents). The row whose
+// base+localIdx == selectedLink gets a "▶ " cursor prefix and the
+// brighter cursor style so the keyboard selection is visible.
+func writeDepSection(b *strings.Builder, width int, header string, rows []beads.Issue, isErr bool, unavailable string, selectedLink, base int) {
 	if len(rows) == 0 && !isErr {
 		return
 	}
@@ -4966,10 +5120,19 @@ func writeDepSection(b *strings.Builder, width int, header string, rows []beads.
 			b.WriteString("\n")
 		}
 		line := fmt.Sprintf("%s — %s (%s)", r.ID, r.Title, r.Status)
-		if width > 0 {
-			line = trunc(line, width)
+		if base+idx == selectedLink {
+			// Reserve the same 2-cell gutter the unselected rows get
+			// (two leading spaces) so selection doesn't shift the text.
+			if width > 2 {
+				line = trunc(line, width-2)
+			}
+			b.WriteString(cursorStyle.Render("▶ ") + cursorStyle.Render(line))
+		} else {
+			if width > 2 {
+				line = trunc(line, width-2)
+			}
+			b.WriteString(emptyStyle.Render("  " + line))
 		}
-		b.WriteString(emptyStyle.Render(line))
 	}
 }
 
@@ -5019,17 +5182,18 @@ func (m Model) viewDetail() string {
 	// m.detailIssue (tests, future code paths) stays reflected.
 	// viewport.SetContent preserves YOffset, so the user's scroll
 	// position survives the refresh.
-	m.detailVP.SetContent(detailBody(
-		i, m.detailVP.Width,
-		m.depCache[i.ID], m.dependentCache[i.ID],
-		m.depErr[i.ID], m.dependentErr[i.ID],
-	))
+	m.detailVP.SetContent(m.renderDetailBody(i))
 	b.WriteString(m.detailVP.View())
 
 	// Footer: scroll percent (only when there's actually
 	// something to scroll) + key hint.
 	b.WriteString("\n")
-	footer := "esc / enter: back   j/k ↑↓ scroll   y: yank body   q: quit"
+	footer := "esc: back   j/k ↑↓ scroll   y: yank body   q: quit"
+	// When the issue has dependency/dependent links, advertise the
+	// drill-in nav: Tab highlights a link, Enter opens it.
+	if len(m.detailLinks()) > 0 {
+		footer = "tab: link   ⏎ open   esc: back   j/k ↑↓ scroll   y: yank   q: quit"
+	}
 	if m.detailVP.TotalLineCount() > m.detailVP.Height {
 		pct := int(m.detailVP.ScrollPercent() * 100)
 		footer = fmt.Sprintf("%d%%   %s", pct, footer)

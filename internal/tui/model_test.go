@@ -1223,7 +1223,7 @@ func TestDetailBody_WrapsLongDescription(t *testing.T) {
 	// off the right edge and the body is unreadable.
 	long := strings.Repeat("word ", 30) // ~150 chars, well past 40-col wrap
 	i := beads.Issue{Description: long}
-	out := detailBody(i, 40, nil, nil, false, false)
+	out := detailBody(i, 40, nil, nil, false, false, -1)
 	// Each rendered line must be ≤ 40 cells. lipgloss may emit
 	// ANSI; strip the test of ANSI by checking each line as-is
 	// since this body has no foreground styles applied to its
@@ -1288,7 +1288,7 @@ func TestDetailBody_WidthZeroSkipsWrap(t *testing.T) {
 	// shows something legible. The next paint with a real width
 	// re-wraps correctly.
 	i := beads.Issue{Description: "a very long line that should not be touched here"}
-	out := detailBody(i, 0, nil, nil, false, false)
+	out := detailBody(i, 0, nil, nil, false, false, -1)
 	if !strings.Contains(out, "a very long line that should not be touched here") {
 		t.Errorf("width=0 should pass body through verbatim; got %q", out)
 	}
@@ -1300,7 +1300,7 @@ func TestDetailBody_RendersDependencySections(t *testing.T) {
 	i := beads.Issue{ID: "a-1", Description: "root"}
 	deps := []beads.Issue{{ID: "a-2", Title: "needs this", Status: "open"}}
 	dependents := []beads.Issue{{ID: "a-3", Title: "blocks that", Status: "in_progress"}}
-	out := detailBody(i, 80, deps, dependents, false, false)
+	out := detailBody(i, 80, deps, dependents, false, false, -1)
 	for _, want := range []string{
 		"dependencies", "a-2 — needs this (open)",
 		"dependents", "a-3 — blocks that (in_progress)",
@@ -1315,7 +1315,7 @@ func TestDetailBody_EmptySectionsCollapse(t *testing.T) {
 	// Zero rows and no error → the section (and its header) is omitted
 	// entirely so the body doesn't sprout empty "dependencies" labels.
 	i := beads.Issue{ID: "a-1", Description: "lonely"}
-	out := detailBody(i, 80, nil, nil, false, false)
+	out := detailBody(i, 80, nil, nil, false, false, -1)
 	if strings.Contains(out, "dependencies") || strings.Contains(out, "dependents") {
 		t.Errorf("empty dep sections should collapse; got:\n%s", out)
 	}
@@ -1326,7 +1326,7 @@ func TestDetailBody_FailedLookupShowsUnavailable(t *testing.T) {
 	// line so the body still flows (and the user knows it's an error,
 	// not a genuinely empty set).
 	i := beads.Issue{ID: "a-1", Description: "boom"}
-	out := detailBody(i, 80, nil, nil, true, true)
+	out := detailBody(i, 80, nil, nil, true, true, -1)
 	for _, want := range []string{
 		"dependencies", "(deps unavailable)",
 		"dependents", "(dependents unavailable)",
@@ -5884,5 +5884,123 @@ func TestDetailMsg_PreservesBlockedByHumanBadge(t *testing.T) {
 	// And the badge itself must render HUMAN-BLOCK, not AGENT.
 	if got := responsibilityBadgeFor(m.detailIssue); !strings.Contains(got, "HUMAN-BLOCK") {
 		t.Errorf("badge should be HUMAN-BLOCK; got %q", got)
+	}
+}
+
+// detailWithLinks returns a model in modeDetail viewing a-1, whose
+// cached links are deps [a-2, a-3] then dependents [a-9].
+func detailWithLinks(t *testing.T) Model {
+	t.Helper()
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m.mode = modeDetail
+	m.detailIssue = beads.Issue{ID: "a-1", Title: "root"}
+	m.depCache["a-1"] = []beads.Issue{{ID: "a-2", Title: "dep1", Status: "open"}, {ID: "a-3", Title: "dep2", Status: "open"}}
+	m.dependentCache["a-1"] = []beads.Issue{{ID: "a-9", Title: "dependent", Status: "open"}}
+	return m
+}
+
+func TestDetailLinks_FlattensDepsThenDependents(t *testing.T) {
+	m := detailWithLinks(t)
+	links := m.detailLinks()
+	got := []string{}
+	for _, l := range links {
+		got = append(got, l.ID)
+	}
+	want := []string{"a-2", "a-3", "a-9"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Errorf("detailLinks = %v, want %v", got, want)
+	}
+}
+
+func TestCycleDetailLink_TabSelectsThenWraps(t *testing.T) {
+	m := detailWithLinks(t)
+	if m.detailLinkIdx != -1 {
+		t.Fatalf("fresh detail should have no link selected; got %d", m.detailLinkIdx)
+	}
+	tab := func(mm Model) Model { model, _ := mm.Update(tea.KeyMsg{Type: tea.KeyTab}); return model.(Model) }
+	m = tab(m)
+	if m.detailLinkIdx != 0 {
+		t.Errorf("first Tab should select link 0; got %d", m.detailLinkIdx)
+	}
+	m = tab(m)
+	m = tab(m)
+	if m.detailLinkIdx != 2 {
+		t.Errorf("three Tabs should land on link 2; got %d", m.detailLinkIdx)
+	}
+	m = tab(m)
+	if m.detailLinkIdx != 0 {
+		t.Errorf("Tab past the end should wrap to 0; got %d", m.detailLinkIdx)
+	}
+}
+
+func TestCycleDetailLink_ShiftTabFromNoneSelectsLast(t *testing.T) {
+	m := detailWithLinks(t)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = model.(Model)
+	if m.detailLinkIdx != 2 {
+		t.Errorf("Shift+Tab from no-selection should land on the last link; got %d", m.detailLinkIdx)
+	}
+}
+
+func TestOpenDetailLink_PushesStackAndSwaps(t *testing.T) {
+	m := detailWithLinks(t)
+	m.detailLinkIdx = 1 // a-3
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.detailIssue.ID != "a-3" {
+		t.Errorf("Enter should open the highlighted link; detailIssue=%q want a-3", m.detailIssue.ID)
+	}
+	if len(m.detailStack) != 1 || m.detailStack[0].ID != "a-1" {
+		t.Errorf("the prior issue should be pushed; stack=%+v", m.detailStack)
+	}
+	if m.detailLinkIdx != -1 {
+		t.Errorf("link selection should reset on open; got %d", m.detailLinkIdx)
+	}
+	if m.mode != modeDetail {
+		t.Errorf("should stay in detail mode after drilling in; mode=%v", m.mode)
+	}
+}
+
+func TestDetailBack_PopsStackThenReturnsToList(t *testing.T) {
+	m := detailWithLinks(t)
+	// Simulate having drilled a-1 -> a-3.
+	m.detailStack = []beads.Issue{{ID: "a-1", Title: "root"}}
+	m.detailIssue = beads.Issue{ID: "a-3"}
+	// First Esc pops back to a-1, still in detail mode.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.detailIssue.ID != "a-1" || len(m.detailStack) != 0 || m.mode != modeDetail {
+		t.Fatalf("first Esc should pop to a-1 in detail mode; got issue=%q stack=%d mode=%v", m.detailIssue.ID, len(m.detailStack), m.mode)
+	}
+	// Second Esc (empty stack) leaves to the list.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("Esc with empty stack should return to the list; mode=%v", m.mode)
+	}
+}
+
+func TestEnterWithNoSelection_BacksOut(t *testing.T) {
+	// Enter with nothing highlighted preserves the old enter==back feel.
+	m := detailWithLinks(t) // detailLinkIdx == -1
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("Enter with no link selected should back out to the list; mode=%v", m.mode)
+	}
+}
+
+func TestRenderDetailBody_HighlightsSelectedLink(t *testing.T) {
+	m := detailWithLinks(t)
+	m.detailLinkIdx = 0
+	out := m.renderDetailBody(m.detailIssue)
+	if !strings.Contains(out, "▶") {
+		t.Errorf("the selected link should carry the ▶ cursor marker; got:\n%s", out)
+	}
+	// Unselected render has no marker.
+	m.detailLinkIdx = -1
+	if strings.Contains(m.renderDetailBody(m.detailIssue), "▶") {
+		t.Errorf("no marker should render when nothing is selected")
 	}
 }

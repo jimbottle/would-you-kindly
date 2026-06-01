@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Drill into dependencies from the detail view** — the
+  `Dependencies`/`Dependents` rows are now selectable: `Tab`
+  (`Shift-Tab`, or `n`/`p`) cycles a highlight through them, `Enter`
+  opens the highlighted issue's detail (following cross-repo edges),
+  and `Esc` pops back to the issue you came from. `j/k` still scroll
+  the body. The footer advertises the link nav when an issue has any.
+
 ### Changed
 
 - **Leaner issue JSON** — the agent-facing `-json` outputs (`export`,
