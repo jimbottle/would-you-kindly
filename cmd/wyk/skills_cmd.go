@@ -168,13 +168,17 @@ func runSkillsList(args []string) int {
 	return 0
 }
 
-// truncForList trims a description to a single readable line.
+// truncForList trims a description to a single readable line. Counts
+// RUNES, not bytes, so a multi-byte character can't be split into
+// invalid UTF-8 at the boundary — matching the project's rune-aware
+// truncation convention.
 func truncForList(s string) string {
 	const max = 100
-	if len(s) <= max {
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+	return string(r[:max-1]) + "…"
 }
 
 func runSkillsInstall(args []string, stdin io.Reader) int {

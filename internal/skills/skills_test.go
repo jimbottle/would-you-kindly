@@ -75,3 +75,14 @@ func keys(m map[string]Skill) []string {
 	}
 	return out
 }
+
+func TestFrontmatterField_TolerantOfCRLF(t *testing.T) {
+	// A SKILL.md edited on Windows (CRLF) must still parse.
+	doc := "---\r\nname: foo\r\ndescription: a thing\r\n---\r\n\r\n# body\r\n"
+	if v, err := FrontmatterField(doc, "name"); err != nil || v != "foo" {
+		t.Errorf("CRLF name: got %q, %v", v, err)
+	}
+	if v, err := FrontmatterField(doc, "description"); err != nil || v != "a thing" {
+		t.Errorf("CRLF description: got %q, %v (must not carry a trailing \\r)", v, err)
+	}
+}

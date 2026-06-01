@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
@@ -130,5 +131,22 @@ func TestRunSkillsPrint(t *testing.T) {
 	}
 	if code := runSkillsPrint(nil); code != 64 {
 		t.Errorf("print with no arg exit = %d, want 64", code)
+	}
+}
+
+func TestTruncForList_RuneAware(t *testing.T) {
+	// A long multi-byte string truncated at the boundary must stay
+	// valid UTF-8 (no split rune).
+	s := strings.Repeat("é", 150) // 2 bytes each → byte-slicing would split one
+	got := truncForList(s)
+	if !utf8.ValidString(got) {
+		t.Errorf("truncated output is not valid UTF-8: %q", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("expected an ellipsis suffix; got %q", got[len(got)-4:])
+	}
+	// Short strings pass through unchanged.
+	if truncForList("hi") != "hi" {
+		t.Errorf("short string should be unchanged")
 	}
 }

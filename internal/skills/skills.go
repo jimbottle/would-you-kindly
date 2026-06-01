@@ -66,6 +66,9 @@ func All() ([]Skill, error) {
 // hand-parser avoids a YAML dependency. Returns an error when the
 // frontmatter is missing/unterminated or the key isn't present.
 func FrontmatterField(content, key string) (string, error) {
+	// Normalize CRLF so a SKILL.md edited on Windows still parses (the
+	// LF-only prefix/terminator checks would otherwise reject it).
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	if !strings.HasPrefix(content, "---\n") {
 		return "", fmt.Errorf("missing `---` frontmatter")
 	}
