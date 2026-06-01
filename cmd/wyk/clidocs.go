@@ -186,6 +186,18 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		},
 	},
 	{
+		Name:    "skills",
+		Summary: "Install the wyk agent skills (wyk / wyk-handoff / wyk-project-review) into ~/.claude/skills so a harness loads them on demand.",
+		Usage:   "wyk skills <list | install | uninstall | print <name>> [-user | -project] [-force] [-dry-run] [-y]",
+		Flags: []cliFlag{
+			{Name: "-user", Default: "false", Description: "target the user skills dir ~/.claude/skills (the default; honors $CLAUDE_CONFIG_DIR)"},
+			{Name: "-project", Default: "false", Description: "target the project skills dir ./.claude/skills instead of the user dir"},
+			{Name: "-force", Default: "false", Description: "on install, overwrite a locally-modified skill (default leaves modified copies untouched)"},
+			{Name: "-dry-run", Default: "false", Description: "print the install/uninstall plan without touching disk"},
+			{Name: "-y", Default: "false", Description: "skip the confirmation prompt on install/uninstall"},
+		},
+	},
+	{
 		Name:    "help",
 		Summary: "Pointer at the in-TUI `?` overlay; opt-in flags emit markdown references for the docs site.",
 		Usage:   "wyk help [--markdown] [--cli-markdown]",

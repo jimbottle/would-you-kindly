@@ -210,6 +210,22 @@ wyk depgraph [-dot | -json] [-compact] [-repo name] [-priority N] [-closed]
 | `-priority` | `-1` | only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out |
 | `-closed` | `false` | include closed issues (default omits them) |
 
+## `wyk skills`
+
+Install the wyk agent skills (wyk / wyk-handoff / wyk-project-review) into ~/.claude/skills so a harness loads them on demand.
+
+```
+wyk skills <list | install | uninstall | print <name>> [-user | -project] [-force] [-dry-run] [-y]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-user` | `false` | target the user skills dir ~/.claude/skills (the default; honors $CLAUDE_CONFIG_DIR) |
+| `-project` | `false` | target the project skills dir ./.claude/skills instead of the user dir |
+| `-force` | `false` | on install, overwrite a locally-modified skill (default leaves modified copies untouched) |
+| `-dry-run` | `false` | print the install/uninstall plan without touching disk |
+| `-y` | `false` | skip the confirmation prompt on install/uninstall |
+
 ## `wyk help`
 
 Pointer at the in-TUI `?` overlay; opt-in flags emit markdown references for the docs site.

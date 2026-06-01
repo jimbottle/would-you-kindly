@@ -33,6 +33,7 @@ var wykSubcommands = []string{
 	"import",
 	"activity",
 	"depgraph",
+	"skills",
 	"help",
 	"completion",
 	"version",

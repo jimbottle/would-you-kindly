@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`wyk skills`** — install the agent-facing Claude Code skills wyk
+  ships (`wyk` triage/inbox, `wyk-handoff`, `wyk-project-review`) into
+  `~/.claude/skills` (default) or `./.claude/skills` (`-project`) so a
+  harness loads them on demand. The skills are embedded in the binary
+  (so `wyk update` carries new versions) and their thin bodies call the
+  wyk/bd CLI rather than restating conventions. `list` shows install
+  state, `print <name>` emits one to stdout, `install`/`uninstall` are
+  idempotent with `-dry-run`/`-y`; `install -force` overwrites a
+  locally-modified copy (left untouched by default).
+
 - **`-compact` on every agent `-json` surface** — `wyk inbox`,
   `stats`, `dashboard`, `activity`, and `depgraph` join `export` in
   accepting `-compact`, which emits non-indented JSON (indentation is
