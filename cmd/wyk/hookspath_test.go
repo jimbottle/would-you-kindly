@@ -36,6 +36,27 @@ func TestPathWithin(t *testing.T) {
 	}
 }
 
+// TestPathWithin_ResolvesSymlinks locks in the symlink fix: a child
+// reached through a symlink to the parent (and a not-yet-created tail
+// under it) must still classify as within — guarding the macOS
+// /var → /private/var representation gap.
+func TestPathWithin_ResolvesSymlinks(t *testing.T) {
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	if !pathWithin(real, filepath.Join(link, "hooks")) {
+		t.Errorf("symlinked in-repo child classified as outside")
+	}
+	if !pathWithin(real, filepath.Join(link, "nope", "deep")) {
+		t.Errorf("missing in-repo tail via symlink classified as outside")
+	}
+}
+
 // TestHooksPathRedirect exercises the core detection: unset, in-repo
 // redirect without/with wyk's hook, and an outside-repo redirect.
 func TestHooksPathRedirect(t *testing.T) {

@@ -252,9 +252,10 @@ func runDoctorFix(dryRun bool) int {
 			skipped++
 		default:
 			// Foreign hook — silently re-chaining is the wrong call;
-			// the user should run `wyk init -C <path> -chain` (or
-			// -force) themselves.
-			fmt.Printf("wyk doctor: %s: foreign hook left alone (run `wyk init -C %q -chain` or `-force` to override)\n", r.Name, r.Path)
+			// the user should run `(cd <path> && wyk init -chain)` (or
+			// -force) themselves. wyk init has no -C flag; it locates the
+			// repo from the working directory, so the remediation cd's in.
+			fmt.Printf("wyk doctor: %s: foreign hook left alone (run `(cd %q && wyk init -chain)` or `-force` to override)\n", r.Name, r.Path)
 			skipped++
 		}
 	}
@@ -668,7 +669,7 @@ func checkRepo(r registry.Repo) []check {
 		out = append(out, check{
 			name:   prefix + ": post-commit hook installed",
 			status: statusWarn,
-			detail: "no post-commit hook in this repo — commits won't auto-close referenced issues. Run `wyk init -C " + r.Path + "` to install it.",
+			detail: "no post-commit hook in this repo — commits won't auto-close referenced issues. Run `(cd " + r.Path + " && wyk init)` to install it.",
 		})
 	case err != nil:
 		out = append(out, check{
@@ -702,7 +703,7 @@ func checkRepo(r registry.Repo) []check {
 			out = append(out, check{
 				name:   prefix + ": post-commit hook (foreign)",
 				status: statusWarn,
-				detail: "an unfamiliar post-commit hook is installed. wyk's auto-close won't run. Re-run `wyk init -C " + r.Path + " -chain` to keep both, or `-force` to replace.",
+				detail: "an unfamiliar post-commit hook is installed. wyk's auto-close won't run. Re-run `(cd " + r.Path + " && wyk init -chain)` to keep both, or `-force` to replace.",
 			})
 		}
 	}
@@ -717,7 +718,7 @@ func checkRepo(r registry.Repo) []check {
 		detail := "git's core.hooksPath redirects post-commit hooks to " + activeDir +
 			", so wyk's hook in .git/hooks is bypassed and `Closes:`/`Fixes:` auto-close won't run. "
 		if inside {
-			detail += "Re-run `wyk init -C " + r.Path + "` to install into the active hooks dir, or unset core.hooksPath."
+			detail += "Re-run `(cd " + r.Path + " && wyk init)` to install into the active hooks dir, or unset core.hooksPath."
 		} else {
 			detail += "That path is outside this repo (likely stale) — clear it: `git -C " + r.Path + " config --unset core.hooksPath`."
 		}

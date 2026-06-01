@@ -582,17 +582,41 @@ func coreHooksPath(repoDir string) (string, bool) {
 	return v, v != ""
 }
 
+// canonPath resolves p to a canonical absolute form, following symlinks
+// through the deepest existing ancestor and re-appending any missing
+// tail. This matches registry.normalizePath's symlink-resolution intent
+// so macOS's /var → /private/var shortcut (or any user symlink) can't
+// make two representations of the same location compare unequal — while
+// still working for a path (like a core.hooksPath dir) that doesn't
+// exist yet.
+func canonPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	tail := ""
+	cur := p
+	for {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(resolved, tail)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p // reached the root without resolving — use the abs form
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+		cur = parent
+	}
+}
+
 // pathWithin reports whether child is parent itself or nested under it.
 // Used to tell an in-repo core.hooksPath (e.g. .beads/hooks — a real
 // setup wyk should install into) from one pointing outside the repo
-// (almost always stale/misconfigured — wyk must not write there).
+// (almost always stale/misconfigured — wyk must not write there). Both
+// operands are symlink-canonicalised first so a /var vs /private/var
+// (or other symlink) representation gap can't misclassify an in-repo
+// dir as external.
 func pathWithin(parent, child string) bool {
-	pa, err1 := filepath.Abs(parent)
-	ca, err2 := filepath.Abs(child)
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	rel, err := filepath.Rel(pa, ca)
+	rel, err := filepath.Rel(canonPath(parent), canonPath(child))
 	if err != nil {
 		return false
 	}
