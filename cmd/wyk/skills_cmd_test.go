@@ -41,6 +41,93 @@ func TestSkillStateAt_MissingCurrentModified(t *testing.T) {
 	}
 }
 
+// plantStale installs a fake OLDER version of s at dir: a SKILL.md
+// whose body differs from the current embedded content, plus a
+// provenance sidecar that matches THAT body — i.e. exactly what wyk
+// would leave behind after writing an earlier version the user never
+// touched. skillStateAt should read this as stale, not modified.
+func plantStale(t *testing.T, s skills.Skill, dir string) {
+	t.Helper()
+	skillDir := filepath.Join(dir, s.Name)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldBody := []byte(s.Content + "\n<!-- an earlier wyk version -->\n")
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), oldBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, wykManagedSidecar), []byte(contentHash(oldBody)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteSkillFile_WritesProvenanceSidecar(t *testing.T) {
+	dir := t.TempDir()
+	s := firstSkill(t)
+	if err := writeSkillFile(s, dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, s.Name, wykManagedSidecar))
+	if err != nil {
+		t.Fatalf("sidecar not written: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != contentHash([]byte(s.Content)) {
+		t.Errorf("sidecar hash = %q, want %q", strings.TrimSpace(string(got)), contentHash([]byte(s.Content)))
+	}
+}
+
+func TestSkillStateAt_StaleViaProvenance(t *testing.T) {
+	dir := t.TempDir()
+	s := firstSkill(t)
+
+	// Unedited older version (sidecar matches the on-disk body) → stale.
+	plantStale(t, s, dir)
+	if st, _ := skillStateAt(s, dir); st != skillStale {
+		t.Errorf("unedited older version: state = %v, want stale", st)
+	}
+	// Now edit that older version: the sidecar no longer matches → modified.
+	if err := os.WriteFile(filepath.Join(dir, s.Name, "SKILL.md"), []byte("user hand-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := skillStateAt(s, dir); st != skillModified {
+		t.Errorf("edited older version: state = %v, want modified", st)
+	}
+}
+
+func TestRunSkillsInstall_StaleAutoUpdatesWithoutForce(t *testing.T) {
+	dir := withTempHome(t)
+	s := firstSkill(t)
+	plantStale(t, s, dir)
+
+	// No -force: a stale (unedited) skill should still be refreshed.
+	if code := runSkillsInstall([]string{"-y"}, strings.NewReader("")); code != 0 {
+		t.Fatalf("install exit = %d", code)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, s.Name, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != s.Content {
+		t.Errorf("stale skill was not refreshed to current content")
+	}
+	if st, _ := skillStateAt(s, dir); st != skillCurrent {
+		t.Errorf("after refresh: state = %v, want current", st)
+	}
+}
+
+func TestRunSkillsUninstall_RemovesSidecarAndDir(t *testing.T) {
+	dir := withTempHome(t)
+	s := firstSkill(t)
+	runSkillsInstall([]string{"-y"}, strings.NewReader(""))
+	if code := runSkillsUninstall([]string{"-y"}, strings.NewReader("")); code != 0 {
+		t.Fatalf("uninstall exit = %d", code)
+	}
+	// The provenance sidecar must go too, so the skill dir can be cleaned.
+	if _, err := os.Stat(filepath.Join(dir, s.Name)); !os.IsNotExist(err) {
+		t.Errorf("skill dir survived uninstall (sidecar left behind?): err=%v", err)
+	}
+}
+
 // withTempHome points the user skills target at a temp dir.
 func withTempHome(t *testing.T) string {
 	t.Helper()

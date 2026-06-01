@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Skill drift detection (stale vs. modified)** — `wyk skills`
+  records a `.wyk-managed` provenance hash next to each installed
+  `SKILL.md`. On the next check it tells an *out-of-date* skill (an
+  unedited older wyk version) from a *locally modified* one: `wyk
+  skills install` now auto-refreshes out-of-date skills **without**
+  `-force` (that flag still guards your edits), and `wyk doctor` /
+  `wyk skills list` report the two states distinctly. This makes the
+  post-`wyk update` "run `wyk skills install`" flow refresh cleanly
+  while preserving any skills you've hand-edited.
+
 - **Skills wired into setup/maintenance** — `wyk doctor` now reports
   whether the agent skills are installed and current (and `doctor -fix`
   installs any missing ones); `wyk init -skills` installs them during

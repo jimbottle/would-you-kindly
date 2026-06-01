@@ -351,7 +351,7 @@ func checkSkills() check {
 	if err != nil {
 		return check{name: name, status: statusWarn, detail: "could not read embedded skills: " + err.Error(), leadingBlank: true}
 	}
-	var missing, modified, current []string
+	var missing, stale, modified, current []string
 	for _, s := range all {
 		st, err := skillStateAt(s, dir)
 		if err != nil {
@@ -360,18 +360,23 @@ func checkSkills() check {
 		switch st {
 		case skillMissing:
 			missing = append(missing, s.Name)
+		case skillStale:
+			stale = append(stale, s.Name)
 		case skillModified:
 			modified = append(modified, s.Name)
 		default:
 			current = append(current, s.Name)
 		}
 	}
-	if len(missing) == 0 && len(modified) == 0 {
+	if len(missing) == 0 && len(stale) == 0 && len(modified) == 0 {
 		return check{name: name, status: statusPass, detail: fmt.Sprintf("%d skill(s) current in %s", len(current), dir)}
 	}
 	var parts []string
 	if len(missing) > 0 {
 		parts = append(parts, "missing: "+strings.Join(missing, ", "))
+	}
+	if len(stale) > 0 {
+		parts = append(parts, "out of date: "+strings.Join(stale, ", "))
 	}
 	if len(modified) > 0 {
 		parts = append(parts, "locally modified: "+strings.Join(modified, ", "))
@@ -379,7 +384,7 @@ func checkSkills() check {
 	return check{
 		name:         name,
 		status:       statusWarn,
-		detail:       strings.Join(parts, "; ") + "\nRun `wyk skills install` to install/update (`-force` overwrites a modified skill); `wyk doctor -fix` installs the missing ones.",
+		detail:       strings.Join(parts, "; ") + "\nRun `wyk skills install` to install missing and refresh out-of-date skills (`-force` overwrites a modified skill); `wyk doctor -fix` installs the missing ones.",
 		leadingBlank: true,
 	}
 }

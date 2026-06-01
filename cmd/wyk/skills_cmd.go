@@ -1,11 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
@@ -71,18 +74,38 @@ type skillState int
 const (
 	skillMissing  skillState = iota // not installed
 	skillCurrent                    // installed, byte-identical to the embedded version
-	skillModified                   // installed but differs (user edit, or an older wyk version)
+	skillStale                      // a pristine OLDER wyk version (unedited) — safe to auto-update
+	skillModified                   // edited since wyk wrote it (or no provenance) — don't clobber
 )
 
 func (s skillState) String() string {
 	switch s {
 	case skillCurrent:
 		return "current"
+	case skillStale:
+		return "out of date"
 	case skillModified:
 		return "modified"
 	default:
 		return "not installed"
 	}
+}
+
+// wykManagedSidecar is the hidden provenance file wyk writes next to an
+// installed SKILL.md: it records the sha256 of the exact content wyk
+// wrote. On inspection, if the SKILL.md still hashes to the recorded
+// value it's a PRISTINE wyk install (the user didn't touch it) — so a
+// difference from the current embedded content means it's merely an
+// older version (stale → safe to auto-update), not a user edit. Kept as
+// a sidecar rather than an in-body marker so the SKILL.md stays exactly
+// the embedded content (clean for the agent, exact for the
+// current-state compare).
+const wykManagedSidecar = ".wyk-managed"
+
+// contentHash is the hex sha256 used for skill provenance.
+func contentHash(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // userSkillsDir resolves ~/.claude/skills, honoring $CLAUDE_CONFIG_DIR
@@ -154,9 +177,20 @@ func installMissingSkills(dir string, dryRun bool) ([]string, error) {
 	return written, nil
 }
 
-// skillStateAt reports whether s is missing / current / modified at dir.
+// skillStateAt reports whether s is missing / current / stale /
+// modified at dir.
+//
+// The stale-vs-modified distinction (both differ from the current
+// embedded content) is what lets `wyk skills install` auto-refresh an
+// unedited skill after a wyk upgrade without clobbering a user's edits:
+// we read the .wyk-managed sidecar wyk wrote at install time. If the
+// SKILL.md still hashes to the value wyk recorded, no one edited it
+// since — so a difference from the current content is purely a version
+// bump (stale). If the hashes disagree (or there's no sidecar), we
+// can't vouch for it and call it modified.
 func skillStateAt(s skills.Skill, dir string) (skillState, error) {
-	b, err := os.ReadFile(filepath.Join(dir, s.Name, "SKILL.md"))
+	skillDir := filepath.Join(dir, s.Name)
+	b, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
 	if os.IsNotExist(err) {
 		return skillMissing, nil
 	}
@@ -165,6 +199,14 @@ func skillStateAt(s skills.Skill, dir string) (skillState, error) {
 	}
 	if string(b) == s.Content {
 		return skillCurrent, nil
+	}
+	// Differs from the current embedded content. Consult the
+	// provenance sidecar to tell "older wyk version" (stale, safe to
+	// update) from "user edited it" (modified, needs -force).
+	if rec, rerr := os.ReadFile(filepath.Join(skillDir, wykManagedSidecar)); rerr == nil {
+		if strings.TrimSpace(string(rec)) == contentHash(b) {
+			return skillStale, nil
+		}
 	}
 	return skillModified, nil
 }
@@ -252,6 +294,11 @@ func runSkillsInstall(args []string, stdin io.Reader) int {
 			p.action = "unchanged"
 		case skillMissing:
 			p.action, p.write = "install", true
+		case skillStale:
+			// An unedited older wyk version — refresh it without
+			// requiring -force (that flag guards user edits, and
+			// provenance says there are none here).
+			p.action, p.write = "update (out of date)", true
 		case skillModified:
 			if *force {
 				p.action, p.write = "overwrite (modified)", true
@@ -369,6 +416,9 @@ func runSkillsUninstall(args []string, stdin io.Reader) int {
 			fmt.Fprintf(os.Stderr, "wyk skills: %s: %v\n", v.name, err)
 			return 1
 		}
+		// Drop the provenance sidecar wyk wrote alongside SKILL.md (so
+		// the dir can go empty); ignore if it was never written.
+		_ = os.Remove(filepath.Join(dir, v.name, wykManagedSidecar))
 		// Drop the now-empty skill dir; ignore the error if the user
 		// kept other files alongside it (Remove only succeeds on empty).
 		_ = os.Remove(filepath.Join(dir, v.name))
@@ -448,6 +498,14 @@ func writeSkillFile(s skills.Skill, dir string) error {
 	if err := os.Rename(tmpPath, final); err != nil {
 		cleanup()
 		return fmt.Errorf("rename %s → %s: %w", tmpPath, final, err)
+	}
+	// Record provenance: the hash of exactly what we wrote, so a later
+	// skillStateAt can tell a pristine (stale) copy from a user edit.
+	// Best-effort — a missing/old sidecar just degrades stale back to
+	// "modified", which is the safe direction (never auto-clobbers).
+	sidecar := filepath.Join(skillDir, wykManagedSidecar)
+	if err := os.WriteFile(sidecar, []byte(contentHash([]byte(s.Content))+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write provenance %s: %w", sidecar, err)
 	}
 	return nil
 }
