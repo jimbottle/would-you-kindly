@@ -2538,6 +2538,50 @@ func TestFSEventMsg_SuspendedOnTerminalError(t *testing.T) {
 	}
 }
 
+func TestFSEventMsg_CoalescesWhileFetchInFlight(t *testing.T) {
+	// A fs event arriving while a fetch is already in flight must NOT
+	// dispatch an overlapping fetch — it only re-arms the wait.
+	// Otherwise a chatty .beads/ watcher storms the cold Dolt engines
+	// (the "constant rapid refresh" bug). The pre-loaded channel lets
+	// the re-armed waitFSEvent return without blocking the drain.
+	src := &stubSource{issues: sampleIssues()}
+	events := make(chan struct{}, 1)
+	events <- struct{}{}
+	m := applyFetched(New(src).WithFSEvents(events), src)
+	m.refreshing = true // simulate an in-flight fetch
+
+	callsBefore := src.calls
+	_, cmd := m.Update(fsEventMsg{})
+	if cmd == nil {
+		t.Fatal("fsEvent should still re-arm the wait even when coalescing")
+	}
+	drainCmd(cmd)
+	if src.calls != callsBefore {
+		t.Errorf("fsEvent while refreshing must NOT dispatch an overlapping fetch; calls=%d before=%d", src.calls, callsBefore)
+	}
+}
+
+func TestFSEventMsg_IdleDispatchesAndMarksRefreshing(t *testing.T) {
+	// The positive case: an idle fs event DOES refetch and sets
+	// m.refreshing so the tick path coalesces against it (the two
+	// refresh sources can't otherwise see each other's in-flight fetch).
+	src := &stubSource{issues: sampleIssues()}
+	events := make(chan struct{}, 1)
+	events <- struct{}{}
+	m := applyFetched(New(src).WithFSEvents(events), src) // clears loading+refreshing
+
+	callsBefore := src.calls
+	model, cmd := m.Update(fsEventMsg{})
+	m = model.(Model)
+	if !m.refreshing {
+		t.Error("an idle fsEvent fetch should set m.refreshing so ticks coalesce")
+	}
+	drainCmd(cmd)
+	if src.calls != callsBefore+1 {
+		t.Errorf("idle fsEvent should dispatch exactly one fetch; calls=%d before=%d", src.calls, callsBefore)
+	}
+}
+
 // drainCmd walks a tea.Cmd (and any nested tea.BatchMsg) so every
 // inner func() runs and produces its side effects — used by the
 // fsEventMsg suspension and tick tests to detect whether a fetchCmd

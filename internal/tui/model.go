@@ -1022,14 +1022,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.fetchCmd(), tickCmd(m.tickGen))
 
 	case fsEventMsg:
-		// External bd write — refetch immediately AND re-arm the
-		// watcher wait so the next event still arrives. We don't
-		// bump tickGen; the 10s timer keeps running as fallback.
+		// External bd write — refetch AND re-arm the watcher wait so
+		// the next event still arrives. We don't bump tickGen; the
+		// poll timer keeps running as fallback.
 		// Terminal-error suspension still applies: no point
 		// refetching when there's no source to query.
 		if isTerminalErr(m.lastErr) {
 			return m, waitFSEvent(m.fsEvents)
 		}
+		// Coalesce against any in-flight fetch, exactly like the tick
+		// path. Without this, a chatty watcher (sustained .beads/
+		// churn fires an event every debounce window) dispatches
+		// overlapping cross-repo fetches — the visible "constant rapid
+		// refresh" — and each overlap re-thrashes the cold Dolt
+		// engines, which is the same self-sustaining timeout storm the
+		// tick guard exists to prevent. Dropping the event here is
+		// safe: the wait is re-armed below, so the next change after
+		// this fetch finishes re-triggers, and the poll tick is the
+		// backstop. Setting m.refreshing also lets the tick path see
+		// this fetch as in-flight so the two can't double up.
+		if m.loading || m.refreshing {
+			return m, waitFSEvent(m.fsEvents)
+		}
+		m.refreshing = true
 		return m, tea.Batch(m.fetchCmd(), waitFSEvent(m.fsEvents))
 
 	case writeMsg:
