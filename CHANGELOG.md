@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Claude Code plugin** — the agent skills are now also packaged as a
+  Claude Code plugin under [`plugin/`](plugin), installable in one step
+  (`/plugin marketplace add jimbottle/would-you-kindly` then `/plugin
+  install wyk@wyk`). It bundles the three skills (kept byte-identical to
+  the embedded copies via `make plugin-skills` + a drift test) and a
+  best-effort SessionStart hook that surfaces `wyk inbox`. The git
+  auto-close hook (a git hook, not a Claude hook) stays with `wyk init`,
+  and an MCP surface was considered and skipped — the CLI is lean enough
+  that agents call it via Bash. See [`docs/SKILLS.md`](docs/SKILLS.md).
+
 - **Skill drift detection (stale vs. modified)** — `wyk skills`
   records a `.wyk-managed` provenance hash next to each installed
   `SKILL.md`. On the next check it tells an *out-of-date* skill (an

@@ -1,0 +1,16 @@
+{
+  "name": "wyk",
+  "owner": {
+    "name": "jimbottle"
+  },
+  "metadata": {
+    "description": "The would-you-kindly (wyk) agent integration: skills for the human-in-the-loop bd workflow."
+  },
+  "plugins": [
+    {
+      "name": "wyk",
+      "source": "./plugin",
+      "description": "Agent skills for wyk: triage the agent inbox, hand tasks to a human, review the project plan."
+    }
+  ]
+}

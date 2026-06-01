@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -78,6 +80,45 @@ func TestWykCmdRef_MatchesCommandsNotProse(t *testing.T) {
 	for _, c := range got {
 		if !want[c] {
 			t.Errorf("unexpected match %q", c)
+		}
+	}
+}
+
+// TestPluginSkillsMatchEmbedded guards the Claude Code plugin under
+// plugin/ against drift. The plugin ships real SKILL.md files (a
+// marketplace install can't read them out of the wyk binary), so they're
+// committed copies of the embedded source — `make plugin-skills`
+// regenerates them. This test fails if a copy falls out of sync, so the
+// plugin can never quietly ship a stale skill.
+func TestPluginSkillsMatchEmbedded(t *testing.T) {
+	// Test CWD is the package dir (cmd/wyk); the plugin is two levels up.
+	const pluginSkills = "../../plugin/skills"
+	all, err := skills.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range all {
+		got, err := os.ReadFile(filepath.Join(pluginSkills, s.Name, "SKILL.md"))
+		if err != nil {
+			t.Errorf("plugin is missing skill %q (run `make plugin-skills`): %v", s.Name, err)
+			continue
+		}
+		if string(got) != s.Content {
+			t.Errorf("plugin skill %q has drifted from the embedded copy — run `make plugin-skills` and commit", s.Name)
+		}
+	}
+	// And no stray skills the binary doesn't know about.
+	embedded := make(map[string]bool, len(all))
+	for _, s := range all {
+		embedded[s.Name] = true
+	}
+	entries, err := os.ReadDir(pluginSkills)
+	if err != nil {
+		t.Fatalf("reading %s: %v", pluginSkills, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() && !embedded[e.Name()] {
+			t.Errorf("plugin bundles skill %q that isn't embedded in the binary — remove it or add the source", e.Name())
 		}
 	}
 }

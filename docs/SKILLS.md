@@ -67,6 +67,36 @@ means it's been edited (modified), and wyk won't clobber it without
 `-force`. The `SKILL.md` itself stays byte-for-byte the embedded content,
 so the sidecar adds provenance without polluting what the agent reads.
 
+## Installing as a Claude Code plugin
+
+If you'd rather not run `wyk skills install` on every machine, the same
+skills are also packaged as a [Claude Code
+plugin](https://code.claude.com/docs/en/plugins) under
+[`plugin/`](../plugin). One install wires them into every session, and the
+plugin adds a best-effort SessionStart hook that surfaces `wyk inbox`
+(work a human has bounced back) when you open a session:
+
+```
+/plugin marketplace add jimbottle/would-you-kindly
+/plugin install wyk@wyk
+```
+
+The plugin's bundled skills are byte-identical to the embedded ones — they
+are regenerated from the same source with `make plugin-skills`, and a test
+(`TestPluginSkillsMatchEmbedded`) fails if they drift.
+
+Two things the plugin deliberately does **not** include:
+
+- **The git post-commit auto-close hook** is a *git* hook (it reads
+  `Closes: <id>` trailers), not a Claude Code hook — a plugin can't
+  install it into your repos. Run `wyk init` per repo to wire it.
+- **An MCP server.** The `wyk` CLI is lean and agents already call it via
+  Bash, so a tool-surface MCP server would be maintenance for little gain.
+  Worth revisiting only if a host genuinely prefers tools over a CLI.
+
+Either way the plugin/skills carry the *instructions*; the `wyk` binary
+still does the work, so install it separately.
+
 ## Keeping skills honest
 
 Two tests guard the embedded skills against drift
