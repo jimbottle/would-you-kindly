@@ -419,6 +419,13 @@ type Model struct {
 	// persisted alongside the column visibility.
 	priorityEmphasis bool
 
+	// autoHidden is the set of columns hidden PURELY to fit the current
+	// terminal width, on top of the user's own colsHidden. Render-
+	// transient: viewList recomputes it each paint, so widening the
+	// terminal brings every column back without touching saved prefs.
+	// Never persisted.
+	autoHidden map[string]bool
+
 	// uiConfigPath is the resolved on-disk path to ui.json so the
 	// overlay can persist column-visibility changes without
 	// re-resolving XDG every time. Empty disables persistence
@@ -4308,6 +4315,11 @@ func exampleFullID(m Model) string {
 
 func (m Model) viewList() string {
 	var b strings.Builder
+
+	// Recompute which columns must auto-hide to fit the current width.
+	// Seeded on the local m so colVisible (used by renderHeader,
+	// renderRow, and titleBudget below) reflects it for this paint only.
+	m.autoHidden = m.computeAutoHidden()
 
 	header := titleStyle.Render("would-you-kindly")
 	b.WriteString(header)

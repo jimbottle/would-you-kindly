@@ -36,9 +36,69 @@ var toggleableColumns = []toggleableCol{
 	{ID: colIDUpdated, Label: "Updated"},
 }
 
-// colVisible reports whether a column should render. Unknown IDs
-// default to visible — a future column added without a uiconfig
-// migration still appears.
+// colVisible reports whether a column should render: not hidden by the
+// user (colsHidden) and not auto-hidden to fit a narrow terminal
+// (autoHidden, recomputed each paint by viewList). Unknown IDs default
+// to visible — a future column added without a uiconfig migration still
+// appears.
 func (m Model) colVisible(id string) bool {
-	return !m.colsHidden[id]
+	return !m.colsHidden[id] && !m.autoHidden[id]
+}
+
+// widthDropOrder is the sequence in which columns are auto-hidden to
+// fit a narrow terminal — least valuable first. Owner (the
+// responsibility badge) is last because it's the headline "whose move
+// is it" signal; ID, priority, and title are never dropped.
+var widthDropOrder = []string{colIDBranch, colIDUpdated, colIDType, colIDStatus, colIDRepo, colIDOwner}
+
+// computeAutoHidden returns the toggleable columns to hide PURELY to
+// keep rows within the terminal width, on top of whatever the user hid
+// via the `o` overlay. Render-time only (never persisted), so widening
+// the terminal restores every column without disturbing saved prefs.
+// Returns nil when everything already fits or the width is unknown.
+// Reads m.colsHidden directly (not colVisible) to avoid recursion.
+func (m Model) computeAutoHidden() map[string]bool {
+	const (
+		sep      = 2  // the "  " between columns, mirrors renderRow
+		minTitle = 20 // titleBudget's floor — keep the title usable
+	)
+	if m.width <= 0 {
+		return nil
+	}
+	colWidth := map[string]int{
+		colIDOwner: colResp, colIDRepo: colRepo, colIDBranch: colBranch,
+		colIDType: colType, colIDStatus: colStatus, colIDUpdated: colUpdated,
+	}
+	// shown = rendered before any width-driven hiding: not user-hidden,
+	// and repo/branch only count in multi-repo mode.
+	shown := func(id string) bool {
+		if m.colsHidden[id] {
+			return false
+		}
+		if (id == colIDRepo || id == colIDBranch) && !m.isMultiRepo() {
+			return false
+		}
+		return true
+	}
+	// Always-present cost: cursor + ID + Priority + a minimum title.
+	total := 2 + (colID + sep) + (colPrio + sep) + minTitle
+	for id, w := range colWidth {
+		if shown(id) {
+			total += w + sep
+		}
+	}
+	if total <= m.width {
+		return nil
+	}
+	hidden := map[string]bool{}
+	for _, id := range widthDropOrder {
+		if total <= m.width {
+			break
+		}
+		if shown(id) {
+			hidden[id] = true
+			total -= colWidth[id] + sep
+		}
+	}
+	return hidden
 }
