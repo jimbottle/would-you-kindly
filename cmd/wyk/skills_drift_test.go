@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"testing"
 
@@ -46,17 +47,16 @@ func TestSkills_ReferenceOnlyRealWykSubcommands(t *testing.T) {
 	if len(all) == 0 {
 		t.Fatal("no skills embedded")
 	}
+	// A skill needn't reference any command; we only police the ones it
+	// does, so there's no "references at least one command" assertion.
 	for _, s := range all {
-		seen := false
 		for _, m := range wykCmdRef.FindAllStringSubmatch(s.Content, -1) {
 			cmd := m[1]
-			seen = true
 			if !valid[cmd] {
 				t.Errorf("skill %q references `wyk %s`, which is not a shipped wyk subcommand "+
 					"(see wykSubcommands in completion.go) — fix the skill or add the command", s.Name, cmd)
 			}
 		}
-		_ = seen // a skill needn't reference any command; we only police the ones it does
 	}
 }
 
@@ -67,20 +67,17 @@ func TestSkills_ReferenceOnlyRealWykSubcommands(t *testing.T) {
 func TestWykCmdRef_MatchesCommandsNotProse(t *testing.T) {
 	body := "Run `wyk inbox -json` then `wyk frobnicate`. The wyk-handoff " +
 		"skill drives the wyk TUI."
-	var got []string
+	got := map[string]int{}
 	for _, m := range wykCmdRef.FindAllStringSubmatch(body, -1) {
-		got = append(got, m[1])
+		got[m[1]]++
 	}
-	// "inbox" and "frobnicate" match; "wyk-handoff" (hyphen), "wyk TUI"
-	// (uppercase), and bare "wyk" (no following lowercase word) don't.
-	want := map[string]bool{"inbox": true, "frobnicate": true}
-	if len(got) != len(want) {
-		t.Fatalf("matched %v, want exactly %v", got, []string{"inbox", "frobnicate"})
-	}
-	for _, c := range got {
-		if !want[c] {
-			t.Errorf("unexpected match %q", c)
-		}
+	// "inbox" and "frobnicate" match exactly once each; "wyk-handoff"
+	// (hyphen), "wyk TUI" (uppercase), and bare "wyk" (no following
+	// lowercase word) don't. Compare counts, not just the set, so a
+	// regression that double-matched a token (e.g. {"inbox":2}) fails.
+	want := map[string]int{"inbox": 1, "frobnicate": 1}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("matched %v, want exactly %v", got, want)
 	}
 }
 

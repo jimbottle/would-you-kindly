@@ -207,8 +207,14 @@ func runDoctorFix(dryRun bool) int {
 		return 2
 	}
 	if len(reg.Repos) == 0 {
+		// No repos to fix, but installing the skills above is itself
+		// fixable work this command performs — so report success rather
+		// than the "nothing to fix" code 2. In -dry-run skillsFixed
+		// counts the skills we WOULD install, so the exit code mirrors
+		// what a real run returns (the convention that -dry-run reports
+		// the post-fix state, not the current one).
 		if skillsFixed > 0 {
-			return 0 // we did fix something (the skills)
+			return 0
 		}
 		fmt.Fprintln(os.Stderr, "wyk doctor: no repos registered — nothing to fix")
 		return 2

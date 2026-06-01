@@ -501,11 +501,14 @@ func writeSkillFile(s skills.Skill, dir string) error {
 	}
 	// Record provenance: the hash of exactly what we wrote, so a later
 	// skillStateAt can tell a pristine (stale) copy from a user edit.
-	// Best-effort — a missing/old sidecar just degrades stale back to
-	// "modified", which is the safe direction (never auto-clobbers).
+	// Genuinely best-effort: SKILL.md is already renamed into place
+	// above, so the install succeeded. A sidecar-write failure only
+	// degrades a future state read from "stale" back to "modified" (the
+	// safe direction — it never auto-clobbers), so warn rather than
+	// failing the whole install and surfacing a spurious exit 1.
 	sidecar := filepath.Join(skillDir, wykManagedSidecar)
 	if err := os.WriteFile(sidecar, []byte(contentHash([]byte(s.Content))+"\n"), 0o644); err != nil {
-		return fmt.Errorf("write provenance %s: %w", sidecar, err)
+		fmt.Fprintf(os.Stderr, "wyk skills: %s: could not write provenance sidecar (skill still installed): %v\n", s.Name, err)
 	}
 	return nil
 }

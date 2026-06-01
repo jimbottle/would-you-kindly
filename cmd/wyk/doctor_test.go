@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
 
 func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {
@@ -182,6 +183,30 @@ func TestRunDoctorFix_NoRegistryReturns2(t *testing.T) {
 	})
 	if !strings.Contains(stderr, "no repos registered") {
 		t.Errorf("expected 'no repos registered' message; got %q", stderr)
+	}
+}
+
+// TestRunDoctorFix_NoRegistryInstallsMissingSkillsReturns0 exercises the
+// skills-install wiring inside runDoctorFix directly: with no repos
+// registered but the user skills missing, -fix should install them and
+// return 0 (the "we fixed the skills even though there were no repos"
+// branch), writing the skills to disk.
+func TestRunDoctorFix_NoRegistryInstallsMissingSkillsReturns0(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	dir := withTempHome(t) // fresh temp HOME → skills start missing
+	// No registry file at all, so the only fixable work is the skills.
+	if code := runDoctorFix(false); code != 0 {
+		t.Errorf("no-registry-but-skills-missing exit %d, want 0", code)
+	}
+	all, err := skills.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range all {
+		if st, _ := skillStateAt(s, dir); st != skillCurrent {
+			t.Errorf("skill %q state after -fix = %v, want current (should have been installed)", s.Name, st)
+		}
 	}
 }
 

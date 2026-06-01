@@ -41,6 +41,7 @@ docs-check: docs-snapshot
 # TestPluginSkillsMatchEmbedded fails if a copy drifts from the embedded
 # content.
 plugin-skills:
+	@rm -rf plugin/skills
 	@for d in internal/skills/data/*/; do \
 		name=$$(basename $$d); \
 		mkdir -p plugin/skills/$$name; \
