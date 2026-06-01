@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -38,6 +37,7 @@ func runDepgraph(args []string) int {
 	fs := flag.NewFlagSet("depgraph", flag.ContinueOnError)
 	asDOT := fs.Bool("dot", false, "emit Graphviz DOT (pipe into `dot -Tsvg`)")
 	asJSON := fs.Bool("json", false, "emit {nodes, edges} JSON for tooling consumers")
+	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	repoName := fs.String("repo", "", "restrict to the registered repo with this name (empty = full registry)")
 	priorityCap := fs.Int("priority", -1, "only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out")
 	includeClosed := fs.Bool("closed", false, "include closed issues (default omits them)")
@@ -82,7 +82,7 @@ func runDepgraph(args []string) int {
 
 	switch {
 	case *asJSON:
-		emitDepJSON(os.Stdout, graph)
+		emitDepJSON(os.Stdout, graph, *compact)
 	case *asDOT:
 		emitDepDOT(os.Stdout, graph)
 	default:
@@ -291,16 +291,14 @@ func depNodeLabel(n depGraphNode) string {
 // emitDepJSON writes the graph as indented {nodes, edges} JSON. Nil
 // slices render as [] (not null) so a consumer can iterate without a
 // nil guard.
-func emitDepJSON(w io.Writer, g depGraph) {
+func emitDepJSON(w io.Writer, g depGraph, compact bool) {
 	if g.Nodes == nil {
 		g.Nodes = []depGraphNode{}
 	}
 	if g.Edges == nil {
 		g.Edges = []depGraphEdge{}
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(g)
+	_ = emitJSON(w, g, compact)
 }
 
 // emitDepDOT writes the graph as a Graphviz digraph. Each node gets a

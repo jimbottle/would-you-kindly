@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -145,13 +144,14 @@ type exportDump struct {
 
 // collectExport walks the registry sequentially (matches the
 // dashboard's bd-subprocess concurrency policy — no parallel
-// fanout heating the CPU). Issues come from `bd list --all`
-// (open + closed); ReadyIDs come from `bd ready` so the
-// blocker-aware view is preserved without a downstream tool
-// having to reimplement the bd ready rules. Both calls run
-// before recording the row so a partial failure (e.g. `bd ready`
-// times out but `bd list --all` succeeds) still emits the issue
-// list with an empty ReadyIDs slice and an error string.
+// fanout heating the CPU). Issues come from `bd list` (open) by
+// default, or `bd list --all` (open + closed) when includeClosed;
+// ReadyIDs come from `bd ready` so the blocker-aware view is
+// preserved without a downstream tool having to reimplement the bd
+// ready rules. Both calls run before recording the row so a partial
+// failure (e.g. `bd ready` times out but the list call succeeds)
+// still emits the issue list with an empty ReadyIDs slice and an
+// error string.
 func collectExport(reg *registry.Registry, mk func(dir string) exportClient, includeClosed bool) (exportDump, bool) {
 	dump := exportDump{SchemaVersion: exportSchemaVersion, ExportedAt: time.Now(), Repos: make([]exportRepo, 0, len(reg.Repos))}
 	hadError := false
@@ -268,9 +268,5 @@ func slimDump(dump *exportDump) {
 // the output is suitable for streaming consumers and large
 // dumps where the indentation cost adds up.
 func emitExportJSON(w io.Writer, dump exportDump, compact bool) {
-	enc := json.NewEncoder(w)
-	if !compact {
-		enc.SetIndent("", "  ")
-	}
-	_ = enc.Encode(dump)
+	_ = emitJSON(w, dump, compact)
 }

@@ -74,7 +74,7 @@ func TestEmitActivityJSON_EmptyEventsRendersArrayNotNull(t *testing.T) {
 	// special-case `null` — pin the empty-window shape as [].
 	var buf bytes.Buffer
 	cutoff := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
-	emitActivityJSON(&buf, []activityEvent{}, cutoff, nil)
+	emitActivityJSON(&buf, []activityEvent{}, cutoff, nil, false)
 
 	if !strings.Contains(buf.String(), `"events": []`) {
 		t.Errorf("empty events should encode as []; got %q", buf.String())
@@ -269,7 +269,7 @@ func TestEmitActivityTable_RendersRowsInOrder(t *testing.T) {
 func TestEmitActivityJSON_SurfacesErrors(t *testing.T) {
 	var buf bytes.Buffer
 	cutoff := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
-	emitActivityJSON(&buf, []activityEvent{}, cutoff, []repoError{{Repo: "broken", Error: "timed out"}})
+	emitActivityJSON(&buf, []activityEvent{}, cutoff, []repoError{{Repo: "broken", Error: "timed out"}}, false)
 	var got struct {
 		Events []activityEvent `json:"events"`
 		Errors []repoError     `json:"errors"`

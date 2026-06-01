@@ -163,7 +163,7 @@ func TestFinalizeDepGraph_IncludeClosed(t *testing.T) {
 
 func TestEmitDepJSON_ShapeAndEmptySlices(t *testing.T) {
 	var buf bytes.Buffer
-	emitDepJSON(&buf, depGraph{})
+	emitDepJSON(&buf, depGraph{}, false)
 	var decoded depGraph
 	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
 		t.Fatalf("emitted JSON should parse: %v", err)
@@ -177,7 +177,7 @@ func TestEmitDepJSON_ShapeAndEmptySlices(t *testing.T) {
 func TestEmitDepJSON_RoundTrips(t *testing.T) {
 	g := finalizeDepGraph(synthRaw(), false, -1)
 	var buf bytes.Buffer
-	emitDepJSON(&buf, g)
+	emitDepJSON(&buf, g, false)
 	var got depGraph
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatal(err)

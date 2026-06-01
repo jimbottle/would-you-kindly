@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -30,6 +29,7 @@ import (
 func runDashboard(args []string) int {
 	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit a structured JSON object instead of the table")
+	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	days := fs.Int("days", 7, "window for the closed-recently column (default 7)")
 	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (empty = every registered repo)")
 	maxPriority := fs.Int("priority", -1, "drop issues below priority N before tallying counts (lower number = higher priority; -1 disables — does NOT hide empty repo rows)")
@@ -74,7 +74,7 @@ func runDashboard(args []string) int {
 	rows, hadError := collectDashboard(reg, cutoff, *maxPriority)
 
 	if *asJSON {
-		emitDashboardJSON(os.Stdout, rows, *days, cutoff)
+		emitDashboardJSON(os.Stdout, rows, *days, cutoff, *compact)
 	} else {
 		emitDashboardTable(os.Stdout, rows, *days)
 	}
@@ -190,7 +190,7 @@ func emitDashboardTable(w io.Writer, rows []dashboardRow, days int) {
 // emitDashboardJSON prints the structured form for external
 // tooling. Includes the window metadata so a downstream dashboard
 // can render the cutoff alongside the counts.
-func emitDashboardJSON(w io.Writer, rows []dashboardRow, days int, cutoff time.Time) {
+func emitDashboardJSON(w io.Writer, rows []dashboardRow, days int, cutoff time.Time, compact bool) {
 	out := struct {
 		WindowDays   int            `json:"window_days"`
 		WindowCutoff time.Time      `json:"window_cutoff"`
@@ -200,7 +200,5 @@ func emitDashboardJSON(w io.Writer, rows []dashboardRow, days int, cutoff time.T
 		WindowCutoff: cutoff,
 		Repos:        rows,
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(out)
+	_ = emitJSON(w, out, compact)
 }

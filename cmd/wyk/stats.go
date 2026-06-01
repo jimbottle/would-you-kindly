@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,6 +35,7 @@ func runStats(args []string) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
 	asJSON := fs.Bool("json", false, "emit a JSON object suitable for scripting")
+	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (mutually exclusive with -C)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
@@ -79,7 +79,7 @@ func runStats(args []string) int {
 		if *asJSON {
 			s := computeStats(nil, time.Now())
 			attachStatsErrors(&s, subErrs)
-			emitStatsJSON(s)
+			emitStatsJSON(s, *compact)
 		} else {
 			fmt.Fprintln(os.Stderr, "wyk stats:", joinRepoErrors(subErrorsToRepoErrors(subErrs)))
 		}
@@ -92,7 +92,7 @@ func runStats(args []string) int {
 	// snapshot rather than the whole registry.
 	attachStatsErrors(&s, subErrs)
 	if *asJSON {
-		emitStatsJSON(s)
+		emitStatsJSON(s, *compact)
 		return 0
 	}
 	renderStatsText(s, len(subs))
@@ -109,10 +109,8 @@ func attachStatsErrors(s *Stats, subErrs []subError) {
 }
 
 // emitStatsJSON writes the stats object to stdout.
-func emitStatsJSON(s Stats) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(s); err != nil {
+func emitStatsJSON(s Stats, compact bool) {
+	if err := emitJSON(os.Stdout, s, compact); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk stats: encode:", err)
 	}
 }

@@ -156,6 +156,7 @@ func TestEmitInboxJSON_EnvelopeShapeWithErrors(t *testing.T) {
 		emitInboxJSON(
 			[]beads.Issue{{ID: "a-1", Title: "one"}},
 			[]subError{{repo: "broken", err: errors.New("timed out")}},
+			false,
 		)
 	})
 	var res inboxResult
@@ -174,7 +175,7 @@ func TestEmitInboxJSON_TotalFailureEmitsParseableEnvelope(t *testing.T) {
 	// Total failure (nil issues) must still emit issues:[] + errors so
 	// an agent gets parseable output instead of nothing.
 	out := captureStdout(t, func() {
-		emitInboxJSON(nil, []subError{{repo: "a", err: errors.New("x")}})
+		emitInboxJSON(nil, []subError{{repo: "a", err: errors.New("x")}}, false)
 	})
 	if !strings.Contains(out, `"issues": []`) || !strings.Contains(out, `"errors"`) {
 		t.Errorf("total-failure envelope should be parseable with issues:[] + errors; got %s", out)

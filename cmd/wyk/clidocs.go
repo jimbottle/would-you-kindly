@@ -64,10 +64,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "inbox",
 		Summary: "Agent inbox: issues filed with `src:agent` that a human has bounced back.",
-		Usage:   "wyk inbox [-C <dir>] [-json] [-slim] [-priority N] [-repo name] [-limit N]",
+		Usage:   "wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
 			{Name: "-json", Default: "false", Description: "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated)"},
+			{Name: "-compact", Default: "false", Description: "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)"},
 			{Name: "-slim", Default: "false", Description: "drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata)"},
 			{Name: "-priority", Default: "-1", Description: "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)"},
 			{Name: "-repo", Default: "", Description: "restrict the inbox to the registered repo with this name (mutually exclusive with -C)"},
@@ -77,10 +78,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "stats",
 		Summary: "Aggregate snapshot across registered repos: counts by status, human-flagged splits, time-to-close.",
-		Usage:   "wyk stats [-C <dir>] [-json] [-repo name]",
+		Usage:   "wyk stats [-C <dir>] [-json] [-compact] [-repo name]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
 			{Name: "-json", Default: "false", Description: "emit a JSON object suitable for scripting"},
+			{Name: "-compact", Default: "false", Description: "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)"},
 			{Name: "-repo", Default: "", Description: "restrict the rollup to the registered repo with this name (mutually exclusive with -C)"},
 		},
 	},
@@ -125,9 +127,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "dashboard",
 		Summary: "Per-repo rollup of open / human-flagged / recently-closed counts.",
-		Usage:   "wyk dashboard [-json] [-days N] [-repo name] [-priority N]",
+		Usage:   "wyk dashboard [-json] [-compact] [-days N] [-repo name] [-priority N]",
 		Flags: []cliFlag{
 			{Name: "-json", Default: "false", Description: "emit a structured JSON object instead of the table"},
+			{Name: "-compact", Default: "false", Description: "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)"},
 			{Name: "-days", Default: "7", Description: "window for the closed-recently column (default 7)"},
 			{Name: "-repo", Default: "", Description: "restrict the rollup to the registered repo with this name (empty = every registered repo)"},
 			{Name: "-priority", Default: "-1", Description: "drop issues below priority N before tallying counts (lower number = higher priority; -1 disables — does NOT hide empty repo rows)"},
@@ -158,10 +161,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "activity",
 		Summary: "Recently-touched issues across registered repos (chronological merged stream).",
-		Usage:   "wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all] [-limit N]",
+		Usage:   "wyk activity [-since 24h] [-json] [-compact] [-priority N] [-repo name] [-status open|closed|all] [-limit N]",
 		Flags: []cliFlag{
 			{Name: "-since", Default: "24h", Description: "show issues updated within this duration (e.g. 1h, 24h, 168h)"},
 			{Name: "-json", Default: "false", Description: "emit a structured JSON array instead of the table"},
+			{Name: "-compact", Default: "false", Description: "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)"},
 			{Name: "-priority", Default: "-1", Description: "cap rows at priority N or higher (lower number = higher priority; -1 disables)"},
 			{Name: "-repo", Default: "", Description: "restrict the stream to the registered repo with this name (empty = every registered repo)"},
 			{Name: "-status", Default: "all", Description: "filter rows by status: open / closed / all"},
@@ -171,10 +175,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "depgraph",
 		Summary: "Cross-repo dependency graph between bd issues: text tree (default), Graphviz DOT, or {nodes,edges} JSON.",
-		Usage:   "wyk depgraph [-dot | -json] [-repo name] [-priority N] [-closed]",
+		Usage:   "wyk depgraph [-dot | -json] [-compact] [-repo name] [-priority N] [-closed]",
 		Flags: []cliFlag{
 			{Name: "-dot", Default: "false", Description: "emit Graphviz DOT (pipe into `dot -Tsvg`)"},
 			{Name: "-json", Default: "false", Description: "emit {nodes, edges} JSON for tooling consumers"},
+			{Name: "-compact", Default: "false", Description: "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)"},
 			{Name: "-repo", Default: "", Description: "restrict to the registered repo with this name (empty = full registry)"},
 			{Name: "-priority", Default: "-1", Description: "only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out"},
 			{Name: "-closed", Default: "false", Description: "include closed issues (default omits them)"},

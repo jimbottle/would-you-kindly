@@ -104,7 +104,7 @@ func TestEmitDashboardJSON_RoundTrips(t *testing.T) {
 	rows := []dashboardRow{{Name: "alpha", Open: 5, Human: 1, ClosedInWindow: 2}}
 	cutoff := time.Date(2026, 5, 22, 0, 0, 0, 0, time.UTC)
 	var buf bytes.Buffer
-	emitDashboardJSON(&buf, rows, 7, cutoff)
+	emitDashboardJSON(&buf, rows, 7, cutoff, false)
 
 	var got struct {
 		WindowDays   int            `json:"window_days"`

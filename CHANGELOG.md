@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`-compact` on every agent `-json` surface** — `wyk inbox`,
+  `stats`, `dashboard`, `activity`, and `depgraph` join `export` in
+  accepting `-compact`, which emits non-indented JSON (indentation is
+  pure overhead for an LLM). One shared encoder (`emitJSON`) now backs
+  every `-json` path. Default stays pretty; pass `-json -compact` (and
+  `-slim`) for the leanest agent output.
+
 - **`-slim` for `wyk export` and `wyk inbox`** — drops the heavy
   `description`/`notes` bodies (and timestamps/`created_by`) from each
   issue, keeping the lightweight metadata an LLM needs to scan a

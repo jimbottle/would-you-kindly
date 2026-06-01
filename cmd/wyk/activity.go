@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -32,6 +31,7 @@ func runActivity(args []string) int {
 	fs := flag.NewFlagSet("activity", flag.ContinueOnError)
 	since := fs.Duration("since", 24*time.Hour, "show issues updated within this duration (e.g. 1h, 24h, 168h)")
 	asJSON := fs.Bool("json", false, "emit a structured JSON array instead of the table")
+	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	// -priority mirrors wyk inbox: lower number = more urgent in
 	// bd's convention. -1 (default) disables the cap. A user
 	// passing -priority 1 sees recent activity on P0 + P1 only.
@@ -86,7 +86,7 @@ func runActivity(args []string) int {
 	events, repoErrs := collectActivity(reg, cutoff, *maxPriority, *status, defaultActivityClient)
 	events = limitActivityEvents(events, *limit)
 	if *asJSON {
-		emitActivityJSON(os.Stdout, events, cutoff, repoErrs)
+		emitActivityJSON(os.Stdout, events, cutoff, repoErrs, *compact)
 	} else {
 		emitActivityTable(os.Stdout, events, cutoff)
 		if len(repoErrs) > 0 {
@@ -219,15 +219,13 @@ func emitActivityTable(w io.Writer, events []activityEvent, cutoff time.Time) {
 
 // emitActivityJSON prints the structured stream. Includes the
 // cutoff so a downstream consumer can stamp its data feed.
-func emitActivityJSON(w io.Writer, events []activityEvent, cutoff time.Time, repoErrs []repoError) {
+func emitActivityJSON(w io.Writer, events []activityEvent, cutoff time.Time, repoErrs []repoError, compact bool) {
 	out := struct {
 		Cutoff time.Time       `json:"cutoff"`
 		Events []activityEvent `json:"events"`
 		Errors []repoError     `json:"errors,omitempty"`
 	}{Cutoff: cutoff, Events: events, Errors: repoErrs}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(out)
+	_ = emitJSON(w, out, compact)
 }
 
 // joinRepoErrors renders []repoError as one "repo: err; …" line for

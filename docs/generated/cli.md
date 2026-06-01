@@ -47,13 +47,14 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <r
 Agent inbox: issues filed with `src:agent` that a human has bounced back.
 
 ```
-wyk inbox [-C <dir>] [-json] [-slim] [-priority N] [-repo name] [-limit N]
+wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
 | `-json` | `false` | emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated) |
+| `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-slim` | `false` | drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata) |
 | `-priority` | `-1` | cap the inbox at priority N or higher (lower number = higher priority; -1 disables) |
 | `-repo` | `_(empty)_` | restrict the inbox to the registered repo with this name (mutually exclusive with -C) |
@@ -64,13 +65,14 @@ wyk inbox [-C <dir>] [-json] [-slim] [-priority N] [-repo name] [-limit N]
 Aggregate snapshot across registered repos: counts by status, human-flagged splits, time-to-close.
 
 ```
-wyk stats [-C <dir>] [-json] [-repo name]
+wyk stats [-C <dir>] [-json] [-compact] [-repo name]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
 | `-json` | `false` | emit a JSON object suitable for scripting |
+| `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (mutually exclusive with -C) |
 
 ## `wyk doctor`
@@ -132,12 +134,13 @@ wyk update [-y] [-dry-run] [-channel any|stable]
 Per-repo rollup of open / human-flagged / recently-closed counts.
 
 ```
-wyk dashboard [-json] [-days N] [-repo name] [-priority N]
+wyk dashboard [-json] [-compact] [-days N] [-repo name] [-priority N]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-json` | `false` | emit a structured JSON object instead of the table |
+| `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-days` | `7` | window for the closed-recently column (default 7) |
 | `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (empty = every registered repo) |
 | `-priority` | `-1` | drop issues below priority N before tallying counts (lower number = higher priority; -1 disables — does NOT hide empty repo rows) |
@@ -177,13 +180,14 @@ wyk import [-file path] [-dry-run] [-repo name]
 Recently-touched issues across registered repos (chronological merged stream).
 
 ```
-wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all] [-limit N]
+wyk activity [-since 24h] [-json] [-compact] [-priority N] [-repo name] [-status open|closed|all] [-limit N]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-since` | `24h` | show issues updated within this duration (e.g. 1h, 24h, 168h) |
 | `-json` | `false` | emit a structured JSON array instead of the table |
+| `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-priority` | `-1` | cap rows at priority N or higher (lower number = higher priority; -1 disables) |
 | `-repo` | `_(empty)_` | restrict the stream to the registered repo with this name (empty = every registered repo) |
 | `-status` | `all` | filter rows by status: open / closed / all |
@@ -194,13 +198,14 @@ wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|close
 Cross-repo dependency graph between bd issues: text tree (default), Graphviz DOT, or {nodes,edges} JSON.
 
 ```
-wyk depgraph [-dot | -json] [-repo name] [-priority N] [-closed]
+wyk depgraph [-dot | -json] [-compact] [-repo name] [-priority N] [-closed]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-dot` | `false` | emit Graphviz DOT (pipe into `dot -Tsvg`) |
 | `-json` | `false` | emit {nodes, edges} JSON for tooling consumers |
+| `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-repo` | `_(empty)_` | restrict to the registered repo with this name (empty = full registry) |
 | `-priority` | `-1` | only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out |
 | `-closed` | `false` | include closed issues (default omits them) |
