@@ -198,7 +198,7 @@ wyk depgraph [-dot | -json] [-repo name] [-priority N] [-closed]
 | `-dot` | `false` | emit Graphviz DOT (pipe into `dot -Tsvg`) |
 | `-json` | `false` | emit {nodes, edges} JSON for tooling consumers |
 | `-repo` | `_(empty)_` | restrict to the registered repo with this name (empty = full registry) |
-| `-priority` | `-1` | only include issues at this priority or higher (0=critical; -1=all) |
+| `-priority` | `-1` | only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out |
 | `-closed` | `false` | include closed issues (default omits them) |
 
 ## `wyk help`

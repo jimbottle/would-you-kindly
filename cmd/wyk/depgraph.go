@@ -39,7 +39,7 @@ func runDepgraph(args []string) int {
 	asDOT := fs.Bool("dot", false, "emit Graphviz DOT (pipe into `dot -Tsvg`)")
 	asJSON := fs.Bool("json", false, "emit {nodes, edges} JSON for tooling consumers")
 	repoName := fs.String("repo", "", "restrict to the registered repo with this name (empty = full registry)")
-	priorityCap := fs.Int("priority", -1, "only include issues at this priority or higher (0=critical; -1=all)")
+	priorityCap := fs.Int("priority", -1, "only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out")
 	includeClosed := fs.Bool("closed", false, "include closed issues (default omits them)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
@@ -77,7 +77,7 @@ func runDepgraph(args []string) int {
 		reg = filtered
 	}
 
-	raw, hadError := collectDepGraph(reg, defaultDepGraphClient)
+	raw, hadError := collectDepGraph(reg, defaultDepGraphClient, *includeClosed, *priorityCap)
 	graph := finalizeDepGraph(raw, *includeClosed, *priorityCap)
 
 	switch {
@@ -145,16 +145,38 @@ type rawDepGraph struct {
 	edges []depGraphEdge
 }
 
+// nodeIncluded is the single inclusion predicate shared by the
+// collect-side ListDeps skip and the finalize-side filter so the two
+// can't drift. A node is in scope when it isn't closed (unless
+// includeClosed) and its priority is within the cap (priorityCap < 0
+// disables the cap; lower number = higher priority, so "within cap"
+// means priority <= cap).
+func nodeIncluded(status string, priority int, includeClosed bool, priorityCap int) bool {
+	if !includeClosed && status == "closed" {
+		return false
+	}
+	if priorityCap >= 0 && priority > priorityCap {
+		return false
+	}
+	return true
+}
+
 // collectDepGraph walks the registry sequentially (matching the
 // export/dashboard bd-subprocess policy — no parallel fan-out heating
 // the CPU). For each repo it pulls every issue via ListAll, then
 // resolves edges only for issues that actually have dependencies
-// (DependencyCount > 0), so a graph with few edges costs few `bd dep
-// list` calls. A dependency target not walked directly (a cross-repo
-// edge) is added as a node from the ListDeps payload so the edge
-// isn't dangling. Per-repo / per-issue errors are folded into the
-// hadError flag rather than aborting — a partial graph still emits.
-func collectDepGraph(reg *registry.Registry, mk func(dir string) depGraphClient) (rawDepGraph, bool) {
+// (DependencyCount > 0) AND would survive the active filters — an
+// out-of-scope issue's edges are all dropped in finalize anyway, so
+// shelling `bd dep list` for it would be pure waste. That keeps the
+// "few bd calls" win real on the default (omit-closed) path even in a
+// repo full of closed-but-once-blocked issues. A dependency target
+// not walked directly (a cross-repo edge) is added as a node from the
+// ListDeps payload so the edge isn't dangling. Per-repo / per-issue
+// errors are folded into the hadError flag rather than aborting — a
+// partial graph still emits. The same filters are re-applied in
+// finalize, which stays the correctness source of truth; this skip is
+// purely an optimization.
+func collectDepGraph(reg *registry.Registry, mk func(dir string) depGraphClient, includeClosed bool, priorityCap int) (rawDepGraph, bool) {
 	raw := rawDepGraph{nodes: map[string]depGraphNode{}}
 	hadError := false
 	for _, r := range reg.Repos {
@@ -181,6 +203,12 @@ func collectDepGraph(reg *registry.Registry, mk func(dir string) depGraphClient)
 		}
 		for _, iss := range issues {
 			if iss.DependencyCount == 0 {
+				continue
+			}
+			// Skip the dep lookup for an issue the filters will drop:
+			// every edge it sources gets pruned in finalize, so the
+			// call's results would be thrown away.
+			if !nodeIncluded(iss.Status, iss.Priority, includeClosed, priorityCap) {
 				continue
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -224,13 +252,7 @@ func finalizeDepGraph(raw rawDepGraph, includeClosed bool, priorityCap int) depG
 		if !ok {
 			return false
 		}
-		if !includeClosed && n.Status == "closed" {
-			return false
-		}
-		if priorityCap >= 0 && n.Priority > priorityCap {
-			return false
-		}
-		return true
+		return nodeIncluded(n.Status, n.Priority, includeClosed, priorityCap)
 	}
 	var edges []depGraphEdge
 	connected := map[string]bool{}
@@ -330,7 +352,8 @@ func emitDepTree(w io.Writer, g depGraph) {
 		kids := childrenOf[k]
 		sort.Slice(kids, func(i, j int) bool { return less(kids[i], kids[j]) })
 	}
-	printed := map[string]bool{}
+	printed := map[string]bool{}  // emitted anywhere (gates fallback-root selection)
+	expanded := map[string]bool{} // subtree already printed in full once
 	var print func(id string, depth int, onPath map[string]bool)
 	print = func(id string, depth int, onPath map[string]bool) {
 		printed[id] = true
@@ -339,12 +362,22 @@ func emitDepTree(w io.Writer, g depGraph) {
 			fmt.Fprintf(w, "%s%s  (cycle)\n", indent, depNodeLabel(nodeByID[id]))
 			return
 		}
+		// A node reachable from multiple parents (a diamond/DAG) would
+		// otherwise have its whole subtree re-printed under each. Show
+		// it once in full; subsequent hits get a "(see above)" pointer
+		// and aren't re-descended, bounding output on dense graphs —
+		// mirrors the "(cycle)" marker.
+		if expanded[id] {
+			fmt.Fprintf(w, "%s%s  (see above)\n", indent, depNodeLabel(nodeByID[id]))
+			return
+		}
 		fmt.Fprintf(w, "%s%s\n", indent, depNodeLabel(nodeByID[id]))
 		onPath[id] = true
 		for _, child := range childrenOf[id] {
 			print(child, depth+1, onPath)
 		}
 		delete(onPath, id)
+		expanded[id] = true
 	}
 	// g.Nodes is already (priority, id)-sorted, so iterating it yields
 	// roots in the right order without a second sort.

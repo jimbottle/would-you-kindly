@@ -16,16 +16,18 @@ import (
 // canned issue list and ListDeps returns canned edges per ID. Either
 // call can be made to error to exercise the error-folding path.
 type stubDepGraphClient struct {
-	issues  []beads.Issue
-	listErr error
-	deps    map[string][]beads.Issue
-	depErr  error
+	issues   []beads.Issue
+	listErr  error
+	deps     map[string][]beads.Issue
+	depErr   error
+	depCalls []string // IDs ListDeps was invoked for, in order
 }
 
 func (s *stubDepGraphClient) ListAll(_ context.Context) ([]beads.Issue, error) {
 	return s.issues, s.listErr
 }
 func (s *stubDepGraphClient) ListDeps(_ context.Context, id string) ([]beads.Issue, error) {
+	s.depCalls = append(s.depCalls, id)
 	if s.depErr != nil {
 		return nil, s.depErr
 	}
@@ -56,7 +58,7 @@ func TestCollectDepGraph_BuildsNodesAndEdges(t *testing.T) {
 			"a-2": {{ID: "a-1", Title: "root", Status: "open"}},
 		},
 	}
-	raw, hadError := collectDepGraph(reg, func(_ string) depGraphClient { return stub })
+	raw, hadError := collectDepGraph(reg, func(_ string) depGraphClient { return stub }, false, -1)
 	if hadError {
 		t.Errorf("clean walk should not flag hadError")
 	}
@@ -80,7 +82,7 @@ func TestCollectDepGraph_AddsCrossRepoTargetNode(t *testing.T) {
 		issues: []beads.Issue{{ID: "a-2", Title: "leaf", Status: "open", DependencyCount: 1}},
 		deps:   map[string][]beads.Issue{"a-2": {{ID: "b-9", Title: "foreign", Status: "open"}}},
 	}
-	raw, _ := collectDepGraph(reg, func(_ string) depGraphClient { return stub })
+	raw, _ := collectDepGraph(reg, func(_ string) depGraphClient { return stub }, false, -1)
 	n, ok := raw.nodes["b-9"]
 	if !ok {
 		t.Fatal("cross-repo dependency target b-9 should be added as a node")
@@ -99,7 +101,7 @@ func TestCollectDepGraph_FoldsErrors(t *testing.T) {
 		"/tmp/ok":     &stubDepGraphClient{issues: []beads.Issue{{ID: "a-1", Status: "open"}}},
 		"/tmp/broken": &stubDepGraphClient{listErr: errors.New("boom")},
 	}
-	raw, hadError := collectDepGraph(reg, func(dir string) depGraphClient { return stubs[dir] })
+	raw, hadError := collectDepGraph(reg, func(dir string) depGraphClient { return stubs[dir] }, false, -1)
 	if !hadError {
 		t.Error("a failing repo should set hadError")
 	}
@@ -229,6 +231,73 @@ func TestEmitDepTree_CycleTerminates(t *testing.T) {
 	emitDepTree(&buf, finalizeDepGraph(raw, false, -1))
 	if !strings.Contains(buf.String(), "(cycle)") {
 		t.Errorf("a cyclic graph should mark the back-edge with (cycle); got:\n%s", buf.String())
+	}
+}
+
+func TestCollectDepGraph_SkipsListDepsForFilteredIssues(t *testing.T) {
+	// A closed issue with dependencies must NOT trigger a `bd dep
+	// list` on the default (omit-closed) path — its edges would be
+	// discarded in finalize anyway. The open issue still gets resolved.
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "wyk", Path: "/tmp/wyk"}}}
+	stub := &stubDepGraphClient{
+		issues: []beads.Issue{
+			{ID: "a-open", Status: "open", DependencyCount: 1},
+			{ID: "a-closed", Status: "closed", DependencyCount: 1},
+		},
+		deps: map[string][]beads.Issue{
+			"a-open":   {{ID: "a-dep", Status: "open"}},
+			"a-closed": {{ID: "a-dep", Status: "open"}},
+		},
+	}
+	collectDepGraph(reg, func(_ string) depGraphClient { return stub }, false, -1)
+	for _, id := range stub.depCalls {
+		if id == "a-closed" {
+			t.Error("ListDeps should be skipped for a closed issue when -closed is off")
+		}
+	}
+	if len(stub.depCalls) != 1 || stub.depCalls[0] != "a-open" {
+		t.Errorf("expected exactly one dep lookup (a-open); got %v", stub.depCalls)
+	}
+
+	// With includeClosed, the closed issue IS resolved.
+	stub.depCalls = nil
+	collectDepGraph(reg, func(_ string) depGraphClient { return stub }, true, -1)
+	if len(stub.depCalls) != 2 {
+		t.Errorf("-closed should resolve both issues; got %v", stub.depCalls)
+	}
+}
+
+func TestEmitDepTree_DeduplicatesSharedSubtree(t *testing.T) {
+	// Diamond: a-4 depends on both a-2 and a-3, which both depend on
+	// a-1. a-4's subtree must print in full once and as "(see above)"
+	// the second time, not duplicate.
+	raw := rawDepGraph{
+		nodes: map[string]depGraphNode{
+			"a-1": {ID: "a-1", Title: "root", Status: "open", Priority: 0},
+			"a-2": {ID: "a-2", Title: "mid-a", Status: "open", Priority: 1},
+			"a-3": {ID: "a-3", Title: "mid-b", Status: "open", Priority: 1},
+			"a-4": {ID: "a-4", Title: "leaf", Status: "open", Priority: 2},
+		},
+		edges: []depGraphEdge{
+			{From: "a-2", To: "a-1"},
+			{From: "a-3", To: "a-1"},
+			{From: "a-4", To: "a-2"},
+			{From: "a-4", To: "a-3"},
+		},
+	}
+	var buf bytes.Buffer
+	emitDepTree(&buf, finalizeDepGraph(raw, false, -1))
+	out := buf.String()
+	if !strings.Contains(out, "(see above)") {
+		t.Errorf("a shared subtree should be collapsed with (see above); got:\n%s", out)
+	}
+	if n := strings.Count(out, "(see above)"); n != 1 {
+		t.Errorf("expected exactly one (see above) marker; got %d:\n%s", n, out)
+	}
+	// a-4 appears twice as a line (once expanded, once see-above) but
+	// must not recurse further the second time — total a-4 lines == 2.
+	if n := strings.Count(out, "a-4 "); n != 2 {
+		t.Errorf("a-4 should appear exactly twice (once full, once see-above); got %d:\n%s", n, out)
 	}
 }
 

@@ -172,7 +172,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-dot", Default: "false", Description: "emit Graphviz DOT (pipe into `dot -Tsvg`)"},
 			{Name: "-json", Default: "false", Description: "emit {nodes, edges} JSON for tooling consumers"},
 			{Name: "-repo", Default: "", Description: "restrict to the registered repo with this name (empty = full registry)"},
-			{Name: "-priority", Default: "-1", Description: "only include issues at this priority or higher (0=critical; -1=all)"},
+			{Name: "-priority", Default: "-1", Description: "only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out"},
 			{Name: "-closed", Default: "false", Description: "include closed issues (default omits them)"},
 		},
 	},
