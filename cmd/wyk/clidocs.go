@@ -165,6 +165,18 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		},
 	},
 	{
+		Name:    "depgraph",
+		Summary: "Cross-repo dependency graph between bd issues: text tree (default), Graphviz DOT, or {nodes,edges} JSON.",
+		Usage:   "wyk depgraph [-dot | -json] [-repo name] [-priority N] [-closed]",
+		Flags: []cliFlag{
+			{Name: "-dot", Default: "false", Description: "emit Graphviz DOT (pipe into `dot -Tsvg`)"},
+			{Name: "-json", Default: "false", Description: "emit {nodes, edges} JSON for tooling consumers"},
+			{Name: "-repo", Default: "", Description: "restrict to the registered repo with this name (empty = full registry)"},
+			{Name: "-priority", Default: "-1", Description: "only include issues at this priority or higher (0=critical; -1=all)"},
+			{Name: "-closed", Default: "false", Description: "include closed issues (default omits them)"},
+		},
+	},
+	{
 		Name:    "help",
 		Summary: "Pointer at the in-TUI `?` overlay; opt-in flags emit markdown references for the docs site.",
 		Usage:   "wyk help [--markdown] [--cli-markdown]",

@@ -97,6 +97,8 @@ func main() {
 			os.Exit(runImport(os.Args[2:]))
 		case "activity":
 			os.Exit(runActivity(os.Args[2:]))
+		case "depgraph":
+			os.Exit(runDepgraph(os.Args[2:]))
 		case "help":
 			os.Exit(runHelp(os.Args[2:]))
 		case "completion":
@@ -620,6 +622,7 @@ Subcommands:
   export       JSON dump of every registered repo's full issue list + ready IDs
   import       restore from a 'wyk export' dump (-file path, -dry-run)
   activity     recently-touched issues across registered repos (-since 24h, -json)
+  depgraph     cross-repo dependency graph as a text tree, -dot, or -json
   help         pointer to the in-TUI overlay; --markdown emits a keymap reference
   completion   emit bash/zsh/fish completion script (run: wyk completion <shell>)
   registry     list / remove / prune registered workspaces

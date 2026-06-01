@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   top, never crashes). An explicit `-preset` flag still wins over the
   saved view. A missing file restores nothing; a corrupt one logs and
   starts fresh — never fatal.
+- **`wyk depgraph`** — new subcommand that walks the registered
+  workspaces and emits the dependency edges between bd issues as a
+  text tree (roots first, dependents nested), Graphviz DOT (`-dot`,
+  pipe into `dot -Tsvg`), or `{nodes, edges}` JSON (`-json`). Filters:
+  `-repo name`, `-priority N` (cap), `-closed` (default omits closed).
+  Cross-repo dependency targets are included as nodes; cycles are
+  detected and marked rather than looping. Backs a future
+  "Dependency graph" page on the docs site that updates from CI.
 
 ## [0.4.1] — 2026-05-31
 

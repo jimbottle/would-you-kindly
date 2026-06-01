@@ -185,6 +185,22 @@ wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|close
 | `-status` | `all` | filter rows by status: open / closed / all |
 | `-limit` | `-1` | cap the stream at N rows (after every other filter; -1 disables) |
 
+## `wyk depgraph`
+
+Cross-repo dependency graph between bd issues: text tree (default), Graphviz DOT, or {nodes,edges} JSON.
+
+```
+wyk depgraph [-dot | -json] [-repo name] [-priority N] [-closed]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-dot` | `false` | emit Graphviz DOT (pipe into `dot -Tsvg`) |
+| `-json` | `false` | emit {nodes, edges} JSON for tooling consumers |
+| `-repo` | `_(empty)_` | restrict to the registered repo with this name (empty = full registry) |
+| `-priority` | `-1` | only include issues at this priority or higher (0=critical; -1=all) |
+| `-closed` | `false` | include closed issues (default omits them) |
+
 ## `wyk help`
 
 Pointer at the in-TUI `?` overlay; opt-in flags emit markdown references for the docs site.
