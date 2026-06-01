@@ -5858,3 +5858,31 @@ func TestStatusForAction_OmitsReopen(t *testing.T) {
 		t.Errorf("defer should map to deferred; got %q,%v", st, ok)
 	}
 }
+
+func TestDetailMsg_PreservesBlockedByHumanBadge(t *testing.T) {
+	// Regression: opening a HUMAN-BLOCK issue then having the Detail
+	// (bd show) enrichment land must NOT flip the badge to AGENT. The
+	// enriched issue from bd show has no BlockedByHuman (that flag is
+	// computed only in Fetch's dep-scan), so the handler must carry it
+	// forward from the opened row.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m.mode = modeDetail
+	m.detailIssue = beads.Issue{ID: "a-1", Title: "t", Labels: []string{"src:agent"}, BlockedByHuman: true}
+
+	// Enriched issue (same ID, fuller body) WITHOUT BlockedByHuman.
+	enriched := beads.Issue{ID: "a-1", Title: "t", Description: "full body", Labels: []string{"src:agent"}}
+	model, _ := m.Update(detailMsg{issue: enriched})
+	m = model.(Model)
+
+	if !m.detailIssue.BlockedByHuman {
+		t.Error("BlockedByHuman must survive Detail enrichment so the badge stays HUMAN-BLOCK")
+	}
+	if m.detailIssue.Description != "full body" {
+		t.Error("the enriched body should still be adopted")
+	}
+	// And the badge itself must render HUMAN-BLOCK, not AGENT.
+	if got := responsibilityBadgeFor(m.detailIssue); !strings.Contains(got, "HUMAN-BLOCK") {
+		t.Errorf("badge should be HUMAN-BLOCK; got %q", got)
+	}
+}

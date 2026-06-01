@@ -1160,7 +1160,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// is still looking at the same issue — otherwise the
 		// notes would attach to the wrong row.
 		if m.mode == modeDetail && msg.err == nil && msg.issue.ID == m.detailIssue.ID {
-			m.detailIssue = msg.issue
+			// Detail() shells `bd show`, which does NOT run the
+			// HUMAN-BLOCK dep-scan that Fetch does — so the enriched
+			// issue has BlockedByHuman=false. Adopting it verbatim made
+			// the header badge flicker HUMAN-BLOCK → AGENT the instant
+			// the enrichment landed. Carry the flag forward from the
+			// row we opened (which Fetch already stamped) so the badge
+			// stays stable and correct.
+			enriched := msg.issue
+			enriched.BlockedByHuman = m.detailIssue.BlockedByHuman
+			m.detailIssue = enriched
 			// Re-seed the viewport now that notes have arrived.
 			// Preserve scroll offset: a user who'd already paged
 			// to line 40 shouldn't be yanked back to the top.
