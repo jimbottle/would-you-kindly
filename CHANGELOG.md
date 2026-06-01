@@ -32,7 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wyk/bd CLI rather than restating conventions. `list` shows install
   state, `print <name>` emits one to stdout, `install`/`uninstall` are
   idempotent with `-dry-run`/`-y`; `install -force` overwrites a
-  locally-modified copy (left untouched by default).
+  locally-modified copy (left untouched by default). See
+  [`docs/SKILLS.md`](docs/SKILLS.md) for the full reference. A drift
+  test keeps the embedded skills honest — every `wyk <cmd>` a skill
+  names must be a real shipped subcommand, and each skill's frontmatter
+  `name:` must match its directory.
 
 - **`-compact` on every agent `-json` surface** — `wyk inbox`,
   `stats`, `dashboard`, `activity`, and `depgraph` join `export` in

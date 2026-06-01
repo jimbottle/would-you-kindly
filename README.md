@@ -218,6 +218,13 @@ skill is explicit about what handoff is NOT (clarifying questions,
 tedious-but-doable work, quick reversible edits) — handoff is for
 "I know what to do but genuinely cannot do it."
 
+Beyond that one repo-local skill, `wyk` ships an installable family of
+agent skills (`wyk`, `wyk-handoff`, `wyk-project-review`) embedded in the
+binary — install them into `~/.claude/skills` with `wyk skills install`
+so any Claude session loads them on demand. See
+[`docs/SKILLS.md`](docs/SKILLS.md) for the full list, the install-state
+model, and how they stay in sync with the CLI.
+
 ### Auto-closing issues on commit (`wyk init`)
 
 ```bash
