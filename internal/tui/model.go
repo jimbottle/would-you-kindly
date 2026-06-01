@@ -1257,41 +1257,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.MouseMsg:
-		// Mouse routes by mode:
-		// - modeList: wheel scrolls the cursor; left-click sets it
-		// - modeOutput: wheel scrolls the :bd output viewport so
-		//   the overlay's footer hint matches behaviour
-		// - modeDetail: mouse capture is DISABLED on entry (see
-		//   the Open case) so the host terminal handles native
-		//   click-drag text selection; wheel-scroll inside the
-		//   detail view is intentionally given up in exchange,
-		//   the user navigates with j/k/PgUp/PgDn. No MouseMsg
-		//   should reach this handler while in detail mode, but
-		//   we keep the case explicit so the routing table stays
-		//   self-documenting and a future re-enable wires back to
-		//   the right place in one edit.
-		// - other modes (help, modals, prompts): keyboard-focused,
-		//   mouse is dropped
-		switch m.mode {
-		case modeList:
-			return m.handleMouse(msg)
-		case modeDetail:
-			// Defensive: mouse is disabled on entry; if a stray
-			// MouseMsg does land here (race between DisableMouse
-			// and the next paint), forward to the viewport so the
-			// behavior at least isn't a hard drop.
-			var cmd tea.Cmd
-			m.detailVP, cmd = m.detailVP.Update(msg)
-			return m, cmd
-		case modeOutput:
-			var cmd tea.Cmd
-			m.outputVP, cmd = m.outputVP.Update(msg)
-			return m, cmd
-		default:
-			return m, nil
-		}
-
 	case tea.KeyMsg:
 		// Any keystroke processed in modeList — including the ones
 		// that open the filter or note prompts — clears the previous
@@ -1391,13 +1356,6 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// position doesn't bleed in.
 			m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
 			m.detailVP.GotoTop()
-			// Drop mouse capture while in detail mode so the host
-			// terminal (VS Code, Terminal.app, iTerm) handles
-			// click-drag as native text selection. Without this,
-			// tea.WithMouseCellMotion eats the click events and
-			// the body text is unselectable. Re-enabled on return
-			// to list — see updateDetail's Back/Open case.
-			disableMouse := tea.DisableMouse
 			// Lazily resolve this issue's dependency + dependent edges
 			// for the detail view's bottom sections. nil when no
 			// DepLister is wired or both directions are already cached
@@ -1406,12 +1364,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			depsCmd := m.resolveDetailDeps(m.detailIssue.ID)
 			if d, ok := m.src.(Detailer); ok {
 				target := m.detailIssue
-				return m, tea.Batch(disableMouse, depsCmd, func() tea.Msg {
+				return m, tea.Batch(depsCmd, func() tea.Msg {
 					full, err := d.Detail(context.Background(), target)
 					return detailMsg{issue: full, err: err}
 				})
 			}
-			return m, tea.Batch(disableMouse, depsCmd)
+			return m, depsCmd
 		}
 	case keyHit(msg, m.keys.Filter):
 		m.mode = modeFilter
@@ -1493,83 +1451,6 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openHelp()
 	}
 	return m, nil
-}
-
-// handleMouse interprets a tea.MouseMsg against the list view:
-// wheel up/down moves the cursor (like k/j); left-click lands the
-// cursor on the targeted row. Out-of-bounds clicks (header, chip
-// strip, banners) are silently ignored.
-func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	// MouseAction is only meaningful for press/release on a button.
-	// We only act on the press; releasing a button or a wheel-tick
-	// is enough motion to know what the user wanted.
-	if msg.Action == tea.MouseActionRelease {
-		return m, nil
-	}
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		if m.cursor > 0 {
-			m.cursor--
-			m.ensureCursorVisible()
-		}
-		return m, nil
-	case tea.MouseButtonWheelDown:
-		if m.cursor < len(m.visible)-1 {
-			m.cursor++
-			m.ensureCursorVisible()
-		}
-		return m, nil
-	case tea.MouseButtonLeft:
-		// Compute the cell-row offset from the top of the table
-		// body, then translate to a m.visible index via the
-		// current scroll offset. Clicks above the body
-		// (title/setupHint/chip/header) or past the last rendered
-		// row produce target out-of-range → no-op. We also clamp
-		// to the actual rendered window height so a click on the
-		// "↑ N more above"/"↓ N more below" hint lines (which sit
-		// just past the row window) doesn't get mapped to the
-		// next row out-of-window — that produced a surprising
-		// downward jump.
-		rowY := msg.Y - m.rowsStartY()
-		if rowY < 0 {
-			return m, nil
-		}
-		visibleRows := len(m.visible) - m.scroll
-		if h := m.bodyHeight(); h > 0 && visibleRows > h {
-			visibleRows = h
-		}
-		if rowY >= visibleRows {
-			return m, nil
-		}
-		target := m.scroll + rowY
-		if target < 0 || target >= len(m.visible) {
-			return m, nil
-		}
-		m.cursor = target
-		m.ensureCursorVisible()
-		return m, nil
-	}
-	return m, nil
-}
-
-// rowsStartY returns the Y-coordinate (zero-indexed from the top
-// of the rendered output) at which the first table row lands.
-// Mirrors the viewList chrome ordering — bumping any conditional
-// chrome there means bumping it here too. We use this to map a
-// click's msg.Y back to a row index.
-func (m Model) rowsStartY() int {
-	y := 1 // title line
-	if m.setupHint != "" {
-		// setupHint can wrap; count newlines + 1 to match the
-		// vertical real estate it actually consumes.
-		y += 1 + strings.Count(m.setupHint, "\n")
-	}
-	if m.preset != filter.PresetAll || m.priorityCap >= 0 || m.sortBy != sortNone || m.showClosed {
-		y++ // chip strip
-	}
-	y++ // blank line between header chrome and table header
-	y++ // table header
-	return y
 }
 
 // jumpToHuman moves the cursor to the next (dir=+1) or previous
@@ -2297,12 +2178,12 @@ func (m Model) openDetailLink() (tea.Model, tea.Cmd) {
 
 // detailBackOrPop is the Back/Esc behaviour: if we drilled into a link
 // it pops the stack back to the issue we came from; otherwise it leaves
-// the detail view for the list and re-enables mouse capture. The popped
-// issue is re-enriched (detailEnrichCmd) rather than trusted as-is —
-// if Enter had fired before the parent's original detailMsg landed, the
-// SLIM copy is what was pushed, and re-fetching restores its notes
-// (the detailMsg handler preserves scroll, so an already-enriched
-// parent just re-renders identically).
+// the detail view for the list. The popped issue is re-enriched
+// (detailEnrichCmd) rather than trusted as-is — if Enter had fired
+// before the parent's original detailMsg landed, the SLIM copy is what
+// was pushed, and re-fetching restores its notes (the detailMsg handler
+// preserves scroll, so an already-enriched parent just re-renders
+// identically).
 func (m Model) detailBackOrPop() (tea.Model, tea.Cmd) {
 	if n := len(m.detailStack); n > 0 {
 		prev := m.detailStack[n-1]
@@ -2316,10 +2197,7 @@ func (m Model) detailBackOrPop() (tea.Model, tea.Cmd) {
 	m.mode = modeList
 	m.detailLinkIdx = -1
 	m.detailStack = nil
-	// Re-enable mouse capture on return to list so row-clicks and
-	// wheel-scroll work again. Pair with the DisableMouse dispatched
-	// when entering modeDetail.
-	return m, tea.EnableMouseCellMotion
+	return m, nil
 }
 
 // handleYankDetailBody yanks the current detail issue's
@@ -4351,7 +4229,8 @@ func (m Model) viewHelp() string {
 	b.WriteString(helpStyle.Render("  IDs in the table are shown without the repeated workspace prefix\n"))
 	b.WriteString(helpStyle.Render("  (e.g. \"ma5.2.1\" stands for \"" + exampleFullID(m) + "ma5.2.1\").\n"))
 	b.WriteString(helpStyle.Render("  Press ⏎ to expand a row and see the full ID in the detail view.\n"))
-	b.WriteString(helpStyle.Render("  Mouse: click a row to set the cursor; wheel scrolls up/down.\n"))
+	b.WriteString(helpStyle.Render("  Selection: drag with the mouse to select and copy any text on\n"))
+	b.WriteString(helpStyle.Render("  screen (no mouse navigation — move with j/k, PgUp/PgDn, g/G).\n"))
 	b.WriteString(helpStyle.Render("  Yank (y) uses OSC 52 so the copy reaches your local clipboard\n"))
 	b.WriteString(helpStyle.Render("  even over SSH; in tmux, enable `set -g allow-passthrough on`.\n"))
 	b.WriteString("\n")

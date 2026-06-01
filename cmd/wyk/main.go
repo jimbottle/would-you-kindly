@@ -247,11 +247,13 @@ func main() {
 		cache, _ := tui.LoadCache(cachePath)
 		model = model.WithCacheSnapshot(cache, cachePath)
 	}
-	// WithMouseCellMotion lets the model receive tea.MouseMsg with
-	// cell-level coordinates so a click on a row sets the cursor
-	// and the scroll wheel moves up/down. Cell motion (not all
-	// motion) is enough — we don't track drags or hovers.
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// No mouse capture: with mouse reporting off, the host terminal
+	// handles native click-drag text selection in every view, so users
+	// can select and copy the list columns (and detail body). The cost
+	// is wheel-scroll / click-to-set-cursor — navigation is keyboard
+	// only (j/k, PgUp/PgDn, g/G). Selecting text over the CLI was the
+	// repeated ask; mouse nav had keyboard equivalents.
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	// Kick a best-effort live check in the background. We don't
 	// post the result back into the running TUI — the snapshot
 	// lands on disk and the NEXT wyk invocation reads it. This
