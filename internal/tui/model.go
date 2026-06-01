@@ -1893,6 +1893,16 @@ func (m Model) handleBulkWriteResult(msg bulkWriteMsg) (tea.Model, tea.Cmd) {
 	default:
 		m.setStatus(fmt.Sprintf("%s %d of %d (%d failed: %s)", verb, succeeded, msg.total, len(msg.failed), msg.errs[0]))
 	}
+	// Mirror the single-target path: a bulk status change (close/defer)
+	// pushes the succeeded issues out of the open-only list, so the
+	// post-write refetch's refreshDepCachesFromList can't correct their
+	// cached (status). Patch each one directly so a multi-select close
+	// doesn't leave stale dep rows (would-you-kindly-1ym).
+	if st, ok := statusForAction(msg.action); ok {
+		for _, t := range msg.succeeded {
+			m.patchDepCacheStatus(t.ID, st)
+		}
+	}
 	return m, tea.Batch(m.fetchCmd(), flashClearCmd(m.statusGen))
 }
 
@@ -2010,15 +2020,17 @@ func runWriteWithIssue(action string, issue beads.Issue, fn func(ctx context.Con
 // acceptable.
 func runBulkWrite(action string, targets []beads.Issue, fn func(ctx context.Context, i beads.Issue) error) tea.Cmd {
 	return func() tea.Msg {
-		var failed []beads.Issue
+		var failed, succeeded []beads.Issue
 		var errs []string
 		for _, t := range targets {
 			if err := fn(context.Background(), t); err != nil {
 				failed = append(failed, t)
 				errs = append(errs, fmt.Sprintf("%s: %v", t.ID, err))
+			} else {
+				succeeded = append(succeeded, t)
 			}
 		}
-		return bulkWriteMsg{action: action, total: len(targets), failed: failed, errs: errs}
+		return bulkWriteMsg{action: action, total: len(targets), failed: failed, succeeded: succeeded, errs: errs}
 	}
 }
 
@@ -2029,10 +2041,11 @@ func runBulkWrite(action string, targets []beads.Issue, fn func(ctx context.Cont
 // issues — not just IDs — lets handleBulkWriteResult restore marks
 // for failed rows so the user can retry without re-marking.
 type bulkWriteMsg struct {
-	action string
-	total  int
-	failed []beads.Issue
-	errs   []string
+	action    string
+	total     int
+	failed    []beads.Issue
+	succeeded []beads.Issue
+	errs      []string
 }
 
 // bulkVerbs maps each bulk-capable action to its past-tense form
@@ -2802,15 +2815,19 @@ func (m Model) maybeResolveDeps() tea.Cmd {
 // needs no semaphore.
 // statusForAction maps a status-changing mutator action to the status
 // the issue now carries, so cached dependency rows that mention it can
-// be patched in place rather than re-fetched. Returns ("", false) for
-// actions that leave status untouched (assign, label, note, edit, …),
-// which therefore need no cache surgery.
+// be patched in place rather than re-fetched. It covers ONLY actions
+// that move an issue OUT of the default open list — close→closed,
+// defer→deferred — where the post-write refetch can no longer see the
+// issue to correct it. Reopen is deliberately omitted: a reopened
+// issue stays in the open list, so refreshDepCachesFromList freshens
+// its cached rows on the next refetch with bd's ACTUAL new status
+// (which `bd reopen` doesn't guarantee is "open" — it can land in
+// in_progress), avoiding a guessed value. Returns ("", false) for
+// status-neutral actions (assign, label, note, edit, …) too.
 func statusForAction(action string) (string, bool) {
 	switch action {
 	case "close":
 		return "closed", true
-	case "reopen":
-		return "open", true
 	case "defer":
 		return "deferred", true
 	}

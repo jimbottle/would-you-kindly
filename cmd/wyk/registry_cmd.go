@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -251,6 +252,12 @@ func findDeadEntries(reg *registry.Registry) []deadEntry {
 // would probe behave consistently.
 const pruneProbeTimeout = 5 * time.Second
 
+// pruneProbeConcurrency bounds the `-broken` bd probe fan-out so a
+// registry full of slow/locked workspaces doesn't sum its timeouts,
+// while still capping the simultaneous cold-start load (the same lever
+// the TUI's fetch fan-out uses).
+const pruneProbeConcurrency = 4
+
 // defaultWorkspaceProbe is the production bd probe used by
 // `registry prune -broken`: it runs a trivial bd query in dir and
 // returns the resulting error (nil when the workspace responds). A
@@ -275,13 +282,36 @@ var defaultWorkspaceProbe = func(dir string) error {
 // repo the user still wants. This is why the bd probe is opt-in
 // (`-broken`) rather than folded into the default filesystem prune.
 func findBrokenWorkspaces(reg *registry.Registry, skip map[string]bool, probe func(dir string) error) []deadEntry {
-	var broken []deadEntry
-	for _, r := range reg.Repos {
+	// Probe concurrently (bounded) so several non-responsive entries
+	// each burning the full pruneProbeTimeout don't sum into an N×5s
+	// wall-clock — the worst case is one timeout, not the total.
+	// Mirrors the multi-repo fetch's bounded fan-out.
+	type result struct {
+		repo   registry.Repo
+		broken bool
+	}
+	results := make([]result, len(reg.Repos))
+	sem := make(chan struct{}, pruneProbeConcurrency)
+	var wg sync.WaitGroup
+	for i, r := range reg.Repos {
+		results[i].repo = r
 		if skip[r.Path] {
 			continue
 		}
-		if errors.Is(probe(r.Path), beads.ErrNoWorkspace) {
-			broken = append(broken, deadEntry{Repo: r, reason: "no bd workspace"})
+		wg.Add(1)
+		go func(i int, r registry.Repo) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i].broken = errors.Is(probe(r.Path), beads.ErrNoWorkspace)
+		}(i, r)
+	}
+	wg.Wait()
+	// Collect in registry order so output is deterministic.
+	var broken []deadEntry
+	for _, res := range results {
+		if res.broken {
+			broken = append(broken, deadEntry{Repo: res.repo, reason: "no bd workspace"})
 		}
 	}
 	return broken

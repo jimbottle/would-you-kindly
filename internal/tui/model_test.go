@@ -5802,3 +5802,59 @@ func TestRefreshDepCachesFromList_FreshensOnFetch(t *testing.T) {
 		t.Errorf("cached dep row not freshened from list: got status=%q title=%q", row.Status, row.Title)
 	}
 }
+
+func TestBulkClose_PatchesDepCacheStatus(t *testing.T) {
+	// A multi-select close must patch every succeeded target's cached
+	// (status), mirroring the single-target path — otherwise bulk-closed
+	// issues drop out of the open list and their stale "open" lingers
+	// under dependents forever (would-you-kindly-1ym, bulk gap).
+	src := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(src), src)
+	m.depCache["a-1"] = []beads.Issue{
+		{ID: "b-2", Status: "open"},
+		{ID: "b-3", Status: "open"},
+	}
+	m.dependentCache["a-9"] = []beads.Issue{{ID: "b-2", Status: "open"}}
+
+	model, _ := m.Update(bulkWriteMsg{
+		action:    "close",
+		total:     2,
+		succeeded: []beads.Issue{{ID: "b-2"}, {ID: "b-3"}},
+	})
+	m = model.(Model)
+
+	if m.depCache["a-1"][0].Status != "closed" || m.depCache["a-1"][1].Status != "closed" {
+		t.Errorf("bulk close should patch all succeeded dep rows; got %+v", m.depCache["a-1"])
+	}
+	if m.dependentCache["a-9"][0].Status != "closed" {
+		t.Errorf("bulk close should patch dependent rows too; got %+v", m.dependentCache["a-9"])
+	}
+}
+
+func TestBulkWrite_NonStatusActionLeavesCache(t *testing.T) {
+	// A non-status bulk action (assign) must not touch cached statuses.
+	src := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(src), src)
+	m.depCache["a-1"] = []beads.Issue{{ID: "b-2", Status: "open"}}
+
+	model, _ := m.Update(bulkWriteMsg{action: "assign", total: 1, succeeded: []beads.Issue{{ID: "b-2"}}})
+	m = model.(Model)
+	if m.depCache["a-1"][0].Status != "open" {
+		t.Errorf("a non-status bulk action must leave cached status alone; got %q", m.depCache["a-1"][0].Status)
+	}
+}
+
+func TestStatusForAction_OmitsReopen(t *testing.T) {
+	// Reopen is intentionally not patched — the reopened issue stays in
+	// the open list, so refreshDepCachesFromList picks up bd's actual
+	// new status rather than a guessed "open".
+	if _, ok := statusForAction("reopen"); ok {
+		t.Error("reopen should NOT be in statusForAction (covered by the list-refresh path)")
+	}
+	if st, ok := statusForAction("close"); !ok || st != "closed" {
+		t.Errorf("close should map to closed; got %q,%v", st, ok)
+	}
+	if st, ok := statusForAction("defer"); !ok || st != "deferred" {
+		t.Errorf("defer should map to deferred; got %q,%v", st, ok)
+	}
+}
