@@ -42,6 +42,10 @@ var ErrUnsupportedVersion = errors.New("uiconfig: unsupported file version")
 type Config struct {
 	Version       int      `json:"version"`
 	HiddenColumns []string `json:"hidden_columns,omitempty"`
+	// PriorityEmphasis opts into colour-coding the P column in the
+	// list (P0 loud, P3–P4 dim). Off by default to preserve the flat
+	// uniform-white table; toggled with `p` in the column overlay.
+	PriorityEmphasis bool `json:"priority_emphasis,omitempty"`
 }
 
 // DefaultPath returns the canonical config-file location, honoring

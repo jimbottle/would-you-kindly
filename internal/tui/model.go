@@ -413,6 +413,12 @@ type Model struct {
 	// first-run user sees the default layout without ceremony.
 	colsHidden map[string]bool
 
+	// priorityEmphasis colour-codes the P column (P0 loud, P3–P4 dim)
+	// when on. Off by default to keep the flat uniform-white table;
+	// loaded from uiconfig and toggled with `p` in the `o` overlay,
+	// persisted alongside the column visibility.
+	priorityEmphasis bool
+
 	// uiConfigPath is the resolved on-disk path to ui.json so the
 	// overlay can persist column-visibility changes without
 	// re-resolving XDG every time. Empty disables persistence
@@ -591,6 +597,14 @@ func (m Model) WithHiddenColumns(hidden map[string]bool, persistPath string) Mod
 	}
 	m.colsHidden = hidden
 	m.uiConfigPath = persistPath
+	return m
+}
+
+// WithPriorityEmphasis seeds the opt-in P-column colour-coding from
+// uiconfig at startup. Returns a copy so the builder chains alongside
+// WithHiddenColumns.
+func (m Model) WithPriorityEmphasis(on bool) Model {
+	m.priorityEmphasis = on
 	return m
 }
 
@@ -2280,6 +2294,12 @@ func (m Model) updateColumns(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = modeList
 		return m, nil
+	case "p":
+		// Not a column, but the overlay is the natural home for
+		// display toggles: flip the opt-in P-column emphasis. Persisted
+		// on overlay close like the column toggles.
+		m.priorityEmphasis = !m.priorityEmphasis
+		return m, nil
 	}
 	// Digit toggles. Build the index from the rune so non-digit
 	// keystrokes inside the overlay (typing junk by accident) are
@@ -2320,8 +2340,9 @@ func (m Model) persistColumns() error {
 		}
 	}
 	return uiconfig.Save(m.uiConfigPath, uiconfig.Config{
-		Version:       uiconfig.CurrentVersion,
-		HiddenColumns: hidden,
+		Version:          uiconfig.CurrentVersion,
+		HiddenColumns:    hidden,
+		PriorityEmphasis: m.priorityEmphasis,
 	})
 }
 
@@ -4198,6 +4219,13 @@ func (m Model) viewColumns() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
+	pchk := "[ ]"
+	if m.priorityEmphasis {
+		pchk = "[x]"
+	}
+	fmt.Fprintf(&b, "  p. %s  Priority emphasis  ", pchk)
+	b.WriteString(helpStyle.Render("(colour-code the P column: P0 loud, P3–P4 dim)"))
+	b.WriteString("\n\n")
 	b.WriteString(helpStyle.Render("esc / o / q to close (saves to ~/.config/wyk/ui.json)"))
 	return b.String()
 }
@@ -4651,7 +4679,15 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		b.WriteString(statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status))))
 		b.WriteString(sep)
 	}
-	b.WriteString(dim(fmt.Sprintf("P%d", i.Priority)))
+	prio := fmt.Sprintf("P%d", i.Priority)
+	switch {
+	case i.Status == "closed":
+		b.WriteString(dim(prio)) // closed-row dim wins over priority emphasis
+	case m.priorityEmphasis:
+		b.WriteString(priorityStyleFor(i.Priority).Render(prio))
+	default:
+		b.WriteString(prio)
+	}
 	b.WriteString(sep)
 	if m.colVisible(colIDUpdated) {
 		b.WriteString(updatedC.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt))))

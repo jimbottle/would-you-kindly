@@ -281,3 +281,22 @@ func statusStyleFor(status string) lipgloss.Style {
 		return statusOther
 	}
 }
+
+// priorityStyleFor returns the P-column emphasis for a priority when the
+// opt-in priority_emphasis setting is on. P0 is loud (danger, bold), P1
+// amber, P3/P4 dim, and P2 (plus anything out of range) neutral — so
+// enabling it makes urgent rows pop and the backlog recede while leaving
+// the mid case as the flat default. Colours reuse the adaptive semantic
+// tokens, so they track the terminal background too.
+func priorityStyleFor(p int) lipgloss.Style {
+	switch p {
+	case 0:
+		return lipgloss.NewStyle().Foreground(cDanger).Bold(true)
+	case 1:
+		return lipgloss.NewStyle().Foreground(cWarn)
+	case 3, 4:
+		return lipgloss.NewStyle().Foreground(cDim)
+	default:
+		return lipgloss.NewStyle()
+	}
+}

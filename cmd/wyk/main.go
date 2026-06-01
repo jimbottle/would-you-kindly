@@ -201,7 +201,8 @@ func main() {
 		cfg, err := uiconfig.Load(uiPath)
 		switch {
 		case err == nil:
-			model = model.WithHiddenColumns(cfg.HiddenSet(), uiPath)
+			model = model.WithHiddenColumns(cfg.HiddenSet(), uiPath).
+				WithPriorityEmphasis(cfg.PriorityEmphasis)
 		case errors.Is(err, uiconfig.ErrUnsupportedVersion):
 			// Don't touch the file. Leave columns at default for
 			// this session.
