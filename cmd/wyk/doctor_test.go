@@ -17,6 +17,7 @@ func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {
 	// with a foreign hook (skip with notice).
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	withTempHome(t) // isolate the skills install from the real ~/.claude
 
 	missing := gitInit(t)
 	wykd := gitInit(t)
@@ -80,6 +81,7 @@ func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {
 func TestRunDoctorFix_DryRunSkipsWrites(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	withTempHome(t) // isolate skills install
 	missing := gitInit(t)
 	regPath, _ := registry.DefaultPath()
 	reg := &registry.Registry{Repos: []registry.Repo{{Name: "missing", Path: missing}}}
@@ -107,6 +109,7 @@ func TestRunDoctorFix_PartialFailureExits1(t *testing.T) {
 	// short-circuit on first error).
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	withTempHome(t) // isolate skills install
 	a := gitInit(t)
 	b := gitInit(t)
 	regPath, _ := registry.DefaultPath()
@@ -165,6 +168,12 @@ func TestRunDoctor_FlagCombinationGuards(t *testing.T) {
 func TestRunDoctorFix_NoRegistryReturns2(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	// Pre-install the user skills so the skills-fix step is a no-op;
+	// then with no registry there's genuinely nothing left to fix → 2.
+	dir := withTempHome(t)
+	if _, err := installMissingSkills(dir, false); err != nil {
+		t.Fatal(err)
+	}
 	// No registry file at all.
 	stderr := captureStderr(t, func() {
 		if code := runDoctorFix(false); code != 2 {

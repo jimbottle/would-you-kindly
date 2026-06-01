@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Skills wired into setup/maintenance** — `wyk doctor` now reports
+  whether the agent skills are installed and current (and `doctor -fix`
+  installs any missing ones); `wyk init -skills` installs them during
+  repo setup; and `wyk update` reminds you to `wyk skills install` with
+  the new binary since it may ship updated skills.
+
 - **`wyk skills`** — install the agent-facing Claude Code skills wyk
   ships (`wyk` triage/inbox, `wyk-handoff`, `wyk-project-review`) into
   `~/.claude/skills` (default) or `./.claude/skills` (`-project`) so a

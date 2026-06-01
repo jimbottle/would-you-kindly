@@ -150,3 +150,70 @@ func TestTruncForList_RuneAware(t *testing.T) {
 		t.Errorf("short string should be unchanged")
 	}
 }
+
+func TestInstallMissingSkills_OnlyMissing(t *testing.T) {
+	dir := t.TempDir()
+	all, _ := skills.All()
+
+	w, err := installMissingSkills(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w) != len(all) {
+		t.Errorf("first install wrote %d, want %d (all missing)", len(w), len(all))
+	}
+	// Re-run: nothing missing → nothing written.
+	if w2, _ := installMissingSkills(dir, false); len(w2) != 0 {
+		t.Errorf("idempotent re-run wrote %v, want none", w2)
+	}
+	// A MODIFIED (not missing) skill is left alone by install-missing.
+	if err := os.WriteFile(filepath.Join(dir, all[0].Name, "SKILL.md"), []byte("edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if w3, _ := installMissingSkills(dir, false); len(w3) != 0 {
+		t.Errorf("modified skill should not be rewritten by install-missing; wrote %v", w3)
+	}
+}
+
+func TestInstallMissingSkills_DryRunWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	w, err := installMissingSkills(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w) == 0 {
+		t.Error("dry-run should still report what it would write")
+	}
+	if _, err := os.Stat(filepath.Join(dir, w[0])); !os.IsNotExist(err) {
+		t.Errorf("dry-run must not create files (err=%v)", err)
+	}
+}
+
+func TestCheckSkills_WarnsMissingPassesCurrent(t *testing.T) {
+	dir := withTempHome(t)
+	if c := checkSkills(); c.status != statusWarn {
+		t.Errorf("missing skills should WARN; got %v (%s)", c.status, c.detail)
+	}
+	if _, err := installMissingSkills(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkSkills(); c.status != statusPass {
+		t.Errorf("current skills should PASS; got %v (%s)", c.status, c.detail)
+	}
+}
+
+func TestRunInit_SkillsFlagInstalls(t *testing.T) {
+	dir := withTempHome(t)
+	t.Chdir(gitInit(t)) // a real git repo so the hook step succeeds
+	// -skip-register avoids touching the registry; -skills adds the
+	// user-skills install as step 4.
+	if code := runInit([]string{"-skills", "-skip-bd-init", "-skip-register"}); code != 0 {
+		t.Fatalf("init -skills exit = %d", code)
+	}
+	all, _ := skills.All()
+	for _, s := range all {
+		if _, err := os.Stat(filepath.Join(dir, s.Name, "SKILL.md")); err != nil {
+			t.Errorf("init -skills did not install %s: %v", s.Name, err)
+		}
+	}
+}

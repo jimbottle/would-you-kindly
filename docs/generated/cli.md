@@ -28,7 +28,7 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <
 Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.
 
 ```
-wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>] [-uninstall] [-fix-foreign-hooks]
+wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]
 ```
 
 | Flag | Default | Description |
@@ -41,6 +41,7 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <r
 | `-scan` | `_(empty)_` | scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path |
 | `-uninstall` | `false` | remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks |
 | `-fix-foreign-hooks` | `false` | scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone) |
+| `-skills` | `false` | also install wyk's agent skills into ~/.claude/skills (idempotent; modified skills left alone) |
 
 ## `wyk inbox`
 
@@ -86,7 +87,7 @@ wyk doctor [-json] [-fix [-dry-run]]
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-json` | `false` | emit checks as a structured JSON object for CI / dashboard consumption |
-| `-fix` | `false` | install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone) |
+| `-fix` | `false` | install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone), and install any missing wyk agent skills into ~/.claude/skills |
 | `-dry-run` | `false` | with -fix, print the plan without installing |
 
 ## `wyk registry`

@@ -169,6 +169,10 @@ func runUpdate(args []string) int {
 		return 1
 	}
 	fmt.Printf("wyk update: installed %s — open a new shell or rehash $PATH if `wyk --version` still reports the old version\n", rel.TagName)
+	// The new binary may ship updated agent skills; the running (old)
+	// binary can't refresh them itself, so hint the user to do it with
+	// the new one. `wyk doctor` also surfaces stale/missing skills.
+	fmt.Println("            if you use the wyk agent skills, run `wyk skills install` with the new binary to refresh them")
 	return 0
 }
 

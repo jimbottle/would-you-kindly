@@ -87,6 +87,7 @@ func runInit(args []string) int {
 	scanRoot := fs.String("scan", "", "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path")
 	uninstall := fs.Bool("uninstall", false, "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks")
 	fixForeignHooks := fs.Bool("fix-foreign-hooks", false, "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)")
+	installSkills := fs.Bool("skills", false, "also install wyk's agent skills into ~/.claude/skills (idempotent; like `wyk skills install`). Modified skills are left alone.")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -331,6 +332,30 @@ func runInit(args []string) int {
 			previewRegister(repoRoot)
 		} else if code := registerRepo(repoRoot); code != 0 {
 			return code
+		}
+	}
+
+	// Step 4 (opt-in): install wyk's agent skills into ~/.claude/skills.
+	// User-global, so this is a one-time convenience offered during
+	// per-repo setup; idempotent and leaves modified skills alone.
+	if *installSkills {
+		dir, derr := userSkillsDir()
+		if derr != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: skills:", derr)
+			return 1
+		}
+		written, werr := installMissingSkills(dir, *dryRun)
+		if werr != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: skills:", werr)
+			return 1
+		}
+		switch {
+		case len(written) == 0:
+			fmt.Printf("wyk init: agent skills already installed in %s\n", dir)
+		case *dryRun:
+			fmt.Printf("wyk init: would install %d skill(s) to %s: %s\n", len(written), dir, strings.Join(written, ", "))
+		default:
+			fmt.Printf("wyk init: installed %d skill(s) to %s: %s\n", len(written), dir, strings.Join(written, ", "))
 		}
 	}
 	return 0

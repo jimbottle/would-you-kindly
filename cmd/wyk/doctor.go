@@ -16,6 +16,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/skills"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
@@ -177,6 +178,24 @@ func runDoctor(args []string) int {
 //	2  registry resolvable but unreadable, or no registered repos
 //	64 usage error (handled by caller)
 func runDoctorFix(dryRun bool) int {
+	// Install any MISSING user skills first — independent of the
+	// registry, so this still helps when no repos are registered.
+	// Modified skills are left alone (they need `wyk skills install
+	// -force`).
+	skillsFixed := 0
+	if dir, derr := userSkillsDir(); derr != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor: skills:", derr)
+	} else if written, werr := installMissingSkills(dir, dryRun); werr != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor: skills:", werr)
+	} else if len(written) > 0 {
+		verb := "installed"
+		if dryRun {
+			verb = "would install"
+		}
+		fmt.Printf("doctor -fix: %s %d skill(s) to %s: %s\n", verb, len(written), dir, strings.Join(written, ", "))
+		skillsFixed = len(written)
+	}
+
 	regPath, err := registry.DefaultPath()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk doctor:", err)
@@ -188,6 +207,9 @@ func runDoctorFix(dryRun bool) int {
 		return 2
 	}
 	if len(reg.Repos) == 0 {
+		if skillsFixed > 0 {
+			return 0 // we did fix something (the skills)
+		}
 		fmt.Fprintln(os.Stderr, "wyk doctor: no repos registered — nothing to fix")
 		return 2
 	}
@@ -285,6 +307,8 @@ func collectDoctorChecks() []check {
 		checks = append(checks, checkRepo(r)...)
 	}
 
+	checks = append(checks, checkSkills())
+
 	// Conventions stanza — informational, always pass. Terse on
 	// purpose; refers the reader to `wyk conventions` for the
 	// full text.
@@ -309,6 +333,55 @@ func collectDoctorChecks() []check {
 		})
 	}
 	return checks
+}
+
+// checkSkills reports whether wyk's agent skills are installed and
+// current at the user skills dir (~/.claude/skills). PASS when every
+// skill is byte-current; WARN (with the install hint) when any is
+// missing or locally modified — never FAIL, since the skills are an
+// optional convenience, not required for wyk to work. `wyk doctor
+// -fix` installs the missing ones.
+func checkSkills() check {
+	const name = "wyk agent skills"
+	dir, err := userSkillsDir()
+	if err != nil {
+		return check{name: name, status: statusWarn, detail: err.Error(), leadingBlank: true}
+	}
+	all, err := skills.All()
+	if err != nil {
+		return check{name: name, status: statusWarn, detail: "could not read embedded skills: " + err.Error(), leadingBlank: true}
+	}
+	var missing, modified, current []string
+	for _, s := range all {
+		st, err := skillStateAt(s, dir)
+		if err != nil {
+			return check{name: name, status: statusWarn, detail: fmt.Sprintf("%s: %v", s.Name, err), leadingBlank: true}
+		}
+		switch st {
+		case skillMissing:
+			missing = append(missing, s.Name)
+		case skillModified:
+			modified = append(modified, s.Name)
+		default:
+			current = append(current, s.Name)
+		}
+	}
+	if len(missing) == 0 && len(modified) == 0 {
+		return check{name: name, status: statusPass, detail: fmt.Sprintf("%d skill(s) current in %s", len(current), dir)}
+	}
+	var parts []string
+	if len(missing) > 0 {
+		parts = append(parts, "missing: "+strings.Join(missing, ", "))
+	}
+	if len(modified) > 0 {
+		parts = append(parts, "locally modified: "+strings.Join(modified, ", "))
+	}
+	return check{
+		name:         name,
+		status:       statusWarn,
+		detail:       strings.Join(parts, "; ") + "\nRun `wyk skills install` to install/update (`-force` overwrites a modified skill); `wyk doctor -fix` installs the missing ones.",
+		leadingBlank: true,
+	}
 }
 
 // doctorJSONOut is the top-level shape emitted by -json. The

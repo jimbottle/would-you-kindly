@@ -49,7 +49,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "init",
 		Summary: "Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.",
-		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <root>] [-uninstall] [-fix-foreign-hooks]",
+		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]",
 		Flags: []cliFlag{
 			{Name: "-force", Default: "false", Description: "overwrite an existing post-commit hook (destructive — drops the existing hook entirely)"},
 			{Name: "-chain", Default: "false", Description: "preserve an existing post-commit hook and chain wyk's logic after it (preferred over -force when the existing hook is from another tool like roborev)"},
@@ -59,6 +59,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-scan", Default: "", Description: "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path"},
 			{Name: "-uninstall", Default: "false", Description: "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks"},
 			{Name: "-fix-foreign-hooks", Default: "false", Description: "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)"},
+			{Name: "-skills", Default: "false", Description: "also install wyk's agent skills into ~/.claude/skills (idempotent; modified skills left alone)"},
 		},
 	},
 	{
@@ -92,7 +93,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Usage:   "wyk doctor [-json] [-fix [-dry-run]]",
 		Flags: []cliFlag{
 			{Name: "-json", Default: "false", Description: "emit checks as a structured JSON object for CI / dashboard consumption"},
-			{Name: "-fix", Default: "false", Description: "install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone)"},
+			{Name: "-fix", Default: "false", Description: "install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone), and install any missing wyk agent skills into ~/.claude/skills"},
 			{Name: "-dry-run", Default: "false", Description: "with -fix, print the plan without installing"},
 		},
 	},

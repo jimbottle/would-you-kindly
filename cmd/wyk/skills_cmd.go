@@ -124,6 +124,36 @@ func resolveSkillsTarget(userFlag, projectFlag bool) (dir, label string, code in
 	return d, "user (~/.claude/skills)", 0
 }
 
+// installMissingSkills writes every embedded skill that is MISSING at
+// dir, leaving current and locally-modified copies untouched (those
+// need an explicit `wyk skills install -force`). Returns the names it
+// wrote (or would write, when dryRun). Shared by `wyk init -skills`
+// and `wyk doctor -fix` so both install the same set the same safe way.
+func installMissingSkills(dir string, dryRun bool) ([]string, error) {
+	all, err := skills.All()
+	if err != nil {
+		return nil, err
+	}
+	var written []string
+	for _, s := range all {
+		st, err := skillStateAt(s, dir)
+		if err != nil {
+			return written, err
+		}
+		if st != skillMissing {
+			continue
+		}
+		written = append(written, s.Name)
+		if dryRun {
+			continue
+		}
+		if err := writeSkillFile(s, dir); err != nil {
+			return written, err
+		}
+	}
+	return written, nil
+}
+
 // skillStateAt reports whether s is missing / current / modified at dir.
 func skillStateAt(s skills.Skill, dir string) (skillState, error) {
 	b, err := os.ReadFile(filepath.Join(dir, s.Name, "SKILL.md"))
