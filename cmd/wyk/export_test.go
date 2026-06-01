@@ -17,13 +17,20 @@ import (
 // per-call so collectExport tests can drive the list-ok/ready-
 // fail / list-fail/ready-ok / both-fail error-folding branches.
 type stubExportClient struct {
-	listIssues []beads.Issue
+	listIssues []beads.Issue // returned by List (open set)
+	allIssues  []beads.Issue // returned by ListAll (open+closed); falls back to listIssues when nil
 	listErr    error
 	readyIssue []beads.Issue
 	readyErr   error
 }
 
+func (s *stubExportClient) List(_ context.Context) ([]beads.Issue, error) {
+	return s.listIssues, s.listErr
+}
 func (s *stubExportClient) ListAll(_ context.Context) ([]beads.Issue, error) {
+	if s.allIssues != nil {
+		return s.allIssues, s.listErr
+	}
 	return s.listIssues, s.listErr
 }
 func (s *stubExportClient) Ready(_ context.Context) ([]beads.Issue, error) {
@@ -57,7 +64,7 @@ func TestCollectExport_FoldsErrorsAndPreservesPartial(t *testing.T) {
 	}
 	mk := func(dir string) exportClient { return stubs[dir] }
 
-	dump, hadError := collectExport(reg, mk)
+	dump, hadError := collectExport(reg, mk, false)
 	if !hadError {
 		t.Errorf("hadError should be true when any sub failed")
 	}
@@ -79,7 +86,7 @@ func TestCollectExport_FoldsErrorsAndPreservesPartial(t *testing.T) {
 	// list-broken: list errors → Err carries 'list-all:' prefix;
 	// ready still populates ReadyIDs.
 	if r := byName["list-broken"]; r.Err == "" ||
-		!bytes.Contains([]byte(r.Err), []byte("list-all: list boom")) ||
+		!bytes.Contains([]byte(r.Err), []byte("list: list boom")) ||
 		len(r.ReadyIDs) != 1 {
 		t.Errorf("list-broken row: got %+v", r)
 	}
@@ -91,7 +98,7 @@ func TestCollectExport_FoldsErrorsAndPreservesPartial(t *testing.T) {
 		t.Errorf("ready-broken row: got %+v", r)
 	}
 	// both-broken: Err carries BOTH prefixes joined with `; `.
-	if r := byName["both-broken"]; !bytes.Contains([]byte(r.Err), []byte("list-all: list boom")) ||
+	if r := byName["both-broken"]; !bytes.Contains([]byte(r.Err), []byte("list: list boom")) ||
 		!bytes.Contains([]byte(r.Err), []byte("; ready: ready boom")) {
 		t.Errorf("both-broken row should fold both errors; got %+v", r)
 	}
@@ -275,5 +282,30 @@ func TestSlimDump_AppliesToEveryIssue(t *testing.T) {
 				t.Errorf("slimDump missed an issue: %+v", i)
 			}
 		}
+	}
+}
+
+func TestCollectExport_OpenByDefaultClosedOptIn(t *testing.T) {
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "r", Path: "/tmp/r"}}}
+	stub := &stubExportClient{
+		listIssues: []beads.Issue{{ID: "r-1", Status: "open"}},                                // List → open only
+		allIssues:  []beads.Issue{{ID: "r-1", Status: "open"}, {ID: "r-2", Status: "closed"}}, // ListAll → open+closed
+		readyIssue: []beads.Issue{{ID: "r-1"}},
+	}
+	mk := func(_ string) exportClient { return stub }
+
+	// Default (open only).
+	dump, _ := collectExport(reg, mk, false)
+	if n := len(dump.Repos[0].Issues); n != 1 || dump.Repos[0].Issues[0].ID != "r-1" {
+		t.Errorf("default export should be open-only (r-1); got %d issues %+v", n, dump.Repos[0].Issues)
+	}
+	if dump.SchemaVersion != exportSchemaVersion {
+		t.Errorf("dump should stamp schema_version=%d; got %d", exportSchemaVersion, dump.SchemaVersion)
+	}
+
+	// -closed includes the closed issue.
+	dumpAll, _ := collectExport(reg, mk, true)
+	if n := len(dumpAll.Repos[0].Issues); n != 2 {
+		t.Errorf("-closed export should include the closed issue (2 total); got %d", n)
 	}
 }

@@ -135,12 +135,13 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	},
 	{
 		Name:    "export",
-		Summary: "JSON dump of every registered repo's full issue list + ready IDs.",
-		Usage:   "wyk export [-since 24h] [-compact] [-slim] [-repo name]",
+		Summary: "JSON dump of every registered repo's open issue list + ready IDs (-closed for full history).",
+		Usage:   "wyk export [-since 24h] [-compact] [-slim] [-closed] [-repo name]",
 		Flags: []cliFlag{
 			{Name: "-since", Default: "", Description: "filter issues to those updated within this duration (e.g. 24h, 168h)"},
 			{Name: "-compact", Default: "false", Description: "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)"},
 			{Name: "-slim", Default: "false", Description: "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels/timestamps); ~75%+ smaller for an LLM scanning the backlog"},
+			{Name: "-closed", Default: "false", Description: "include closed issues (default: open issues only — the actionable set)"},
 			{Name: "-repo", Default: "", Description: "restrict the dump to the registered repo with this name (empty = full registry)"},
 		},
 	},

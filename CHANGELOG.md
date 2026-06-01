@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`wyk export` defaults to open issues** — it now emits the
+  actionable (open) set by default instead of open+closed; `-closed`
+  restores the full history. An agent reading the export wants the
+  live backlog, not closed archives. The dump gains a `schema_version`
+  (now `2`) so consumers can detect the default; `wyk import` already
+  skipped closed-in-dump entries, so round-trips are unaffected. Part
+  of the agent-token-efficiency epic.
+
 - **Leaner issue JSON** — the agent-facing `-json` outputs (`export`,
   `inbox`, `activity`) now elide empty/zero fields per issue:
   open issues no longer carry `closed_at:"0001-01-01T00:00:00Z"`, and

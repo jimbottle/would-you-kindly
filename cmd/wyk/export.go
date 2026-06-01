@@ -15,10 +15,12 @@ import (
 )
 
 // runExport walks every registered bd workspace and emits a JSON
-// dump suitable for external tooling: each repo's full issue
-// list (open + closed, via `bd list --all`) plus the IDs of
-// issues `bd ready` would surface today. Useful as a data feed
-// for ad-hoc analyses, test-fixture seeding, or piping into jq.
+// dump suitable for external tooling: each repo's OPEN issue list
+// (the actionable set, via `bd list`; -closed adds closed history
+// via `bd list --all`) plus the IDs of issues `bd ready` would
+// surface today. Useful as a data feed for ad-hoc analyses,
+// test-fixture seeding, or piping into jq. The dump carries a
+// schema_version (see exportSchemaVersion).
 //
 // Exit codes:
 //
@@ -33,13 +35,14 @@ func runExport(args []string) int {
 	since := fs.String("since", "", "filter issues to those updated within this duration (e.g. 24h, 168h)")
 	compact := fs.Bool("compact", false, "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)")
 	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels/timestamps); ~75%+ smaller for an LLM scanning the backlog")
+	includeClosed := fs.Bool("closed", false, "include closed issues (default: open issues only — the actionable set)")
 	repoName := fs.String("repo", "", "restrict the dump to the registered repo with this name (empty = full registry)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-compact] [-slim] [-repo name]")
+		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-compact] [-slim] [-closed] [-repo name]")
 		return 64
 	}
 	var cutoff time.Time
@@ -76,7 +79,7 @@ func runExport(args []string) int {
 		reg = filtered
 	}
 
-	dump, hadError := collectExport(reg, defaultExportClient)
+	dump, hadError := collectExport(reg, defaultExportClient, *includeClosed)
 	if !cutoff.IsZero() {
 		dump = filterDumpSince(dump, cutoff)
 	}
@@ -95,6 +98,7 @@ func runExport(args []string) int {
 // defaultExportClient; tests inject a stub so the walk + error-
 // folding can be exercised without a real bd binary.
 type exportClient interface {
+	List(ctx context.Context) ([]beads.Issue, error)
 	ListAll(ctx context.Context) ([]beads.Issue, error)
 	Ready(ctx context.Context) ([]beads.Issue, error)
 }
@@ -123,12 +127,20 @@ type exportRepo struct {
 	Err      string        `json:"error,omitempty"`
 }
 
+// exportSchemaVersion identifies the dump shape/semantics. Bumped to
+// 2 when the default issue set changed from open+closed to open-only
+// (closed now opt-in via -closed); a consumer can read schema_version
+// to know which default it's looking at.
+const exportSchemaVersion = 2
+
 // exportDump is the top-level object emitted to stdout. Carries
 // the export timestamp so a downstream pipeline can stamp its
-// data feed alongside the issue rows.
+// data feed alongside the issue rows. schema_version records the
+// dump semantics (see exportSchemaVersion).
 type exportDump struct {
-	ExportedAt time.Time    `json:"exported_at"`
-	Repos      []exportRepo `json:"repos"`
+	SchemaVersion int          `json:"schema_version"`
+	ExportedAt    time.Time    `json:"exported_at"`
+	Repos         []exportRepo `json:"repos"`
 }
 
 // collectExport walks the registry sequentially (matches the
@@ -140,18 +152,26 @@ type exportDump struct {
 // before recording the row so a partial failure (e.g. `bd ready`
 // times out but `bd list --all` succeeds) still emits the issue
 // list with an empty ReadyIDs slice and an error string.
-func collectExport(reg *registry.Registry, mk func(dir string) exportClient) (exportDump, bool) {
-	dump := exportDump{ExportedAt: time.Now(), Repos: make([]exportRepo, 0, len(reg.Repos))}
+func collectExport(reg *registry.Registry, mk func(dir string) exportClient, includeClosed bool) (exportDump, bool) {
+	dump := exportDump{SchemaVersion: exportSchemaVersion, ExportedAt: time.Now(), Repos: make([]exportRepo, 0, len(reg.Repos))}
 	hadError := false
 	for _, r := range reg.Repos {
 		row := exportRepo{Name: r.Name, Path: r.Path}
 		c := mk(r.Path)
-		// list --all
+		// Default to the open (actionable) set — what an agent
+		// scanning the backlog wants; -closed opts into the full
+		// open+closed history (`bd list --all`).
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		issues, err := c.ListAll(ctx)
+		var issues []beads.Issue
+		var err error
+		if includeClosed {
+			issues, err = c.ListAll(ctx)
+		} else {
+			issues, err = c.List(ctx)
+		}
 		cancel()
 		if err != nil {
-			row.Err = "list-all: " + err.Error()
+			row.Err = "list: " + err.Error()
 			hadError = true
 		} else {
 			row.Issues = issues
