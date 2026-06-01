@@ -47,6 +47,11 @@ type SessionState struct {
 	// the raw enum int keeps the file stable if the enum is ever
 	// reordered, and readable if a user peeks at it.
 	Sort string `json:"sort,omitempty"`
+	// SortDesc reverses the active sort's natural direction (Shift-S).
+	// Only meaningful alongside a Sort axis — it's omitted when no
+	// sort is active (sortNone has no direction), and an old state.json
+	// without the field decodes to false, matching today's default.
+	SortDesc bool `json:"sort_desc,omitempty"`
 	// CursorID is the full bd ID of the selected row. Best-effort on
 	// restore: if the ID isn't in the current visible set (closed,
 	// filtered out, deleted) the cursor falls back to the top.

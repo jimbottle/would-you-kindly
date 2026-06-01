@@ -47,6 +47,7 @@ func TestSaveLoadSession_Roundtrip(t *testing.T) {
 		Version:  sessionVersion,
 		Preset:   "human",
 		Sort:     "deps",
+		SortDesc: true,
 		CursorID: "would-you-kindly-abc",
 	}
 	if err := SaveSession(path, want); err != nil {

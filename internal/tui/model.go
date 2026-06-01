@@ -641,6 +641,10 @@ func (m Model) WithSession(s SessionState, path string) Model {
 	}
 	if k, ok := sortKeyFromLabel(s.Sort); ok {
 		m.sortBy = k
+		// Direction only rides along with a restored axis — there's
+		// no direction to reverse without one, and the sortNone
+		// invariant keeps sortDesc false.
+		m.sortDesc = s.SortDesc
 	}
 	m.pendingCursorID = s.CursorID
 	return m
@@ -675,6 +679,10 @@ func (m Model) persistSession() {
 		Version: sessionVersion,
 		Preset:  string(m.preset),
 		Sort:    m.sortBy.label(),
+		// sortDesc is always false when sortBy == sortNone (the axis-
+		// change reset enforces that), so this naturally stays false
+		// when there's no sort to reverse.
+		SortDesc: m.sortDesc,
 	}
 	if m.cursor >= 0 && m.cursor < len(m.visible) {
 		st.CursorID = m.visible[m.cursor].ID

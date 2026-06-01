@@ -124,15 +124,54 @@ func applyFetched(m Model, src *stubSource) Model {
 func TestWithSession_HydratesPresetAndSort(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := New(src).WithSession(SessionState{
-		Version: sessionVersion,
-		Preset:  "human",
-		Sort:    "priority",
+		Version:  sessionVersion,
+		Preset:   "human",
+		Sort:     "priority",
+		SortDesc: true,
 	}, "")
 	if m.preset != filter.PresetHuman {
 		t.Errorf("preset = %q, want human", m.preset)
 	}
 	if m.sortBy != sortPriority {
 		t.Errorf("sortBy = %v, want sortPriority", m.sortBy)
+	}
+	if !m.sortDesc {
+		t.Error("sortDesc should be restored alongside the sort axis")
+	}
+}
+
+func TestWithSession_SortDescIgnoredWithoutAxis(t *testing.T) {
+	// SortDesc must not apply when there's no sort axis to reverse —
+	// an empty/unknown Sort leaves sortDesc at its default regardless
+	// of the persisted bool, upholding the sortNone invariant.
+	src := &stubSource{issues: sampleIssues()}
+	m := New(src).WithSession(SessionState{Version: sessionVersion, Sort: "", SortDesc: true}, "")
+	if m.sortBy != sortNone {
+		t.Fatalf("sortBy = %v, want sortNone", m.sortBy)
+	}
+	if m.sortDesc {
+		t.Error("sortDesc must stay false when no sort axis is restored")
+	}
+}
+
+func TestQuit_PersistsSortDirection(t *testing.T) {
+	// A reversed sort must survive a quit→restore so the user lands on
+	// exactly the view they left (axis AND direction).
+	path := filepath.Join(t.TempDir(), "state.json")
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src).WithSession(SessionState{Version: sessionVersion}, path), src)
+	m.sortBy = sortPriority
+	m.sortDesc = true
+
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}); cmd == nil {
+		t.Fatal("q should quit")
+	}
+	got, err := LoadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sort != "priority" || !got.SortDesc {
+		t.Errorf("persisted sort = %q desc=%v, want priority desc=true", got.Sort, got.SortDesc)
 	}
 }
 
