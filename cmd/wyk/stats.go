@@ -59,9 +59,11 @@ func runStats(args []string) int {
 	}
 
 	all, subErrs := fetchAllIssues(subs)
-	if len(all) == 0 && len(subErrs) > 0 {
-		// Total failure: classify the typed bd sentinels for the
-		// documented exit codes.
+	if len(subErrs) > 0 && len(subErrs) == len(subs) {
+		// Total failure = EVERY queried repo errored (count-based, like
+		// inbox/activity — a healthy-but-empty repo alongside a failing
+		// one is a partial success, not total). Classify the typed bd
+		// sentinels for the documented exit codes.
 		first := subErrs[0].err
 		switch {
 		case errors.Is(first, beads.ErrBDNotFound):
@@ -79,7 +81,7 @@ func runStats(args []string) int {
 			attachStatsErrors(&s, subErrs)
 			emitStatsJSON(s)
 		} else {
-			fmt.Fprintln(os.Stderr, "wyk stats:", joinSubErrors(subErrs))
+			fmt.Fprintln(os.Stderr, "wyk stats:", joinRepoErrors(subErrorsToRepoErrors(subErrs)))
 		}
 		return 1
 	}
@@ -95,7 +97,7 @@ func runStats(args []string) int {
 	}
 	renderStatsText(s, len(subs))
 	if len(subErrs) > 0 {
-		fmt.Printf("\n%d repo(s) failed (totals are a partial snapshot): %s\n", len(subErrs), joinSubErrors(subErrs))
+		fmt.Printf("\n%d repo(s) failed (totals are a partial snapshot): %s\n", len(subErrs), joinRepoErrors(subErrorsToRepoErrors(subErrs)))
 	}
 	return 0
 }
@@ -103,9 +105,7 @@ func runStats(args []string) int {
 // attachStatsErrors copies the per-repo failures onto the Stats result
 // as repoError rows so the -json output names them.
 func attachStatsErrors(s *Stats, subErrs []subError) {
-	for _, e := range subErrs {
-		s.Errors = append(s.Errors, repoError{Repo: e.repo, Error: e.err.Error()})
-	}
+	s.Errors = append(s.Errors, subErrorsToRepoErrors(subErrs)...)
 }
 
 // emitStatsJSON writes the stats object to stdout.

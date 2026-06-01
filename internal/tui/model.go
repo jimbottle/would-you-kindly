@@ -2229,37 +2229,49 @@ func (m Model) cycleDetailLink(delta int) (tea.Model, tea.Cmd) {
 	default:
 		m.detailLinkIdx = (m.detailLinkIdx + delta + len(links)) % len(links)
 	}
-	content := m.renderDetailBody(m.detailIssue)
+	content, selLine := m.renderDetailBodyWithLine(m.detailIssue)
 	m.detailVP.SetContent(content)
-	m.ensureDetailLinkVisible(content)
+	m.ensureDetailLinkVisible(selLine)
 	return m, nil
 }
 
 // ensureDetailLinkVisible scrolls the detail viewport the minimum
-// amount needed to bring the highlighted link's line into view. The
-// selected row is the only one carrying the ▶ marker, so we locate it
-// by that rune (present in the rendered string amid the styling ANSI).
-func (m *Model) ensureDetailLinkVisible(content string) {
+// amount needed to bring the highlighted link's line (selLine, the
+// structural index from detailBody) into view. No-op for a negative
+// index or an unmeasured viewport.
+func (m *Model) ensureDetailLinkVisible(selLine int) {
 	h := m.detailVP.Height
-	if h <= 0 {
-		return
-	}
-	sel := -1
-	for i, ln := range strings.Split(content, "\n") {
-		if strings.Contains(ln, "▶") {
-			sel = i
-			break
-		}
-	}
-	if sel < 0 {
+	if selLine < 0 || h <= 0 {
 		return
 	}
 	switch {
-	case sel < m.detailVP.YOffset:
-		m.detailVP.SetYOffset(sel)
-	case sel >= m.detailVP.YOffset+h:
-		m.detailVP.SetYOffset(sel - h + 1)
+	case selLine < m.detailVP.YOffset:
+		m.detailVP.SetYOffset(selLine)
+	case selLine >= m.detailVP.YOffset+h:
+		m.detailVP.SetYOffset(selLine - h + 1)
 	}
+}
+
+// detailEnrichCmd dispatches the same enrichment the list-open path
+// runs for target: Detail() (full body/notes) plus dep-resolution.
+// Cross-repo targets route by ID prefix through the Detailer /
+// DepLister. Used by both drill-in (openDetailLink) and back (pop) so
+// the restored issue is always re-enriched — covering the race where a
+// SLIM parent got pushed because Enter fired before its detailMsg
+// landed.
+func (m Model) detailEnrichCmd(target beads.Issue) tea.Cmd {
+	var cmds []tea.Cmd
+	if d, ok := m.src.(Detailer); ok {
+		t := target
+		cmds = append(cmds, func() tea.Msg {
+			full, err := d.Detail(context.Background(), t)
+			return detailMsg{issue: full, err: err}
+		})
+	}
+	if c := m.resolveDetailDeps(target.ID); c != nil {
+		cmds = append(cmds, c)
+	}
+	return tea.Batch(cmds...)
 }
 
 // openDetailLink drills into the highlighted dependency/dependent: it
@@ -2280,24 +2292,17 @@ func (m Model) openDetailLink() (tea.Model, tea.Cmd) {
 	m.detailLinkIdx = -1
 	m.detailVP.SetContent(m.renderDetailBody(target))
 	m.detailVP.GotoTop()
-	var cmds []tea.Cmd
-	if d, ok := m.src.(Detailer); ok {
-		t := target
-		cmds = append(cmds, func() tea.Msg {
-			full, err := d.Detail(context.Background(), t)
-			return detailMsg{issue: full, err: err}
-		})
-	}
-	if c := m.resolveDetailDeps(target.ID); c != nil {
-		cmds = append(cmds, c)
-	}
-	return m, tea.Batch(cmds...)
+	return m, m.detailEnrichCmd(target)
 }
 
 // detailBackOrPop is the Back/Esc behaviour: if we drilled into a link
-// it pops the stack back to the issue we came from (already enriched,
-// its deps cached — no refetch); otherwise it leaves the detail view
-// for the list and re-enables mouse capture.
+// it pops the stack back to the issue we came from; otherwise it leaves
+// the detail view for the list and re-enables mouse capture. The popped
+// issue is re-enriched (detailEnrichCmd) rather than trusted as-is —
+// if Enter had fired before the parent's original detailMsg landed, the
+// SLIM copy is what was pushed, and re-fetching restores its notes
+// (the detailMsg handler preserves scroll, so an already-enriched
+// parent just re-renders identically).
 func (m Model) detailBackOrPop() (tea.Model, tea.Cmd) {
 	if n := len(m.detailStack); n > 0 {
 		prev := m.detailStack[n-1]
@@ -2306,7 +2311,7 @@ func (m Model) detailBackOrPop() (tea.Model, tea.Cmd) {
 		m.detailLinkIdx = -1
 		m.detailVP.SetContent(m.renderDetailBody(prev))
 		m.detailVP.GotoTop()
-		return m, nil
+		return m, m.detailEnrichCmd(prev)
 	}
 	m.mode = modeList
 	m.detailLinkIdx = -1
@@ -3026,6 +3031,14 @@ func (m Model) detailLinks() []beads.Issue {
 // link selection applied. Centralises the detailBody call so the
 // several re-seed sites don't each re-thread the caches + selection.
 func (m Model) renderDetailBody(i beads.Issue) string {
+	body, _ := m.renderDetailBodyWithLine(i)
+	return body
+}
+
+// renderDetailBodyWithLine is renderDetailBody plus the line index of
+// the highlighted link row (-1 if none) — used by cycleDetailLink to
+// scroll the selection into view structurally.
+func (m Model) renderDetailBodyWithLine(i beads.Issue) (string, int) {
 	id := i.ID
 	return detailBody(
 		i, m.detailVP.Width,
@@ -5065,7 +5078,12 @@ const detailChromeHeight = 9
 // selectedLink is the index into the flattened deps++dependents list
 // of the currently-highlighted link (-1 = none). The matching row gets
 // a cursor prefix so the user can see which link Enter will open.
-func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsErr, dependentsErr bool, selectedLink int) string {
+// detailBody returns the rendered body AND the 0-based line index of
+// the highlighted link row (-1 when nothing is selected). Returning
+// the line STRUCTURALLY — rather than recovering it by scanning the
+// rendered output for the ▶ glyph — means a dependency title that
+// happens to contain ▶ can't mis-target the scroll.
+func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsErr, dependentsErr bool, selectedLink int) (string, int) {
 	wrap := func(s string) string {
 		if width <= 0 {
 			return s
@@ -5088,9 +5106,14 @@ func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsEr
 	}
 	// deps occupy global indices [0, len(deps)); dependents follow, so
 	// the dependents section's selection offset is len(deps).
-	writeDepSection(&b, width, "dependencies", deps, depsErr, "(deps unavailable)", selectedLink, 0)
-	writeDepSection(&b, width, "dependents", dependents, dependentsErr, "(dependents unavailable)", selectedLink, len(deps))
-	return b.String()
+	selLine := -1
+	if l := writeDepSection(&b, width, "dependencies", deps, depsErr, "(deps unavailable)", selectedLink, 0); l >= 0 {
+		selLine = l
+	}
+	if l := writeDepSection(&b, width, "dependents", dependents, dependentsErr, "(dependents unavailable)", selectedLink, len(deps)); l >= 0 {
+		selLine = l
+	}
+	return b.String(), selLine
 }
 
 // writeDepSection appends one collapsing dependency section to b. It
@@ -5103,37 +5126,41 @@ func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsEr
 // sections; base is this section's offset into that flattened space
 // (0 for dependencies, len(deps) for dependents). The row whose
 // base+localIdx == selectedLink gets a "▶ " cursor prefix and the
-// brighter cursor style so the keyboard selection is visible.
-func writeDepSection(b *strings.Builder, width int, header string, rows []beads.Issue, isErr bool, unavailable string, selectedLink, base int) {
+// brighter cursor style so the keyboard selection is visible. Returns
+// the 0-based line index of that selected row (or -1 if it isn't in
+// this section) so the caller can scroll to it without a glyph scan.
+func writeDepSection(b *strings.Builder, width int, header string, rows []beads.Issue, isErr bool, unavailable string, selectedLink, base int) int {
 	if len(rows) == 0 && !isErr {
-		return
+		return -1
 	}
 	b.WriteString("\n\n")
 	b.WriteString(detailLabelStyle.Render(header))
 	b.WriteString("\n")
 	if isErr {
 		b.WriteString(emptyStyle.Render(unavailable))
-		return
+		return -1
 	}
+	selLine := -1
 	for idx, r := range rows {
 		if idx > 0 {
 			b.WriteString("\n")
 		}
 		line := fmt.Sprintf("%s — %s (%s)", r.ID, r.Title, r.Status)
+		if width > 2 {
+			line = trunc(line, width-2)
+		}
 		if base+idx == selectedLink {
-			// Reserve the same 2-cell gutter the unselected rows get
-			// (two leading spaces) so selection doesn't shift the text.
-			if width > 2 {
-				line = trunc(line, width-2)
-			}
+			// The about-to-be-written row's line index = newlines so
+			// far (the leading "\n" for idx>0 was already written).
+			selLine = strings.Count(b.String(), "\n")
+			// Reserve the same 2-cell gutter the unselected rows get so
+			// selection doesn't shift the text.
 			b.WriteString(cursorStyle.Render("▶ ") + cursorStyle.Render(line))
 		} else {
-			if width > 2 {
-				line = trunc(line, width-2)
-			}
 			b.WriteString(emptyStyle.Render("  " + line))
 		}
 	}
+	return selLine
 }
 
 func (m Model) viewDetail() string {

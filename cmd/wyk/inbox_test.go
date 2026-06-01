@@ -180,3 +180,36 @@ func TestEmitInboxJSON_TotalFailureEmitsParseableEnvelope(t *testing.T) {
 		t.Errorf("total-failure envelope should be parseable with issues:[] + errors; got %s", out)
 	}
 }
+
+func TestSubErrorsToRepoErrors_Converts(t *testing.T) {
+	got := subErrorsToRepoErrors([]subError{{repo: "a", err: errors.New("boom")}})
+	if len(got) != 1 || got[0].Repo != "a" || got[0].Error != "boom" {
+		t.Errorf("conversion wrong: %+v", got)
+	}
+	// Empty input → empty (non-nil) slice that omitempty still elides.
+	if subErrorsToRepoErrors(nil) == nil {
+		t.Error("expected a non-nil empty slice for nil input")
+	}
+}
+
+func TestInbox_TotalFailureIsCountBased(t *testing.T) {
+	// The total-vs-partial distinction must be "every queried repo
+	// errored", not "zero issues gathered" — a healthy repo that
+	// happens to return zero items alongside a failing one is a
+	// PARTIAL success (exit 0), matching the activity command. We
+	// exercise the classification directly via the count predicate the
+	// handler now uses.
+	subs := []inboxSub{{name: "healthy-empty"}, {name: "broken"}}
+	// healthy returns nothing; broken errors.
+	all, subErrs := splitInboxResults(subs,
+		[][]beads.Issue{nil, nil},
+		[]error{nil, errors.New("boom")})
+	if len(all) != 0 {
+		t.Fatalf("setup: expected zero gathered issues; got %d", len(all))
+	}
+	// One sub failed of two → NOT total failure (the old len(all)==0
+	// heuristic would have mislabeled this).
+	if len(subErrs) == len(subs) {
+		t.Errorf("one healthy + one broken must be partial, not total; subErrs=%d subs=%d", len(subErrs), len(subs))
+	}
+}

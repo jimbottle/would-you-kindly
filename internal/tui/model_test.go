@@ -1223,7 +1223,7 @@ func TestDetailBody_WrapsLongDescription(t *testing.T) {
 	// off the right edge and the body is unreadable.
 	long := strings.Repeat("word ", 30) // ~150 chars, well past 40-col wrap
 	i := beads.Issue{Description: long}
-	out := detailBody(i, 40, nil, nil, false, false, -1)
+	out, _ := detailBody(i, 40, nil, nil, false, false, -1)
 	// Each rendered line must be ≤ 40 cells. lipgloss may emit
 	// ANSI; strip the test of ANSI by checking each line as-is
 	// since this body has no foreground styles applied to its
@@ -1288,7 +1288,7 @@ func TestDetailBody_WidthZeroSkipsWrap(t *testing.T) {
 	// shows something legible. The next paint with a real width
 	// re-wraps correctly.
 	i := beads.Issue{Description: "a very long line that should not be touched here"}
-	out := detailBody(i, 0, nil, nil, false, false, -1)
+	out, _ := detailBody(i, 0, nil, nil, false, false, -1)
 	if !strings.Contains(out, "a very long line that should not be touched here") {
 		t.Errorf("width=0 should pass body through verbatim; got %q", out)
 	}
@@ -1300,7 +1300,7 @@ func TestDetailBody_RendersDependencySections(t *testing.T) {
 	i := beads.Issue{ID: "a-1", Description: "root"}
 	deps := []beads.Issue{{ID: "a-2", Title: "needs this", Status: "open"}}
 	dependents := []beads.Issue{{ID: "a-3", Title: "blocks that", Status: "in_progress"}}
-	out := detailBody(i, 80, deps, dependents, false, false, -1)
+	out, _ := detailBody(i, 80, deps, dependents, false, false, -1)
 	for _, want := range []string{
 		"dependencies", "a-2 — needs this (open)",
 		"dependents", "a-3 — blocks that (in_progress)",
@@ -1315,7 +1315,7 @@ func TestDetailBody_EmptySectionsCollapse(t *testing.T) {
 	// Zero rows and no error → the section (and its header) is omitted
 	// entirely so the body doesn't sprout empty "dependencies" labels.
 	i := beads.Issue{ID: "a-1", Description: "lonely"}
-	out := detailBody(i, 80, nil, nil, false, false, -1)
+	out, _ := detailBody(i, 80, nil, nil, false, false, -1)
 	if strings.Contains(out, "dependencies") || strings.Contains(out, "dependents") {
 		t.Errorf("empty dep sections should collapse; got:\n%s", out)
 	}
@@ -1326,7 +1326,7 @@ func TestDetailBody_FailedLookupShowsUnavailable(t *testing.T) {
 	// line so the body still flows (and the user knows it's an error,
 	// not a genuinely empty set).
 	i := beads.Issue{ID: "a-1", Description: "boom"}
-	out := detailBody(i, 80, nil, nil, true, true, -1)
+	out, _ := detailBody(i, 80, nil, nil, true, true, -1)
 	for _, want := range []string{
 		"dependencies", "(deps unavailable)",
 		"dependents", "(dependents unavailable)",
@@ -6002,5 +6002,85 @@ func TestRenderDetailBody_HighlightsSelectedLink(t *testing.T) {
 	m.detailLinkIdx = -1
 	if strings.Contains(m.renderDetailBody(m.detailIssue), "▶") {
 		t.Errorf("no marker should render when nothing is selected")
+	}
+}
+
+func TestCycleDetailLink_ScrollsOffScreenLinkIntoView(t *testing.T) {
+	// A short viewport with many links: Tabbing down to a link below
+	// the fold must advance YOffset to bring it on screen. Pins the
+	// ensureDetailLinkVisible scroll math (the one piece of new arith).
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m.mode = modeDetail
+	m.detailIssue = beads.Issue{ID: "a-1", Title: "root", Description: "body"}
+	// 30 dependency links; a 6-row viewport so most are below the fold.
+	deps := make([]beads.Issue, 30)
+	for i := range deps {
+		deps[i] = beads.Issue{ID: fmt.Sprintf("a-%02d", i), Title: "dep", Status: "open"}
+	}
+	m.depCache["a-1"] = deps
+	m.detailVP.Width = 80
+	m.detailVP.Height = 6
+	m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
+	m.detailVP.GotoTop()
+
+	// Tab to the last link (index 29) — far below the fold.
+	for i := 0; i < 30; i++ {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = model.(Model)
+	}
+	if m.detailLinkIdx != 29 {
+		t.Fatalf("expected to land on link 29; got %d", m.detailLinkIdx)
+	}
+	if m.detailVP.YOffset == 0 {
+		t.Errorf("cycling to an off-screen link should have scrolled the viewport; YOffset still 0")
+	}
+	// The selected line must now be within the visible window.
+	_, selLine := m.renderDetailBodyWithLine(m.detailIssue)
+	if selLine < m.detailVP.YOffset || selLine >= m.detailVP.YOffset+m.detailVP.Height {
+		t.Errorf("selected line %d not in view [%d,%d)", selLine, m.detailVP.YOffset, m.detailVP.YOffset+m.detailVP.Height)
+	}
+}
+
+// stubDetailSource is a stubSource that also satisfies Detailer, so
+// tests can observe the Detail() enrichment dispatch.
+type stubDetailSource struct {
+	stubSource
+	detailed []string
+}
+
+func (s *stubDetailSource) Detail(_ context.Context, i beads.Issue) (beads.Issue, error) {
+	s.detailed = append(s.detailed, i.ID)
+	i.Notes = "enriched"
+	return i, nil
+}
+
+func TestDetailBack_ReEnrichesPoppedParent(t *testing.T) {
+	// Regression for the slim-parent race: drilling in can push a
+	// not-yet-enriched parent (Enter before its detailMsg landed). On
+	// pop we must re-dispatch Detail() so its notes come back rather
+	// than stranding a body-less parent.
+	src := &stubDetailSource{stubSource: stubSource{issues: sampleIssues()}}
+	mm := New(src)
+	mm.mode = modeDetail
+	mm.detailStack = []beads.Issue{{ID: "a-1", Title: "parent"}} // slim (no notes)
+	mm.detailIssue = beads.Issue{ID: "a-3"}
+
+	model, cmd := mm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm = model.(Model)
+	if mm.detailIssue.ID != "a-1" {
+		t.Fatalf("pop should restore a-1; got %q", mm.detailIssue.ID)
+	}
+	if cmd == nil {
+		t.Fatal("pop should dispatch a re-enrich Detail() cmd for the restored parent")
+	}
+	// Run the cmd; it must produce a detailMsg for a-1 (enriched).
+	msg := cmd()
+	dm, ok := msg.(detailMsg)
+	if !ok {
+		t.Fatalf("expected a detailMsg from the pop cmd; got %T", msg)
+	}
+	if dm.issue.ID != "a-1" || dm.issue.Notes != "enriched" {
+		t.Errorf("pop should re-enrich a-1; got id=%q notes=%q", dm.issue.ID, dm.issue.Notes)
 	}
 }

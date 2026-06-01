@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -71,8 +70,11 @@ func runInbox(args []string) int {
 	}
 
 	all, subErrs := fetchInbox(subs)
-	if len(all) == 0 && len(subErrs) > 0 {
-		// Total failure (nothing gathered, every queried repo errored).
+	if len(subErrs) > 0 && len(subErrs) == len(subs) {
+		// Total failure = EVERY queried repo errored. Keyed off the
+		// error count (not len(all)==0) so a healthy-but-empty repo
+		// alongside a failing one is still a partial success — exit 0
+		// with the data + errors — matching the activity command.
 		// Distinguish the typed bd sentinels so the documented exit
 		// codes (2 for bd-missing / no-workspace) actually fire,
 		// matching wyk handoff's behavior.
@@ -91,7 +93,7 @@ func runInbox(args []string) int {
 		if *asJSON {
 			emitInboxJSON(nil, subErrs)
 		} else {
-			fmt.Fprintln(os.Stderr, "wyk inbox:", joinSubErrors(subErrs))
+			fmt.Fprintln(os.Stderr, "wyk inbox:", joinRepoErrors(subErrorsToRepoErrors(subErrs)))
 		}
 		return 1
 	}
@@ -119,10 +121,7 @@ func emitInboxJSON(all []beads.Issue, subErrs []subError) {
 	if all == nil {
 		all = []beads.Issue{}
 	}
-	res := inboxResult{Issues: all}
-	for _, e := range subErrs {
-		res.Errors = append(res.Errors, repoError{Repo: e.repo, Error: e.err.Error()})
-	}
+	res := inboxResult{Issues: all, Errors: subErrorsToRepoErrors(subErrs)}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(res); err != nil {
@@ -130,18 +129,16 @@ func emitInboxJSON(all []beads.Issue, subErrs []subError) {
 	}
 }
 
-// joinSubErrors renders the per-repo failures as one "repo: err; …"
-// line for the text/stderr paths.
-func joinSubErrors(subErrs []subError) string {
-	parts := make([]string, 0, len(subErrs))
+// subErrorsToRepoErrors converts the typed-error subError slice to the
+// JSON-shaped repoError slice. The single conversion point lets inbox
+// and stats share one renderer (joinRepoErrors) and one envelope type
+// with activity instead of carrying parallel helpers.
+func subErrorsToRepoErrors(subErrs []subError) []repoError {
+	out := make([]repoError, 0, len(subErrs))
 	for _, e := range subErrs {
-		if e.repo != "" {
-			parts = append(parts, e.repo+": "+e.err.Error())
-		} else {
-			parts = append(parts, e.err.Error())
-		}
+		out = append(out, repoError{Repo: e.repo, Error: e.err.Error()})
 	}
-	return strings.Join(parts, "; ")
+	return out
 }
 
 // inboxSub bundles a client with its display name — same shape as
@@ -328,6 +325,6 @@ func renderInboxText(all []beads.Issue, subErrs []subError) {
 		}
 	}
 	if len(subErrs) > 0 {
-		fmt.Printf("\n%d repo(s) failed (inbox may be incomplete): %s\n", len(subErrs), joinSubErrors(subErrs))
+		fmt.Printf("\n%d repo(s) failed (inbox may be incomplete): %s\n", len(subErrs), joinRepoErrors(subErrorsToRepoErrors(subErrs)))
 	}
 }
