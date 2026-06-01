@@ -32,13 +32,14 @@ func runExport(args []string) int {
 	// the full dump, matching the historical behavior.
 	since := fs.String("since", "", "filter issues to those updated within this duration (e.g. 24h, 168h)")
 	compact := fs.Bool("compact", false, "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)")
+	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels/timestamps); ~75%+ smaller for an LLM scanning the backlog")
 	repoName := fs.String("repo", "", "restrict the dump to the registered repo with this name (empty = full registry)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-compact] [-repo name]")
+		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-compact] [-slim] [-repo name]")
 		return 64
 	}
 	var cutoff time.Time
@@ -78,6 +79,9 @@ func runExport(args []string) int {
 	dump, hadError := collectExport(reg, defaultExportClient)
 	if !cutoff.IsZero() {
 		dump = filterDumpSince(dump, cutoff)
+	}
+	if *slim {
+		slimDump(&dump)
 	}
 	emitExportJSON(os.Stdout, dump, *compact)
 	if hadError {
@@ -211,6 +215,32 @@ func filterDumpSince(dump exportDump, cutoff time.Time) exportDump {
 		out.Repos[i] = r
 	}
 	return out
+}
+
+// slimIssue strips the heavy free-text bodies (description, notes)
+// from an issue so the agent-facing JSON carries only the lightweight
+// metadata an LLM needs to scan a backlog (id/title/status/priority/
+// labels/timestamps/counts). Description alone is ~3/4 of export
+// bytes. Zeroing rather than projecting to a new struct keeps the
+// field set in lockstep with beads.Issue: the empties are then
+// dropped by the struct's omitempty tags (see internal/beads/issue.go).
+func slimIssue(i beads.Issue) beads.Issue {
+	i.Description = ""
+	i.Notes = ""
+	i.CreatedAt = time.Time{}
+	i.UpdatedAt = time.Time{}
+	i.ClosedAt = time.Time{}
+	i.CreatedBy = ""
+	return i
+}
+
+// slimDump applies slimIssue to every issue in the dump in place.
+func slimDump(dump *exportDump) {
+	for r := range dump.Repos {
+		for j := range dump.Repos[r].Issues {
+			dump.Repos[r].Issues[j] = slimIssue(dump.Repos[r].Issues[j])
+		}
+	}
 }
 
 // emitExportJSON prints the dump to w. Defaults to indented for

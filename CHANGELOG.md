@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`-slim` for `wyk export` and `wyk inbox`** — drops the heavy
+  `description`/`notes` bodies (and timestamps/`created_by`) from each
+  issue, keeping the lightweight metadata an LLM needs to scan a
+  backlog (`id`/`title`/`status`/`priority`/`labels`). ~72% smaller on
+  a body-heavy export. The full shape is unchanged without the flag.
+  Part of the agent-token-efficiency epic.
+
 - **Drill into dependencies from the detail view** — the
   `Dependencies`/`Dependents` rows are now selectable: `Tab`
   (`Shift-Tab`, or `n`/`p`) cycles a highlight through them, `Enter`

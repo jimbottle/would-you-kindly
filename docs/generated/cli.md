@@ -47,13 +47,14 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-scan <r
 Agent inbox: issues filed with `src:agent` that a human has bounced back.
 
 ```
-wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N]
+wyk inbox [-C <dir>] [-json] [-slim] [-priority N] [-repo name] [-limit N]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
 | `-json` | `false` | emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated) |
+| `-slim` | `false` | drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata) |
 | `-priority` | `-1` | cap the inbox at priority N or higher (lower number = higher priority; -1 disables) |
 | `-repo` | `_(empty)_` | restrict the inbox to the registered repo with this name (mutually exclusive with -C) |
 | `-limit` | `-1` | cap the inbox at N rows (after priority/repo filtering; -1 disables) |
@@ -146,13 +147,14 @@ wyk dashboard [-json] [-days N] [-repo name] [-priority N]
 JSON dump of every registered repo's full issue list + ready IDs.
 
 ```
-wyk export [-since 24h] [-compact] [-repo name]
+wyk export [-since 24h] [-compact] [-slim] [-repo name]
 ```
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-since` | `_(empty)_` | filter issues to those updated within this duration (e.g. 24h, 168h) |
 | `-compact` | `false` | emit non-indented JSON (smaller; better for piping into jq / streaming consumers) |
+| `-slim` | `false` | drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels/timestamps); ~75%+ smaller for an LLM scanning the backlog |
 | `-repo` | `_(empty)_` | restrict the dump to the registered repo with this name (empty = full registry) |
 
 ## `wyk import`

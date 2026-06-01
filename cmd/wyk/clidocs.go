@@ -64,10 +64,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "inbox",
 		Summary: "Agent inbox: issues filed with `src:agent` that a human has bounced back.",
-		Usage:   "wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N]",
+		Usage:   "wyk inbox [-C <dir>] [-json] [-slim] [-priority N] [-repo name] [-limit N]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
 			{Name: "-json", Default: "false", Description: "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated)"},
+			{Name: "-slim", Default: "false", Description: "drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata)"},
 			{Name: "-priority", Default: "-1", Description: "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)"},
 			{Name: "-repo", Default: "", Description: "restrict the inbox to the registered repo with this name (mutually exclusive with -C)"},
 			{Name: "-limit", Default: "-1", Description: "cap the inbox at N rows (after priority/repo filtering; -1 disables)"},
@@ -135,10 +136,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "export",
 		Summary: "JSON dump of every registered repo's full issue list + ready IDs.",
-		Usage:   "wyk export [-since 24h] [-compact] [-repo name]",
+		Usage:   "wyk export [-since 24h] [-compact] [-slim] [-repo name]",
 		Flags: []cliFlag{
 			{Name: "-since", Default: "", Description: "filter issues to those updated within this duration (e.g. 24h, 168h)"},
 			{Name: "-compact", Default: "false", Description: "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)"},
+			{Name: "-slim", Default: "false", Description: "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels/timestamps); ~75%+ smaller for an LLM scanning the backlog"},
 			{Name: "-repo", Default: "", Description: "restrict the dump to the registered repo with this name (empty = full registry)"},
 		},
 	},

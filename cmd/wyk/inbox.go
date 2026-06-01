@@ -41,6 +41,7 @@ func runInbox(args []string) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
 	asJSON := fs.Bool("json", false, "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed)")
+	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata)")
 	// -priority caps the inbox at priority N or higher (lower N
 	// = higher priority in bd's convention). -1 (the default)
 	// disables the cap. A user passing -priority 1 gets P0 + P1
@@ -102,6 +103,13 @@ func runInbox(args []string) int {
 		all = filterByMaxPriority(all, *maxPriority)
 	}
 	all = limitByPriority(all, *limit)
+	if *slim {
+		// Drop the heavy bodies; only meaningful in -json mode (the
+		// text view never prints description/notes anyway).
+		for i := range all {
+			all[i] = slimIssue(all[i])
+		}
+	}
 
 	// Partial success (some repos failed, some succeeded) falls through
 	// here: emit what we have AND the errors so the result is honestly

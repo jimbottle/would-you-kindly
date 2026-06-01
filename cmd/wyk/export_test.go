@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,5 +226,54 @@ func TestEmitExportJSON_CompactSkipsIndentation(t *testing.T) {
 	var got exportDump
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Errorf("compact output should still parse; %v\nraw: %s", err, buf.String())
+	}
+}
+
+func TestSlimIssue_DropsBodiesAndTimestampsKeepsCore(t *testing.T) {
+	full := beads.Issue{
+		ID: "a-1", Title: "t", Status: "open", Priority: 0,
+		Description: strings.Repeat("x", 5000), Notes: "n",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(), CreatedBy: "me",
+		Labels: []string{"src:agent"},
+	}
+	s := slimIssue(full)
+	if s.Description != "" || s.Notes != "" || s.CreatedBy != "" {
+		t.Error("slim should clear description/notes/created_by")
+	}
+	if !s.CreatedAt.IsZero() || !s.UpdatedAt.IsZero() {
+		t.Error("slim should zero the timestamps (omitzero then drops them)")
+	}
+	// Load-bearing fields survive — including priority 0.
+	if s.ID != "a-1" || s.Title != "t" || s.Status != "open" || s.Priority != 0 {
+		t.Errorf("slim dropped a load-bearing field: %+v", s)
+	}
+	if len(s.Labels) != 1 {
+		t.Error("slim should keep labels")
+	}
+	// Marshaled slim issue must not contain the heavy keys.
+	b, _ := json.Marshal(s)
+	for _, gone := range []string{"description", "notes", "created_at", "updated_at", "created_by"} {
+		if strings.Contains(string(b), gone) {
+			t.Errorf("slim JSON still contains %q: %s", gone, b)
+		}
+	}
+	// priority:0 must remain.
+	if !strings.Contains(string(b), `"priority":0`) {
+		t.Errorf("slim must keep priority:0; got %s", b)
+	}
+}
+
+func TestSlimDump_AppliesToEveryIssue(t *testing.T) {
+	dump := exportDump{Repos: []exportRepo{
+		{Name: "r1", Issues: []beads.Issue{{ID: "a-1", Description: "body"}, {ID: "a-2", Description: "body2"}}},
+		{Name: "r2", Issues: []beads.Issue{{ID: "b-1", Notes: "note"}}},
+	}}
+	slimDump(&dump)
+	for _, r := range dump.Repos {
+		for _, i := range r.Issues {
+			if i.Description != "" || i.Notes != "" {
+				t.Errorf("slimDump missed an issue: %+v", i)
+			}
+		}
 	}
 }

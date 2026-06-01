@@ -13,13 +13,17 @@ type Issue struct {
 	// title, status, and priority in particular are load-bearing for
 	// every consumer, and priority MUST stay (0 == P0/critical, which
 	// omitempty would silently drop).
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	Priority  int       `json:"priority"`
-	IssueType string    `json:"issue_type"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	Priority  int    `json:"priority"`
+	IssueType string `json:"issue_type"`
+	// created_at/updated_at use omitzero (not omit) — a real issue's
+	// timestamps are never zero, so full output is unchanged; the
+	// option exists only so `-slim` (which zeroes them via slimIssue)
+	// drops them too.
+	CreatedAt time.Time `json:"created_at,omitzero"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 
 	// Optional/often-empty fields are elided when empty to cut the
 	// per-issue token cost of the agent-facing -json outputs (export,
