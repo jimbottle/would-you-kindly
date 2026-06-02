@@ -89,7 +89,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	},
 	{
 		Name:    "doctor",
-		Summary: "Checks bd / wyk on PATH, $EDITOR, audit-trail actor, XDG paths, agent skills, and per-repo .git / .beads / hook state plus open issues with no assignee.",
+		Summary: "Checks bd / wyk on PATH, $EDITOR, audit-trail actor, XDG paths, agent skills, and per-repo .git / .beads / hook state plus non-closed issues with no assignee.",
 		Usage:   "wyk doctor [-json] [-fix [-dry-run]]",
 		Flags: []cliFlag{
 			{Name: "-json", Default: "false", Description: "emit checks as a structured JSON object for CI / dashboard consumption"},

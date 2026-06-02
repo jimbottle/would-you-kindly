@@ -641,7 +641,7 @@ func checkRepo(r registry.Repo) []check {
 				out = append(out, check{
 					name:   prefix + ": issues without an assignee",
 					status: statusWarn,
-					detail: fmt.Sprintf("%d open issue(s) have no assignee (the owner convention): %s. Assign each with `bd update <id> -a <name> --dolt-auto-commit=on` (or `--claim`).",
+					detail: fmt.Sprintf("%d non-closed issue(s) have no assignee (the owner convention): %s. Assign each with `bd update <id> -a <name> --dolt-auto-commit=on` (or `--claim`).",
 						len(un), summarizeIDs(un, 10)),
 				})
 			}
@@ -752,12 +752,12 @@ func unassignedIssueIDs(issues []beads.Issue) []string {
 	return out
 }
 
-// summarizeIDs joins IDs for a check detail, capping the list at max
+// summarizeIDs joins IDs for a check detail, capping the list at limit
 // with a "(+N more)" tail so a repo with dozens of offenders doesn't
-// flood the doctor output.
-func summarizeIDs(ids []string, max int) string {
-	if len(ids) <= max {
+// flood the doctor output. (limit, not max — that shadows a builtin.)
+func summarizeIDs(ids []string, limit int) string {
+	if len(ids) <= limit {
 		return strings.Join(ids, ", ")
 	}
-	return strings.Join(ids[:max], ", ") + fmt.Sprintf(" (+%d more)", len(ids)-max)
+	return strings.Join(ids[:limit], ", ") + fmt.Sprintf(" (+%d more)", len(ids)-limit)
 }
