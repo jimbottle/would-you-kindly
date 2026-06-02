@@ -28,15 +28,19 @@ records who filed it. The full contract lives in
 
 ## Install
 
-You'll need Go 1.26+ (matching `go.mod`) and
-[bd](https://github.com/gastownhall/beads) on your `PATH`.
+You'll need Go 1.26+ (matching `go.mod`) and the **`bd` (beads)** binary on
+your `PATH` — wyk shells out to it for all storage. Install bd first by
+following the instructions in its repo:
+[github.com/gastownhall/beads](https://github.com/gastownhall/beads).
+
+Then install wyk:
 
 ```bash
 # Latest tagged release:
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest
 
 # Or tip of main:
-go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest
+go install github.com/jimbottle/would-you-kindly/cmd/wyk@main
 ```
 
 Or from a checkout:
@@ -45,12 +49,21 @@ Or from a checkout:
 go build -o ./bin/wyk ./cmd/wyk
 ```
 
+First run, inside a repo (creates the beads workspace if needed, installs
+the auto-close hook, and registers the repo):
+
+```bash
+bd init      # only if this repo has no .beads workspace yet
+wyk init     # install the post-commit hook + register the repo
+wyk doctor   # verify bd, wyk, and the hook are all wired up
+```
+
 Check what version you're running:
 
 ```bash
 wyk --version
-# Tagged install (go install ...@vX.Y.Z): wyk v0.2.3
-# Pseudoversion (go install ...@latest):  wyk v0.2.4-0.YYYYMMDD-<sha>
+# Tagged install (go install ...@vX.Y.Z): wyk v0.5.0
+# Pseudoversion (go install ...@latest):  wyk v0.5.1-0.YYYYMMDD-<sha>
 # From-checkout build (go build):         wyk (devel) (commit <sha>)
 ```
 
@@ -349,10 +362,17 @@ wyk activity [-since 24h] [-priority N] [-repo name] [-status open|closed|all] [
 wyk export   [-since 24h] [-compact] [-repo name]                        # JSON dump
 wyk import   [-file path] [-dry-run] [-repo name]                        # restore from a dump
 wyk dashboard [-json] [-days N] [-repo name]                             # per-repo rollup
+wyk depgraph [-repo name] [-json]                                        # dependency tree
+wyk skills   <list|install|uninstall|print>                             # agent skills for Claude Code
+wyk update   [-y] [-channel any|stable] [-dry-run]                       # self-update via go install
 wyk completion <bash|zsh|fish>                                           # shell completion
 wyk help [--markdown]                                                    # keymap reference
 wyk version [--check]                                                    # 0 current / 1 newer / 2 net err
 ```
+
+The full CLI reference is generated at
+[`docs/generated/cli.md`](docs/generated/cli.md) and the TUI keymap at
+[`docs/generated/keymap.md`](docs/generated/keymap.md).
 
 `wyk inbox -priority N -repo <name>` and `wyk handoff -note <text>`
 extend the existing inbox/handoff commands. Every subcommand that
@@ -429,18 +449,16 @@ blocked on a human — next to the Repo / Branch / Status columns and the
 
 ## Status
 
-**v0.4.0 shipped** — `wyk` graduates from "TUI over the inbox" to a
-CLI-driven toolkit around the same handoff contract. New subcommands:
-`activity`, `export`, `import`, `dashboard`, `doctor`, `help`,
-`completion`, `version --check`. TUI gains a much larger keymap —
-write actions (`e`/`L`/`O`/`d`/`v`/`+`/`-`/`u`/`.`), four clipboard
-yank variants (`y`/`Y`/`*`/`M`/`_`), view toggles (`o`/`C`/`s`/`S`),
-multi-line note textarea, `@name` saved-filter expansion, and a `:`
-command palette with `:bd <args>` for raw bd output. Customization:
-`theme.json` color overlay, `NO_COLOR` support, top-level `-preset`
-to launch into a specific view. See the [CHANGELOG](CHANGELOG.md)
-for the full list.
+`wyk` is actively developed. See the
+[CHANGELOG](CHANGELOG.md) and the
+[GitHub releases](https://github.com/jimbottle/would-you-kindly/releases)
+for what's shipped and when. It's a CLI-driven toolkit around the
+human-in-the-loop handoff contract: the multi-repo TUI plus subcommands
+(`init`, `handoff`, `inbox`, `stats`, `dashboard`, `doctor`, `registry`,
+`export`, `import`, `activity`, `depgraph`, `skills`, `update`), agent
+skills installable into Claude Code, a `theme.json` color overlay with
+light/dark adaptation, and `NO_COLOR` support.
 
 ## License
 
-MIT. © Raylitics LLC.
+MIT. © Raylytics LLC. See [LICENSE](LICENSE).
