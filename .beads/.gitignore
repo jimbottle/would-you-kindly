@@ -68,6 +68,18 @@ backup/
 *.db-shm
 db.sqlite
 bd.db
+
+# Issue/interaction exports — NOT published in this repo. The data lives
+# in Dolt (synced via bd's own remote); committing the JSONL would carry
+# the maintainer's git-email owner field and internal issue text into the
+# public tree. A fresh clone starts with an empty bd workspace.
+issues.jsonl
+interactions.jsonl
+
+# bd's managed hooks: per-machine, with absolute tool paths — not portable
+# across clones, so never published.
+hooks/
+
 # NOTE: Do NOT add negation patterns here.
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default
