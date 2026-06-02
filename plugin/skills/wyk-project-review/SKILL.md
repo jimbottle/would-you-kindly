@@ -18,7 +18,15 @@ bd ready                           # unblocked work
 bd list --status=open --json       # the full open backlog
 wyk depgraph                       # dependency structure (text tree)
 bd doctor --check=conventions      # lint / stale / orphans
+
+# MANDATORY: every issue must have an assignee. This MUST come back empty.
+bd list --all --json | jq '[.[]|select(.assignee==null or .assignee=="")|.id]'
 ```
+
+If that last command returns any IDs, that's a convention violation —
+**fix it before anything else**: `bd update <id> -a <assignee>
+--dolt-auto-commit=on` (or `--claim`). bd has no enforcement, so this is
+the only guard.
 
 ## 2. Audit each open issue against what you know
 
