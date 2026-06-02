@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`core.hooksPath`-aware hooks** — auto-close silently failed when
+  git's `core.hooksPath` redirected hooks away from `.git/hooks` (e.g.
+  `bd` points it at `.beads/hooks`), so the `Closes:` trailer ran a hook
+  that never fired. `wyk init` now installs into the **active** hooks dir
+  (following `core.hooksPath`, chaining any existing hook there) so the
+  hook git actually runs is wyk's; it refuses with guidance when
+  `core.hooksPath` points *outside* the repo (stale config). `wyk doctor`
+  gained a `core.hooksPath redirect` check that explains the bypass and
+  the right fix, and `wyk uninstall` removes from the active dir too.
+
 ## [0.5.0] — 2026-06-01
 
 ### Added

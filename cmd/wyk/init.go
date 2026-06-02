@@ -166,7 +166,7 @@ func runInit(args []string) int {
 		return runScanAndRegister(*scanRoot, *dryRun)
 	}
 
-	gitDir, repoRoot, err := findGitPaths()
+	_, repoRoot, err := findGitPaths()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk init:", err)
 		return 2
@@ -213,7 +213,27 @@ func runInit(args []string) int {
 		}
 	}
 
-	hookPath := filepath.Join(gitDir, "hooks", "post-commit")
+	// Install into the hooks dir git ACTUALLY runs. resolveGitHookPath
+	// follows core.hooksPath — so when another tool (e.g. bd) redirects
+	// it at .beads/hooks, wyk chains into the hook that runs instead of
+	// writing a dead file in .git/hooks. It also handles worktrees /
+	// gitlinks. With core.hooksPath unset this is the usual
+	// .git/hooks/post-commit.
+	hookPath, herr := resolveGitHookPath(repoRoot, "post-commit")
+	if herr != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: resolve hook path:", herr)
+		return 1
+	}
+	// Refuse when core.hooksPath redirects hooks OUTSIDE this repo (a
+	// stale or cross-repo value): writing wyk's hook into another
+	// location would be wrong, and the redirect means a .git/hooks
+	// install wouldn't run anyway. Make the user fix the config first.
+	if activeDir, redirected, inside, _ := hooksPathRedirect(repoRoot); redirected && !inside {
+		fmt.Fprintf(os.Stderr, "wyk init: git's core.hooksPath points outside this repo:\n          %s\n", activeDir)
+		fmt.Fprintln(os.Stderr, "          That's almost certainly stale — clear it and re-run wyk init:")
+		fmt.Fprintln(os.Stderr, "          git -C "+repoRoot+" config --unset core.hooksPath")
+		return 64
+	}
 	preWykPath := hookPath + ".pre-wyk"
 
 	// Step 2: install the post-commit hook. Each branch sets
@@ -318,19 +338,6 @@ func runInit(args []string) int {
 			fmt.Printf("wyk init: installed post-commit hook at %s\n", hookPath)
 			fmt.Println("  Commits whose message includes `Closes: <id>`, `Fixes: <id>`, or")
 			fmt.Println("  `Resolves: <id>` will now auto-close the referenced bd issue.")
-			// If git's core.hooksPath redirects hooks elsewhere, the hook
-			// we just wrote to .git/hooks will never run — warn loudly
-			// rather than letting auto-close silently no-op.
-			if activeDir, redirected, inside, _ := hooksPathRedirect(repoRoot); redirected &&
-				filepath.Clean(activeDir) != filepath.Clean(filepath.Dir(hookPath)) {
-				fmt.Fprintf(os.Stderr, "wyk init: WARNING git's core.hooksPath redirects hooks to %s —\n", activeDir)
-				fmt.Fprintf(os.Stderr, "          the hook just installed in %s will NOT run.\n", filepath.Dir(hookPath))
-				if inside {
-					fmt.Fprintln(os.Stderr, "          Point core.hooksPath at this dir, or unset it: git -C "+repoRoot+" config --unset core.hooksPath")
-				} else {
-					fmt.Fprintln(os.Stderr, "          That path is outside this repo (likely stale): git -C "+repoRoot+" config --unset core.hooksPath")
-				}
-			}
 		}
 	}
 
@@ -689,12 +696,19 @@ func defaultProbeBD(ctx context.Context, dir string) error {
 //	2  no git repo here (findGitPaths failed)
 //	64 hook present but not wyk's — refused
 func runUninstall(dryRun bool) int {
-	gitDir, _, err := findGitPaths()
+	_, repoRoot, err := findGitPaths()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk init:", err)
 		return 2
 	}
-	hookPath := filepath.Join(gitDir, "hooks", "post-commit")
+	// Resolve the active hooks dir (follows core.hooksPath) so uninstall
+	// removes the hook from wherever init installed it, not a stale
+	// .git/hooks copy.
+	hookPath, herr := resolveGitHookPath(repoRoot, "post-commit")
+	if herr != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: resolve hook path:", herr)
+		return 1
+	}
 	preWykPath := hookPath + ".pre-wyk"
 
 	existing, err := os.ReadFile(hookPath)

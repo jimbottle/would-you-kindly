@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,82 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
+
+// TestInit_InstallsIntoActiveHooksDirWhenRedirectedInRepo verifies that
+// when core.hooksPath redirects hooks at an in-repo dir (the bd setup),
+// wyk init chains into the hook git actually runs — not a dead file in
+// .git/hooks.
+func TestInit_InstallsIntoActiveHooksDirWhenRedirectedInRepo(t *testing.T) {
+	repo := gitInit(t)
+	active := filepath.Join(repo, ".beads", "hooks")
+	if err := os.MkdirAll(active, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-existing (e.g. roborev) hook already lives in the active dir.
+	if err := os.WriteFile(filepath.Join(active, "post-commit"), []byte("#!/bin/sh\n# roborev\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitConfigSet(t, repo, "core.hooksPath", active)
+
+	if code := runInitIn(t, repo, "-chain", "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Fatalf("init exit = %d, want 0", code)
+	}
+
+	body, err := os.ReadFile(filepath.Join(active, "post-commit"))
+	if err != nil {
+		t.Fatalf("active post-commit: %v", err)
+	}
+	if !bytes.Contains(body, []byte(hookMarker)) {
+		t.Error("the active-dir post-commit should be wyk's chained hook after init")
+	}
+	if _, err := os.Stat(filepath.Join(active, "post-commit.pre-wyk")); err != nil {
+		t.Errorf("the pre-existing hook should be preserved as .pre-wyk in the active dir: %v", err)
+	}
+	// And nothing wyk in the bypassed .git/hooks.
+	if b, err := os.ReadFile(filepath.Join(repo, ".git", "hooks", "post-commit")); err == nil && bytes.Contains(b, []byte(hookMarker)) {
+		t.Error("wyk must not write to .git/hooks when core.hooksPath redirects elsewhere")
+	}
+}
+
+// TestInit_RefusesWhenHooksPathOutsideRepo verifies wyk init refuses to
+// write when core.hooksPath points outside the repo (stale/cross-repo),
+// rather than installing into another location.
+func TestInit_RefusesWhenHooksPathOutsideRepo(t *testing.T) {
+	repo := gitInit(t)
+	outside := t.TempDir()
+	gitConfigSet(t, repo, "core.hooksPath", outside)
+
+	if code := runInitIn(t, repo, "-skip-bd-init", "-skip-register"); code != 64 {
+		t.Errorf("init exit = %d, want 64 (refused)", code)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "post-commit")); err == nil {
+		t.Error("init must not write into the external hooks dir")
+	}
+}
+
+// TestUninstall_RemovesFromActiveHooksDir verifies uninstall targets the
+// active (redirected) hooks dir, matching where init installed.
+func TestUninstall_RemovesFromActiveHooksDir(t *testing.T) {
+	repo := gitInit(t)
+	active := filepath.Join(repo, ".beads", "hooks")
+	if err := os.MkdirAll(active, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitConfigSet(t, repo, "core.hooksPath", active)
+
+	if code := runInitIn(t, repo, "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Fatalf("init exit = %d", code)
+	}
+	if b, _ := os.ReadFile(filepath.Join(active, "post-commit")); !bytes.Contains(b, []byte(hookMarker)) {
+		t.Fatal("setup: wyk hook should be in the active dir after init")
+	}
+	if code := runInitIn(t, repo, "-uninstall"); code != 0 {
+		t.Fatalf("uninstall exit = %d", code)
+	}
+	if b, err := os.ReadFile(filepath.Join(active, "post-commit")); err == nil && bytes.Contains(b, []byte(hookMarker)) {
+		t.Error("uninstall should have removed wyk's hook from the active dir")
+	}
+}
 
 func gitConfigSet(t *testing.T, repo, key, val string) {
 	t.Helper()
