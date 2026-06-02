@@ -19,17 +19,19 @@ bd list --status=open --json       # the full open backlog
 wyk depgraph                       # dependency structure (text tree)
 bd doctor --check=conventions      # lint / stale / orphans
 
-# MANDATORY: every issue must have an assignee (the "owner" / responsible
-# person — NOT bd's auto-set owner field). Inspect bd list --all --json and
-# confirm NO issue has an empty/missing assignee. With jq installed:
-bd list --all --json | jq '[.[]|select(.assignee==null or .assignee=="")|.id]'
+# MANDATORY: every task must have an OWNER BADGE in the TUI — HUMAN /
+# AGENT / HUMAN-BLOCK, never blank. The badge is blank when an issue has
+# neither the `human` label nor `src:agent` (NOT about bd's owner/assignee
+# fields). Confirm NO issue is badge-blank. With jq installed:
+bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent")|not)|.id]'
 ```
 
-The mandatory check is "no issue has an empty `assignee`" — the `jq`
-line is just a convenience (it needs `jq`; if it's absent, scan the
-`bd list --all --json` output yourself). Any unassigned issue is a
-convention violation — **fix it before anything else**: `bd update <id>
--a <assignee> --dolt-auto-commit=on` (or `--claim`). bd has no
+The mandatory check is "no issue has a blank owner badge" — the `jq` line
+is just a convenience (if it's absent, scan `bd list --all --json` for
+issues whose labels lack both `human` and `src:agent`). A blank badge is
+a convention violation — **fix it before anything else**: agent-filed →
+`bd label add <id> src:agent --dolt-auto-commit=on` (shows AGENT); a task
+that needs a human → `wyk handoff <id>` (sets `human` → HUMAN). bd has no
 enforcement, so this is the only guard.
 
 ## 2. Audit each open issue against what you know
@@ -46,11 +48,12 @@ For every open issue, assign a verdict and the bd action it implies:
 - **duplicate** — `bd supersede <dup> --with=<keep> --dolt-auto-commit=on`.
 - **wrong status** — open vs blocked vs deferred. Add the real blocker
   (`bd dep add <id> <blocker>`) or `bd defer <id> --until "…"`.
-- **unowned** — open issue with no `assignee` → assign it
-  (`bd update <id> -a <assignee> --dolt-auto-commit=on`, or `--claim`
-  if it's yours to start). Every task should have an owner.
-- **missing** — work you know is needed but isn't filed → `bd create`
-  (with an assignee).
+- **unowned** — blank owner badge (no `human` and no `src:agent` label).
+  Give it an owner: agent-filed → `bd label add <id> src:agent
+  --dolt-auto-commit=on` (AGENT); needs a human → `wyk handoff <id>`
+  (HUMAN). Every task must show an owner badge.
+- **missing** — work you know is needed but isn't filed → `bd create …
+  --labels src:agent` (or `wyk handoff -create` if it's a human task).
 
 ## 3. Check the plan's coherence
 

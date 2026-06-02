@@ -9,20 +9,22 @@ automatically.) Use `bd` for all task tracking (not TodoWrite/markdown TODOs)
 and `bd remember` for persistent notes (not MEMORY.md). The wyk-specific
 conventions below are the delta on top of that.
 
-> ## ⛔ NON-NEGOTIABLE: every `bd create` MUST set an `assignee`
-> The "owner" that matters here is the **`assignee`** (the responsible
-> person). bd auto-sets the separate `owner` field (git email) but **NOT
-> `assignee`**, and there is **no bd-level enforcement** — so it's on you,
-> every single time:
-> - **NEVER run a bare `bd create`.** Always pass **`-a <assignee>`** (assign
->   without starting) **or `--claim`** (assign to yourself + `in_progress`).
-> - This applies to **every** issue: agent-filed, scripted, epics, and
->   sub-issues. No exceptions.
-> - An unassigned issue is a **defect**. Before ending any session that
->   touched bd, scan `bd list --all --json` for any issue with an empty
->   `assignee` and fix it. With jq:
->   `bd list --all --json | jq '[.[]|select(.assignee==null or .assignee=="")|.id]'`
-> - This rule has been missed repeatedly; treat it as load-bearing.
+> ## ⛔ NON-NEGOTIABLE: every task MUST have an owner badge
+> "Owner" here is the TUI **owner column** — the responsibility badge
+> **HUMAN / AGENT / HUMAN-BLOCK**, driven by labels, NOT bd's `owner` or
+> `assignee` field (those are out of scope for this project). The badge
+> is **blank** when an issue has neither the `human` label nor `src:agent`.
+> A blank badge = a task with no owner = a **defect**.
+> - **NEVER `bd create` without giving it an owner.** Agent-filed work →
+>   add `src:agent` (shows AGENT): `bd create … --labels src:agent`.
+>   Work that needs a human → file it via `wyk handoff` (sets the `human`
+>   label → HUMAN). Every issue, including epics and sub-issues.
+> - **`src:agent` is the label; it is NOT the bd `owner`/`assignee` field.**
+>   Setting `-a`/`--claim` does NOT give a task an owner badge.
+> - Before ending any session that touched bd, confirm no blank badges:
+>   `bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent")|not)|.id]'`
+>   must be empty. `wyk doctor` also flags this per repo.
+> - This has been missed repeatedly; treat it as load-bearing.
 
 ## Build & Test
 

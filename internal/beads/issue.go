@@ -36,10 +36,9 @@ type Issue struct {
 	// optional fields; an empty one now costs nothing.
 	Description string `json:"description,omitempty"`
 	Owner       string `json:"owner,omitempty"`
-	// Assignee is the responsible person (the "owner" in the project's
-	// convention sense) — distinct from Owner, which bd auto-sets to the
-	// filer's git email. bd does NOT auto-set Assignee; `wyk doctor`
-	// flags open issues that have none.
+	// Assignee is bd's responsible-person field. This project doesn't use
+	// it for ownership — ownership is the TUI's HUMAN/AGENT/HUMAN-BLOCK
+	// badge (the `human` / `src:agent` labels). Parsed for completeness.
 	Assignee  string    `json:"assignee,omitempty"`
 	CreatedBy string    `json:"created_by,omitempty"`
 	ClosedAt  time.Time `json:"closed_at,omitzero"`
