@@ -37,28 +37,40 @@ for the authoritative label/inbox contract rather than guessing.
    bd update <id> --claim --dolt-auto-commit=on
    ```
 
-## File new work
+## File new work — ⛔ EVERY bead MUST have an owner
 
-**Every task gets an owner.** bd auto-sets `owner` (who filed it) but
-NOT `assignee` (who's responsible for doing it) — so always set the
-assignee when you create work. Don't leave orphan tasks.
+**NEVER run a bare `bd create`.** Every issue you file MUST carry an
+owner label, or it renders with a **blank owner badge** in the TUI — a
+defect this project does not tolerate. There is no such thing as an
+ownerless task.
 
-- A task you'll start now → claim it (sets assignee + in_progress):
+"Owner" here is the **label** that drives the badge — `src:agent` (AGENT)
+or `human` (HUMAN) — **not** bd's `owner`/`assignee` fields, which this
+project ignores. `-a`/`--claim` do NOT give a task an owner badge.
 
-  ```bash
-  bd create --title "…" --description "why + what" --type task --dolt-auto-commit=on
-  bd update <new-id> --claim --dolt-auto-commit=on
-  ```
-
-- A task for later → assign without starting it:
+- **Agent-filed work — the default — ALWAYS pass `--labels src:agent`:**
 
   ```bash
-  bd create --title "…" --description "…" --type task -a <assignee> --dolt-auto-commit=on
+  bd create "…" --description "why + what" --type task --labels src:agent --dolt-auto-commit=on
   ```
+  Starting it right now? Also mark it in progress:
+  `bd update <new-id> --claim --dolt-auto-commit=on` (this is about
+  status, not ownership — the `src:agent` label above is what owns it).
 
-- A task that needs a **human**: don't hand-roll labels — use the
-  **wyk-handoff** skill (`wyk handoff -create "…"`), which owns the
-  human handoff.
+- **A task that needs a human → use the wyk-handoff skill**, never
+  hand-rolled labels: `wyk handoff -create "…"` sets `human` (HUMAN
+  badge) with a runbook.
+
+If you ever slip and create without an owner label, the task is a defect
+— fix it the instant you notice:
+`bd label add <id> src:agent --dolt-auto-commit=on`. Before ending a
+session, confirm **zero** blank badges:
+
+```bash
+bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent" or .=="src:human")|not)|.id]'
+```
+
+That array MUST be empty.
 
 ## Finish a task
 
