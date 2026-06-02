@@ -80,3 +80,12 @@ jobs:
         # silently leak past — load-bearing for MultiBDSource's
         # parallel-fetch path.
         run: go test -race -timeout 5m ./...
+
+      - name: Vulnerability scan (govulncheck)
+        # Reports known vulnerabilities in dependencies + the Go stdlib
+        # that the code actually CALLS — a vuln in an unused code path
+        # doesn't gate CI, which keeps the signal actionable. Pinned so a
+        # new govulncheck release can't flake CI; bump deliberately.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+          govulncheck ./...

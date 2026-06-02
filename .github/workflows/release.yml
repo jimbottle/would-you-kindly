@@ -1,0 +1,49 @@
+name: release
+
+# Cut a GitHub release when a vX.Y.Z tag is pushed. `wyk update` and
+# `wyk version --check` read the GitHub releases feed and install via
+# `go install …@<tag>`, so a tagged release is all that's needed — no
+# binary artifacts. The release notes come straight from the matching
+# CHANGELOG.md section, so the changelog stays the single source of truth.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # create the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Sanity-check the tag compiles
+        run: go build ./...
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          # Pull the lines between "## [<ver>]" and the next "## [" header.
+          awk -v hdr="## [$ver]" '
+            index($0, hdr) == 1 { grab = 1; next }
+            grab && /^## \[/    { exit }
+            grab                { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "No CHANGELOG.md section for $ver — using a placeholder." >&2
+            echo "Release ${GITHUB_REF_NAME}. See CHANGELOG.md." > notes.md
+          fi
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md
