@@ -716,18 +716,26 @@ func runUninstall(dryRun bool) int {
 	defaultPath := filepath.Join(gitDir, "hooks", "post-commit")
 
 	code, removed := uninstallWykHookAt(active, dryRun)
-	switch code {
-	case 1:
+	if code == 1 {
 		return 1
-	case 64:
-		fmt.Fprintln(os.Stderr,
-			"wyk init: post-commit hook at", active, "is not wyk's — refusing to remove. Inspect it, delete manually if you're sure.")
-		return 64
 	}
-	// Sweep a stale orphan from the default .git/hooks when the active dir
-	// is elsewhere. A foreign hook there isn't ours (and is bypassed by
-	// core.hooksPath anyway), so a 64 is ignored — only act on a wyk hook.
-	if defaultPath != active {
+	// A foreign hook in the active dir isn't ours to remove — but it must
+	// NOT abort the sweep of an orphaned wyk hook in .git/hooks. That's the
+	// common migration shape: core.hooksPath points at another tool's dir
+	// (e.g. bd's .beads/hooks) that already holds that tool's own hook, so
+	// the active hook is foreign while a bypassed wyk hook still sits in
+	// .git/hooks. Warn and carry on.
+	foreignActive := code == 64
+	if foreignActive {
+		fmt.Fprintln(os.Stderr,
+			"wyk init: post-commit hook at", active, "is not wyk's — leaving it untouched.")
+	}
+
+	// Sweep a stale orphan from the default .git/hooks when it's a
+	// different physical file. canonPath both sides so a /var↔/private/var
+	// or symlink representation gap doesn't make us process the same hook
+	// twice. A foreign hook there isn't ours either, so its 64 is ignored.
+	if canonPath(active) != canonPath(defaultPath) {
 		switch c2, r2 := uninstallWykHookAt(defaultPath, dryRun); {
 		case c2 == 1:
 			return 1
@@ -735,10 +743,18 @@ func runUninstall(dryRun bool) int {
 			removed = true
 		}
 	}
-	if !removed {
+
+	switch {
+	case removed:
+		return 0
+	case foreignActive:
+		// Only a foreign hook and nothing of ours anywhere — preserve the
+		// "refused to touch a non-wyk hook" exit signal.
+		return 64
+	default:
 		fmt.Println("wyk init: no post-commit hook installed — nothing to uninstall")
+		return 0
 	}
-	return 0
 }
 
 // uninstallWykHookAt removes wyk's post-commit hook at path: restores a

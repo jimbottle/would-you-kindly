@@ -116,6 +116,43 @@ func TestUninstall_SweepsOrphanFromDefaultHooksDir(t *testing.T) {
 	}
 }
 
+// TestUninstall_SweepsOrphanDespiteForeignActiveHook is the realistic
+// migration shape: core.hooksPath redirects to another tool's dir that
+// already holds ITS own (foreign) hook, while a bypassed wyk hook sits
+// orphaned in .git/hooks. A foreign active hook must not abort the
+// sweep — the orphan is removed, the foreign hook is left untouched.
+func TestUninstall_SweepsOrphanDespiteForeignActiveHook(t *testing.T) {
+	repo := gitInit(t)
+	gitHooks := filepath.Join(repo, ".git", "hooks")
+	if err := os.MkdirAll(gitHooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(gitHooks, "post-commit")
+	if err := os.WriteFile(orphan, []byte("#!/bin/sh\n# "+hookMarker+"`\nexec wyk hook post-commit\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Active dir holds a FOREIGN (non-wyk) hook.
+	active := filepath.Join(repo, ".beads", "hooks")
+	if err := os.MkdirAll(active, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(active, "post-commit")
+	if err := os.WriteFile(foreign, []byte("#!/bin/sh\n# roborev\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitConfigSet(t, repo, "core.hooksPath", active)
+
+	if code := runInitIn(t, repo, "-uninstall"); code != 0 {
+		t.Errorf("uninstall exit = %d, want 0 (orphan swept despite foreign active hook)", code)
+	}
+	if _, err := os.Stat(orphan); err == nil {
+		t.Error("orphaned wyk hook in .git/hooks should have been swept")
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Error("the foreign active hook must be left untouched")
+	}
+}
+
 func gitConfigSet(t *testing.T, repo, key, val string) {
 	t.Helper()
 	if out, err := exec.Command("git", "-C", repo, "config", key, val).CombinedOutput(); err != nil {
