@@ -110,6 +110,13 @@ the model render per-sub fetch failures.
 Issues are closed via `Closes: <id>` trailers (one ID per line — the
 auto-close hook deliberately rejects multi-ID lines, see README).
 
+**Versioning (pre-1.0).** On `0.y.z`, default to a **patch** bump
+(`0.y.Z`) — fixes, additive flags, refactors, docs/CI, small UX tweaks.
+Bump the **minor** (`0.Y.0`) only for a new subcommand / substantial
+capability, a breaking flag / output / contract change, or something a
+user must read the release notes to adopt. When in doubt, patch — the
+minor digit tracks milestones, not activity. Full policy in CONTRIBUTING.md.
+
 **Trunc is rune-aware** (`internal/tui.trunc`) — width semantics
 throughout the TUI are visual, not byte. Don't reach for byte-level
 slicing for column widths.

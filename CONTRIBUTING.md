@@ -135,6 +135,26 @@ addressing them is the normal back-and-forth.
 
 ## Releasing
 
-Maintainers only: see commit history around `v0.3.x` for the cadence. Each
-release is a `git tag -a vX.Y.Z` + push; `wyk update` finds it via the
-GitHub releases API.
+Maintainers only. Each release is a `git tag -a vX.Y.Z` + push; the release
+workflow cuts the GitHub release from the matching `CHANGELOG.md` section,
+and `wyk update` finds it via the GitHub releases API.
+
+### Versioning (pre-1.0)
+
+While the project is on `0.y.z`, **default to a patch bump (`0.y.Z`).**
+The large majority of releases — bug fixes, additive flags, internal
+refactors, doc/CI changes, small UX tweaks — are patches. Cutting a fresh
+minor for an ordinary batch of work churns the version for no reader
+benefit; the minor digit should track **milestones, not activity**.
+
+Bump the **minor (`0.Y.0`)** only when a release clears a real bar — at
+least one of:
+
+- a **new subcommand** or a substantial new user-facing capability;
+- a **breaking change** to a flag, a command's output / JSON shape, or the
+  handoff contract / label conventions;
+- a change a user would have to **read the release notes to adopt** (not
+  just "things got better").
+
+When in doubt, it's a patch. A grab-bag of fixes and small additions is a
+patch even if there are a lot of them.
