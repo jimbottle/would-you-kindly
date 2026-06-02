@@ -128,10 +128,10 @@ If you added a write action, also confirm:
 
 ## Code review
 
-The project uses an automated multi-agent code-review tool (`roborev`) on
-every push. After your commit lands you'll see review jobs appear; address
-findings via `/roborev-fix` (or the equivalent manual flow) before the
-next push.
+Maintainers run an automated review pass over incoming changes in addition
+to human review, so you don't need to run anything extra. Just make sure
+`make check` is green and open your PR; expect review comments, and
+addressing them is the normal back-and-forth.
 
 ## Releasing
 
