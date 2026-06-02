@@ -87,6 +87,35 @@ func TestUninstall_RemovesFromActiveHooksDir(t *testing.T) {
 	}
 }
 
+// TestUninstall_SweepsOrphanFromDefaultHooksDir covers the migration
+// case: a hook installed by an older wyk into .git/hooks, then a
+// core.hooksPath redirect added later. Uninstall must still clean the
+// orphaned (now-bypassed) hook out of .git/hooks, not report "nothing".
+func TestUninstall_SweepsOrphanFromDefaultHooksDir(t *testing.T) {
+	repo := gitInit(t)
+	gitHooks := filepath.Join(repo, ".git", "hooks")
+	if err := os.MkdirAll(gitHooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(gitHooks, "post-commit")
+	if err := os.WriteFile(orphan, []byte("#!/bin/sh\n# "+hookMarker+"`\nexec wyk hook post-commit\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// core.hooksPath now redirects to an in-repo dir with no wyk hook.
+	active := filepath.Join(repo, ".beads", "hooks")
+	if err := os.MkdirAll(active, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitConfigSet(t, repo, "core.hooksPath", active)
+
+	if code := runInitIn(t, repo, "-uninstall"); code != 0 {
+		t.Fatalf("uninstall exit = %d", code)
+	}
+	if _, err := os.Stat(orphan); err == nil {
+		t.Error("uninstall should sweep the orphaned wyk hook from .git/hooks")
+	}
+}
+
 func gitConfigSet(t *testing.T, repo, key, val string) {
 	t.Helper()
 	if out, err := exec.Command("git", "-C", repo, "config", key, val).CombinedOutput(); err != nil {
