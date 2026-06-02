@@ -627,25 +627,12 @@ func checkRepo(r registry.Repo) []check {
 		ctx, cancel := context.WithTimeout(context.Background(), doctorPerRepoTimeout)
 		c := beads.NewClient()
 		c.Dir = r.Path
-		issues, qerr := c.Query(ctx, `status!=closed`)
+		_, qerr := c.Query(ctx, `status!=closed`)
 		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()
 		switch {
 		case qerr == nil:
 			out = append(out, check{name: prefix + ": bd query responds", status: statusPass})
-			// Owner convention: every task must show an owner badge in the
-			// TUI (HUMAN / AGENT / HUMAN-BLOCK). That badge is blank when an
-			// issue carries no `human` label and no src label. Reuse
-			// the open-issue list to flag any that would render blank — the
-			// mechanical guard for the convention bd can't enforce.
-			if nb := unbadgedIssueIDs(issues); len(nb) > 0 {
-				out = append(out, check{
-					name:   prefix + ": issues with no owner badge",
-					status: statusWarn,
-					detail: fmt.Sprintf("%d non-closed issue(s) have no owner — the TUI owner column is blank (no `human` and no `src:` label): %s. Agent-filed: `bd label add <id> src:agent --dolt-auto-commit=on`; human tasks: `wyk handoff <id>`.",
-						len(nb), summarizeIDs(nb, 10)),
-				})
-			}
 		case timedOut:
 			out = append(out, check{
 				name:   prefix + ": bd query responds",
@@ -738,31 +725,4 @@ func checkRepo(r registry.Repo) []check {
 		out = append(out, check{name: prefix + ": core.hooksPath redirect", status: statusWarn, detail: detail})
 	}
 	return out
-}
-
-// unbadgedIssueIDs returns the IDs of issues that render with NO owner
-// badge in the TUI — not `human` (HUMAN) and not agent-owned, i.e.
-// carrying no src label at all (so neither AGENT nor HUMAN-BLOCK; a
-// `src:human` task badges AGENT per Issue.IsAgentOwned). This mirrors
-// responsibilityBadgeFor's blank case, the project's "task has no owner"
-// signal that bd can't enforce. Pulled out so the filter is unit-testable
-// without a live bd workspace.
-func unbadgedIssueIDs(issues []beads.Issue) []string {
-	var out []string
-	for _, i := range issues {
-		if !i.IsHuman() && !i.IsAgentOwned() {
-			out = append(out, i.ID)
-		}
-	}
-	return out
-}
-
-// summarizeIDs joins IDs for a check detail, capping the list at limit
-// with a "(+N more)" tail so a repo with dozens of offenders doesn't
-// flood the doctor output. (limit, not max — that shadows a builtin.)
-func summarizeIDs(ids []string, limit int) string {
-	if len(ids) <= limit {
-		return strings.Join(ids, ", ")
-	}
-	return strings.Join(ids[:limit], ", ") + fmt.Sprintf(" (+%d more)", len(ids)-limit)
 }

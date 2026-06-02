@@ -4903,33 +4903,30 @@ func paddedResponsibilityBadge(i beads.Issue) string {
 }
 
 // responsibilityBadgeFor returns the badge for the "owner" column,
-// telling the reader whose move it is. Three branches in
-// precedence order:
+// telling the reader whose move it is. The badge is NEVER blank:
 //   - has `human` label → plain "HUMAN" (the human-needs-to-act
 //     signal trumps everything else; src distinction is dropped —
 //     a glance at the column should give a yes/no answer, not a
 //     three-way categorisation that buries the lede)
-//   - not `human` but carries a src label (`src:agent` OR `src:human`)
-//     → AGENT, or HUMAN-BLOCK when a human-flagged dep blocks it. A
-//     human FILING a task is agent-owned work unless they also flag it
-//     `human`, so src:human badges AGENT too (see Issue.IsAgentOwned).
-//   - otherwise (no labels at all) → empty (no responsibility signal)
+//   - anything else → AGENT, or HUMAN-BLOCK when a human-flagged dep
+//     blocks it. A null owner (no `src:`/`human` label at all) DEFAULTS
+//     to AGENT — a task with no explicit owner is treated as agent-owned
+//     rather than rendering an empty column.
 func responsibilityBadgeFor(i beads.Issue) string {
 	if i.IsHuman() {
 		return humanBadge.Render("HUMAN")
 	}
-	if i.IsAgentOwned() {
-		// HUMAN-BLOCK takes precedence over plain AGENT so a row
-		// the agent cannot unblock reads visually different from
-		// rows the inbox imperative says to act on. Set by
-		// markBlockedByHuman post-Fetch when a dep carries the
-		// human label.
-		if i.BlockedByHuman {
-			return humanBlockBadge.Render("HUMAN-BLOCK")
-		}
-		return agentBadge.Render("AGENT")
+	// Everything not flagged for a human is agent-owned — including an issue
+	// with NO owner label at all. A null owner DEFAULTS to AGENT rather than
+	// rendering a blank column, so the owner badge is never empty.
+	// HUMAN-BLOCK takes precedence over plain AGENT so a row the agent cannot
+	// unblock reads visually different from rows the inbox imperative says to
+	// act on (set by markBlockedByHuman post-Fetch when a dep carries the
+	// human label).
+	if i.BlockedByHuman {
+		return humanBlockBadge.Render("HUMAN-BLOCK")
 	}
-	return ""
+	return agentBadge.Render("AGENT")
 }
 
 // abbrevType returns a fixed-width type slug. Most bd types fit in

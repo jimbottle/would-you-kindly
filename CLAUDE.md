@@ -9,23 +9,21 @@ automatically.) Use `bd` for all task tracking (not TodoWrite/markdown TODOs)
 and `bd remember` for persistent notes (not MEMORY.md). The wyk-specific
 conventions below are the delta on top of that.
 
-> ## ⛔ NON-NEGOTIABLE: every task MUST have an owner badge
-> "Owner" here is the TUI **owner column** — the responsibility badge
-> **HUMAN / AGENT / HUMAN-BLOCK**, driven by labels, NOT bd's `owner` or
-> `assignee` field (those are out of scope for this project). The badge
-> is **blank** when an issue has no `human` label and no `src:` label
-> (both `src:agent` and `src:human` badge — a human filing a task is
-> agent-owned work, so `src:human` reads AGENT unless it is also `human`).
-> A blank badge = a task with no owner = a **defect**.
-> - **NEVER `bd create` without giving it an owner.** Agent-filed work →
->   add `src:agent` (shows AGENT): `bd create … --labels src:agent`.
->   Work that needs a human → file it via `wyk handoff` (sets the `human`
->   label → HUMAN). Every issue, including epics and sub-issues.
-> - **`src:agent` is the label; it is NOT the bd `owner`/`assignee` field.**
->   Setting `-a`/`--claim` does NOT give a task an owner badge.
-> - Before ending any session that touched bd, confirm no blank badges:
->   `bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent" or .=="src:human")|not)|.id]'`
->   must be empty. `wyk doctor` also flags this per repo.
+> ## Owner column: HUMAN / AGENT / HUMAN-BLOCK
+> The TUI **owner column** shows whose move it is, driven by labels (NOT
+> bd's `owner`/`assignee` fields, which are out of scope here):
+> - `human` label → **HUMAN** (a human needs to act).
+> - agent task blocked by a human-flagged dep → **HUMAN-BLOCK**.
+> - everything else → **AGENT**. A null owner (no `src:`/`human` label)
+>   **defaults to AGENT**, so the column is never blank.
+>
+> Because a null owner silently becomes AGENT, the one thing that matters
+> is: **a task that needs a human MUST be handed off** — `wyk handoff <id>`
+> or `wyk handoff -create "…"` (sets the `human` label → HUMAN). Otherwise
+> it defaults to AGENT and the human never sees it. Agent-filed work may
+> pass `--labels src:agent` to be explicit, but it defaults to AGENT
+> anyway. `-a`/`--claim` are bd's assignee/status — they do NOT set the
+> badge.
 > - This has been missed repeatedly; treat it as load-bearing.
 
 ## Build & Test

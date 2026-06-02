@@ -1867,17 +1867,17 @@ func TestResponsibilityBadge_HumanFiledIsAgentOwned(t *testing.T) {
 	}
 }
 
-func TestResponsibilityBadge_BlankForOwnerlessRows(t *testing.T) {
-	// Only a row with no owner label at all renders blank — the
-	// "task has no owner" defect the doctor guards. (src:human now
-	// badges AGENT; see TestResponsibilityBadge_HumanFiledIsAgentOwned.)
-	bare := beads.Issue{Labels: nil}
-	if got := responsibilityBadgeFor(bare); got != "" {
-		t.Errorf("a label-less row should produce no badge; got %q", got)
-	}
-	unrelated := beads.Issue{Labels: []string{"priority:hi"}}
-	if got := responsibilityBadgeFor(unrelated); got != "" {
-		t.Errorf("a row with only unrelated labels should produce no badge; got %q", got)
+func TestResponsibilityBadge_NullOwnerDefaultsToAgent(t *testing.T) {
+	// A null owner (no labels at all, or only unrelated labels) DEFAULTS to
+	// AGENT — the owner badge is never blank.
+	for _, labels := range [][]string{nil, {"priority:hi"}} {
+		got := responsibilityBadgeFor(beads.Issue{Labels: labels})
+		if !strings.Contains(got, "AGENT") {
+			t.Errorf("null owner %v should default to AGENT; got %q", labels, got)
+		}
+		if strings.Contains(got, "HUMAN") {
+			t.Errorf("null owner %v must not read HUMAN; got %q", labels, got)
+		}
 	}
 }
 

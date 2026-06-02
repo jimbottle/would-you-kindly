@@ -19,21 +19,20 @@ bd list --status=open --json       # the full open backlog
 wyk depgraph                       # dependency structure (text tree)
 bd doctor --check=conventions      # lint / stale / orphans
 
-# MANDATORY: every task must have an OWNER BADGE in the TUI — HUMAN /
-# AGENT / HUMAN-BLOCK, never blank. The badge is blank when an issue has
-# no `human` label and no `src:` label (both `src:agent` and `src:human`
-# badge AGENT — a human filing a task is agent-owned work; NOT about bd's
-# owner/assignee fields). Confirm NO issue is badge-blank. With jq installed:
-bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent" or .=="src:human")|not)|.id]'
+# Owner column: a task with no owner label DEFAULTS to AGENT (never
+# blank). The real risk is a task that NEEDS a human but was never handed
+# off — it silently shows AGENT and the human never sees it. Scan the open
+# issues NOT flagged for a human and hand off any whose next step is a
+# human's. With jq installed:
+bd list --status=open --json | jq '[.[]|select((.labels//[])|index("human")|not)|{id,title}]'
 ```
 
-The mandatory check is "no issue has a blank owner badge" — the `jq` line
-is just a convenience (if it's absent, scan `bd list --all --json` for
-issues whose labels lack `human`, `src:agent`, and `src:human`). A blank badge is
-a convention violation — **fix it before anything else**: agent-filed →
-`bd label add <id> src:agent --dolt-auto-commit=on` (shows AGENT); a task
-that needs a human → `wyk handoff <id>` (sets `human` → HUMAN). bd has no
-enforcement, so this is the only guard.
+Review that list: any whose next step genuinely requires a human
+(auth/secrets, an irreversible decision, a third-party UI) should be
+**handed off** — `wyk handoff <id>` sets the `human` label so it shows
+HUMAN instead of defaulting to AGENT. The rest are correctly agent-owned;
+add `--labels src:agent` to make that explicit if you like, but it's the
+default.
 
 ## 2. Audit each open issue against what you know
 
@@ -49,10 +48,9 @@ For every open issue, assign a verdict and the bd action it implies:
 - **duplicate** — `bd supersede <dup> --with=<keep> --dolt-auto-commit=on`.
 - **wrong status** — open vs blocked vs deferred. Add the real blocker
   (`bd dep add <id> <blocker>`) or `bd defer <id> --until "…"`.
-- **unowned** — blank owner badge (no `human` and no `src:` label).
-  Give it an owner: agent-filed → `bd label add <id> src:agent
-  --dolt-auto-commit=on` (AGENT); needs a human → `wyk handoff <id>`
-  (HUMAN). Every task must show an owner badge.
+- **should-be-human** — an AGENT-badged task whose next step actually
+  requires a human (it defaulted to AGENT because it was never handed
+  off). Hand it off: `wyk handoff <id>` (sets `human` → HUMAN).
 - **missing** — work you know is needed but isn't filed → `bd create …
   --labels src:agent` (or `wyk handoff -create` if it's a human task).
 

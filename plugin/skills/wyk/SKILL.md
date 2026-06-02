@@ -37,40 +37,27 @@ for the authoritative label/inbox contract rather than guessing.
    bd update <id> --claim --dolt-auto-commit=on
    ```
 
-## File new work — ⛔ EVERY bead MUST have an owner
+## File new work
 
-**NEVER run a bare `bd create`.** Every issue you file MUST carry an
-owner label, or it renders with a **blank owner badge** in the TUI — a
-defect this project does not tolerate. There is no such thing as an
-ownerless task.
+The TUI's owner column is driven by **labels** (not bd's `owner`/`assignee`
+fields, which this project ignores; `-a`/`--claim` don't set the badge). A
+task with no owner label **defaults to AGENT** — the column is never blank.
 
-"Owner" here is the **label** that drives the badge — `src:agent` (AGENT)
-or `human` (HUMAN) — **not** bd's `owner`/`assignee` fields, which this
-project ignores. `-a`/`--claim` do NOT give a task an owner badge.
-
-- **Agent-filed work — the default — ALWAYS pass `--labels src:agent`:**
-
-  ```bash
-  bd create "…" --description "why + what" --type task --labels src:agent --dolt-auto-commit=on
-  ```
-  Starting it right now? Also mark it in progress:
-  `bd update <new-id> --claim --dolt-auto-commit=on` (this is about
-  status, not ownership — the `src:agent` label above is what owns it).
+So the one thing that matters: **if a task needs a human, hand it off** —
+otherwise it silently defaults to AGENT and the human never sees it.
 
 - **A task that needs a human → use the wyk-handoff skill**, never
   hand-rolled labels: `wyk handoff -create "…"` sets `human` (HUMAN
   badge) with a runbook.
 
-If you ever slip and create without an owner label, the task is a defect
-— fix it the instant you notice:
-`bd label add <id> src:agent --dolt-auto-commit=on`. Before ending a
-session, confirm **zero** blank badges:
+- **Agent-filed work** → a bare `bd create` already badges AGENT, but
+  pass `--labels src:agent` to be explicit:
 
-```bash
-bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent" or .=="src:human")|not)|.id]'
-```
-
-That array MUST be empty.
+  ```bash
+  bd create "…" --description "why + what" --type task --labels src:agent --dolt-auto-commit=on
+  ```
+  Starting it right now? Also mark it in progress:
+  `bd update <new-id> --claim --dolt-auto-commit=on`.
 
 ## Finish a task
 
