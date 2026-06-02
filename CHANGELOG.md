@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-02
+
+### Added
+
+- **Graceful narrow-terminal degradation** — the issue list now
+  auto-hides lower-value columns as the terminal narrows instead of
+  wrapping or truncating mid-row, so wyk stays readable in a split pane.
+
+- **Opt-in priority emphasis** — priorities can be visually emphasized
+  in the list for faster triage.
+
+- **`wyk doctor` owner-badge guard** — `doctor` now flags any non-closed
+  issue that would render with a **blank owner badge** (no `human` and no
+  `src:` label), the convention's "task has no owner" defect that bd
+  can't enforce on its own.
+
+### Changed
+
+- **`src:human` issues badge as AGENT** — a human-filed task that isn't
+  flagged `human` now renders an **AGENT** badge instead of a blank one:
+  a human filing a task is agent-owned work unless explicitly handed off.
+  Closes the last gap where an issue could show no owner badge.
+
+- **All on-screen text is natively selectable** — wyk no longer captures
+  the mouse, so you can select and copy any text in the TUI with your
+  terminal's normal selection.
+
+- **Background-adaptive palette** — colors adapt to light and dark
+  terminals, and the over-used amber was de-overloaded for clearer
+  status signaling.
+
 ### Fixed
 
 - **`core.hooksPath`-aware hooks** — auto-close silently failed when
@@ -17,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core.hooksPath` points *outside* the repo (stale config). `wyk doctor`
   gained a `core.hooksPath redirect` check that explains the bypass and
   the right fix, and `wyk uninstall` removes from the active dir too.
+
+### Security
+
+- **Supply-chain hardening in CI** — all GitHub Actions are pinned to
+  commit SHAs (on the Node 24 runtime), and CI runs `govulncheck` to
+  catch known vulnerabilities in dependencies and the Go stdlib that the
+  code actually calls. Releases are now cut automatically from a `vX.Y.Z`
+  tag, with notes drawn from this changelog.
 
 ## [0.5.0] — 2026-06-01
 
