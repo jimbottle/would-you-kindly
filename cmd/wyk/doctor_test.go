@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raylytics/would-you-kindly/internal/registry"
-	"github.com/raylytics/would-you-kindly/internal/skills"
+	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
 
 func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {

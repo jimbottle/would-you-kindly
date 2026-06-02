@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
 // closeRefRE matches lines of a commit message that signal an

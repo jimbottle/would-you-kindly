@@ -133,7 +133,7 @@ Example: file a P1 human task directly with bd create
     RUNBOOK
     )"
 
-Full contract: https://github.com/raylytics/would-you-kindly/blob/main/docs/CONTRACT.md
+Full contract: https://github.com/jimbottle/would-you-kindly/blob/main/docs/CONTRACT.md
 `
 
 // conventionsJSON is the structured form for programmatic ingestion.
@@ -206,7 +206,7 @@ func conventionsStructured() conventionsJSON {
 			Purpose: "The concrete artifact the agent expects to find when the issue returns (credential at known path, URL in a constant, decision in the description). The next agent that picks up the bounce-back needs this to resume.",
 		},
 	}
-	c.ContractURL = "https://github.com/raylytics/would-you-kindly/blob/main/docs/CONTRACT.md"
+	c.ContractURL = "https://github.com/jimbottle/would-you-kindly/blob/main/docs/CONTRACT.md"
 	return c
 }
 

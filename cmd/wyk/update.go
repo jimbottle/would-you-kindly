@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/raylytics/would-you-kindly/internal/updater"
+	"github.com/jimbottle/would-you-kindly/internal/updater"
 )
 
 // runUpdate handles `wyk update`. Checks GitHub for the latest

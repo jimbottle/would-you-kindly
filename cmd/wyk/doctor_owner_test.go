@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
 // TestUnbadgedIssueIDs checks the owner-badge filter: an issue is

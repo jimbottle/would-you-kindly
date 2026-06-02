@@ -1,7 +1,7 @@
 # wyk — Claude Code plugin
 
 This is the [Claude Code plugin](https://code.claude.com/docs/en/plugins)
-form of the [`wyk`](https://github.com/raylytics/would-you-kindly) agent
+form of the [`wyk`](https://github.com/jimbottle/would-you-kindly) agent
 integration. It bundles the same agent skills that `wyk skills install`
 ships, so a single plugin install wires them into every Claude session —
 no per-machine `wyk skills install` step.
@@ -20,7 +20,7 @@ no per-machine `wyk skills install` step.
 ## Install
 
 ```
-/plugin marketplace add raylytics/would-you-kindly
+/plugin marketplace add jimbottle/would-you-kindly
 /plugin install wyk@wyk
 ```
 
@@ -42,6 +42,6 @@ the first `wyk` is the plugin, the second is the marketplace name.)
 ## Requirements
 
 The skills and the session hook drive the `wyk` (and `bd`) CLIs — install
-`wyk` separately (`go install github.com/raylytics/would-you-kindly/cmd/wyk@latest`
+`wyk` separately (`go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest`
 or `wyk update`). The plugin carries the *instructions*; the binary does
 the work.

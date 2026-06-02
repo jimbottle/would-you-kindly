@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/raylytics/would-you-kindly/internal/updater"
+	"github.com/jimbottle/would-you-kindly/internal/updater"
 )
 
 func TestExtractCurrentTag_CoversEveryVersionStringShape(t *testing.T) {

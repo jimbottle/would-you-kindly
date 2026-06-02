@@ -1,4 +1,4 @@
-module github.com/raylytics/would-you-kindly
+module github.com/jimbottle/would-you-kindly
 
 go 1.26.3
 

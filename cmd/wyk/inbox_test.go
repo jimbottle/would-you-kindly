@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
 func TestInboxQuery_IsTheDocumentedString(t *testing.T) {

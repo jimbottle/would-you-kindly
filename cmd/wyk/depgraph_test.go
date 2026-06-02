@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
-	"github.com/raylytics/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
 // stubDepGraphClient is a minimal depGraphClient: ListAll returns a

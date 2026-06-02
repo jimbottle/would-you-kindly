@@ -4,10 +4,11 @@
   "version": "0.1.0",
   "description": "Agent skills for the wyk human-in-the-loop bd workflow: triage the agent inbox, hand tasks to a human, and review the project plan. Bundles the same skills `wyk skills install` ships.",
   "author": {
-    "name": "raylytics"
+    "name": "Raylytics",
+    "url": "https://raylytics.io"
   },
-  "homepage": "https://github.com/raylytics/would-you-kindly",
-  "repository": "https://github.com/raylytics/would-you-kindly",
+  "homepage": "https://github.com/jimbottle/would-you-kindly",
+  "repository": "https://github.com/jimbottle/would-you-kindly",
   "license": "MIT",
   "keywords": ["beads", "bd", "task-management", "human-in-the-loop", "handoff"],
   "skills": "./skills/",

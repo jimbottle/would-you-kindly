@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
-	"github.com/raylytics/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/filter"
 )
 
 // BDSource is a single-repo Source backed by the bd CLI. It centralises

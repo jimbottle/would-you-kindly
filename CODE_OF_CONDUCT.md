@@ -14,6 +14,6 @@ behavior they deem inappropriate.
 
 If you experience or witness unacceptable behavior, report it privately to
 the maintainers via a
-[GitHub private report](https://github.com/raylytics/would-you-kindly/security/advisories/new)
+[GitHub private report](https://github.com/jimbottle/would-you-kindly/security/advisories/new)
 or by contacting a maintainer directly. All reports are reviewed and
 handled confidentially.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raylytics/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
 // TestInit_InstallsIntoActiveHooksDirWhenRedirectedInRepo verifies that

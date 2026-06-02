@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/raylytics/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
 // gitInit creates a fresh git repo in a tempdir and returns its root.

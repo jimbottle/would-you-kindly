@@ -14,10 +14,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
-	"github.com/raylytics/would-you-kindly/internal/filter"
-	"github.com/raylytics/would-you-kindly/internal/filters"
-	"github.com/raylytics/would-you-kindly/internal/uiconfig"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/filters"
+	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
 // stubSource lets tests fix the Fetch result.

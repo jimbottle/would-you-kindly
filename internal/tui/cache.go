@@ -10,7 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
 // cacheSchemaVersion is the on-disk format the loader requires.

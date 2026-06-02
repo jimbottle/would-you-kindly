@@ -3,7 +3,7 @@ package tui
 import (
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/raylytics/would-you-kindly/internal/theme"
+	"github.com/jimbottle/would-you-kindly/internal/theme"
 )
 
 var (

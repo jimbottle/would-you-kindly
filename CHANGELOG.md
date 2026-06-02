@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Claude Code plugin** — the agent skills are now also packaged as a
   Claude Code plugin under [`plugin/`](plugin), installable in one step
-  (`/plugin marketplace add raylytics/would-you-kindly` then `/plugin
+  (`/plugin marketplace add jimbottle/would-you-kindly` then `/plugin
   install wyk@wyk`). It bundles the three skills (kept byte-identical to
   the embedded copies via `make plugin-skills` + a drift test) and a
   best-effort SessionStart hook that surfaces `wyk inbox`. The git
@@ -316,7 +316,7 @@ rm -f ~/.cache/wyk/update.json
 wyk update
 
 # B: install v0.3.3 directly, bypassing your buggy binary entirely:
-go install github.com/raylytics/would-you-kindly/cmd/wyk@v0.3.3
+go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.3.3
 ```
 
 After either, `wyk update` works normally for every future
@@ -1045,17 +1045,17 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/raylytics/would-you-kindly/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.5.0
-[0.4.1]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.4.1
-[0.4.0]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.4.0
-[0.3.3]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.3.3
-[0.3.2]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.3.2
-[0.3.1]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.3.1
-[0.3.0]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.3.0
-[0.3.0-alpha]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.3.0-alpha
-[0.2.3]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.2.3
-[0.2.2]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.2.2
-[0.2.1]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.2.1
-[0.2.0]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.2.0
-[0.1.0]: https://github.com/raylytics/would-you-kindly/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.5.0
+[0.4.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.4.1
+[0.4.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.4.0
+[0.3.3]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.3
+[0.3.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.2
+[0.3.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.1
+[0.3.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0
+[0.3.0-alpha]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.3.0-alpha
+[0.2.3]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.3
+[0.2.2]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.2
+[0.2.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.1
+[0.2.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.2.0
+[0.1.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.1.0

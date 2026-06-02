@@ -84,7 +84,7 @@ When an agent decides to hand a task back, the canonical call is
 [`pkg/handoff.BounceToHuman`](../pkg/handoff/handoff.go):
 
 ```go
-import "github.com/raylytics/would-you-kindly/pkg/handoff"
+import "github.com/jimbottle/would-you-kindly/pkg/handoff"
 
 // c is any handoff.Mutator — beads.Client satisfies it directly.
 err := handoff.BounceToHuman(ctx, c, "wyk-42", runbook)

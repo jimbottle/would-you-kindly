@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
-	"github.com/raylytics/would-you-kindly/internal/theme"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/theme"
 )
 
 // forceColor coerces lipgloss's default renderer into truecolor so

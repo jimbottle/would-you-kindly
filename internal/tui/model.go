@@ -30,11 +30,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sahilm/fuzzy"
 
-	"github.com/raylytics/would-you-kindly/internal/beads"
-	"github.com/raylytics/would-you-kindly/internal/clipboard"
-	"github.com/raylytics/would-you-kindly/internal/filter"
-	"github.com/raylytics/would-you-kindly/internal/filters"
-	"github.com/raylytics/would-you-kindly/internal/uiconfig"
+	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/clipboard"
+	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/filters"
+	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
 // titleSource and descSource each expose ONE field of the issue

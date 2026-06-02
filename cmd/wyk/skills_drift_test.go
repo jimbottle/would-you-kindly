@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/raylytics/would-you-kindly/internal/skills"
+	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
 
 // wykCmdRef matches a "wyk <subcommand>" invocation in a skill body:

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/raylytics/would-you-kindly/internal/tui"
+	"github.com/jimbottle/would-you-kindly/internal/tui"
 )
 
 // runHelp handles `wyk help`. Defaults to a pointer at the in-TUI

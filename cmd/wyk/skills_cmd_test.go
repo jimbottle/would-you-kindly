@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/raylytics/would-you-kindly/internal/skills"
+	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
 
 func firstSkill(t *testing.T) skills.Skill {
