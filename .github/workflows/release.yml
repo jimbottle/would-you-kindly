@@ -7,7 +7,10 @@ name: release
 # CHANGELOG.md section, so the changelog stays the single source of truth.
 on:
   push:
-    tags: ['v*']
+    # Match the documented vX.Y.Z contract — require a digit after the `v`
+    # so stray tags (vfoo, v-test, vnext) can't trigger a real release with
+    # an empty-CHANGELOG placeholder body.
+    tags: ['v[0-9]*']
 
 permissions:
   contents: write # create the release
@@ -28,11 +31,20 @@ jobs:
       - name: Extract release notes from CHANGELOG
         run: |
           ver="${GITHUB_REF_NAME#v}"
-          # Pull the lines between "## [<ver>]" and the next "## [" header.
+          # Pull the lines between "## [<ver>]" and the next "## [" header,
+          # buffering them so the END block can strip the blank lines that
+          # bracket the section (the blank under the header and the ones
+          # before the next header) — otherwise the release notes render
+          # with leading/trailing whitespace. Single awk, no GNU-only tools.
           awk -v hdr="## [$ver]" '
             index($0, hdr) == 1 { grab = 1; next }
             grab && /^## \[/    { exit }
-            grab                { print }
+            grab                { lines[++n] = $0 }
+            END {
+              s = 1; while (s <= n && lines[s] ~ /^[[:space:]]*$/) s++
+              e = n; while (e >= s && lines[e] ~ /^[[:space:]]*$/) e--
+              for (i = s; i <= e; i++) print lines[i]
+            }
           ' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then
             echo "No CHANGELOG.md section for $ver — using a placeholder." >&2
