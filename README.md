@@ -1,6 +1,9 @@
 # would-you-kindly
 
 [![test](https://github.com/jimbottle/would-you-kindly/actions/workflows/test.yml/badge.svg)](https://github.com/jimbottle/would-you-kindly/actions/workflows/test.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/jimbottle/would-you-kindly.svg)](https://pkg.go.dev/github.com/jimbottle/would-you-kindly)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jimbottle/would-you-kindly)](https://goreportcard.com/report/github.com/jimbottle/would-you-kindly)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A terminal UI over the [beads](https://github.com/gastownhall/beads) issue
 tracker, built for one specific moment: when an agent finishes the
