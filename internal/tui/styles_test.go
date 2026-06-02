@@ -29,6 +29,22 @@ func forceColor(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 }
 
+// sgrPrefixOf returns the leading ANSI SGR escape ("\x1b[...m") of a
+// rendered string. Used to assert against a style's *resolved* colour
+// (which an AdaptiveColor makes background-dependent) instead of a
+// hardcoded literal.
+func sgrPrefixOf(rendered string) string {
+	i := strings.Index(rendered, "\x1b[")
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(rendered[i:], "m")
+	if j < 0 {
+		return ""
+	}
+	return rendered[i : i+j+1]
+}
+
 // TestApplyTheme_OverridesAndDefaults exercises the partial-override
 // guarantee: a Theme with one field set should change only that
 // field, leaving every other style at its built-in default. Run
@@ -93,7 +109,11 @@ func TestClosedRowStyle_DimsTheTitleBody(t *testing.T) {
 	m.width = 200 // wide enough for the title not to truncate
 	openRow := m.renderRow(m.visible[0], false)
 	closedRow := m.renderRow(m.visible[1], false)
-	closedSGR := "\x1b[38;5;240m"
+	// Derive the dim SGR from the style itself rather than hardcoding a
+	// literal: closedRowStyle is now driven by cFaint (an AdaptiveColor),
+	// so the resolved code depends on the terminal background. Pulling it
+	// from closedRowStyle.Render tracks the token on any background.
+	closedSGR := sgrPrefixOf(closedRowStyle.Render("x"))
 	// The closed-row dim must reach the title body — otherwise the
 	// stated UX cue ("metadata stays bright, body dims") doesn't
 	// hold. An earlier envelope-wrapping implementation passed a

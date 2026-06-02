@@ -57,6 +57,14 @@ var widthDropOrder = []string{colIDBranch, colIDUpdated, colIDType, colIDStatus,
 // the terminal restores every column without disturbing saved prefs.
 // Returns nil when everything already fits or the width is unknown.
 // Reads m.colsHidden directly (not colVisible) to avoid recursion.
+//
+// Floor: the always-present columns plus a usable title can't be
+// dropped, so the narrowest a row can get is cursor(2) + colID + sep +
+// colPrio + sep + minTitle(20) ≈ 40 cols. Below that, every droppable
+// column is already gone and titleBudget's 20-col floor means the row
+// still slightly overruns — an inherent limit (you can't show an ID, a
+// priority, and any title under 40 cols), not a bug. Terminals that
+// narrow are not a realistic target.
 func (m Model) computeAutoHidden() map[string]bool {
 	const (
 		sep      = 2  // the "  " between columns, mirrors renderRow

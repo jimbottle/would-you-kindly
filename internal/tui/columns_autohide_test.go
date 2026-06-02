@@ -41,13 +41,16 @@ func TestComputeAutoHidden_DropsLeastImportantFirst(t *testing.T) {
 // TestNarrowWidth_RowDoesNotOverflow is the regression guard for the
 // finding itself: across a range of widths, a row's visual width never
 // exceeds the terminal (no wrap/clip), because auto-hide keeps the
-// fixed columns plus a floored title within budget.
+// fixed columns plus a floored title within budget. The sweep starts at
+// 40 — the inherent floor (cursor + ID + priority + a 20-col title;
+// see computeAutoHidden) below which a row can't physically fit and a
+// slight overrun is unavoidable.
 func TestNarrowWidth_RowDoesNotOverflow(t *testing.T) {
 	src := &stubSource{issues: []beads.Issue{{
 		ID: "a-1", Title: strings.Repeat("x", 200), Status: "open", Priority: 2,
 	}}}
 	m := applyFetched(New(src), src)
-	for _, w := range []int{50, 65, 80, 120, 200} {
+	for _, w := range []int{40, 50, 65, 80, 120, 200} {
 		m.width = w
 		m.autoHidden = m.computeAutoHidden()
 		row := m.renderRow(m.visible[0], false)
