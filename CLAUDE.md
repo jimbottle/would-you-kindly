@@ -9,16 +9,18 @@ automatically.) Use `bd` for all task tracking (not TodoWrite/markdown TODOs)
 and `bd remember` for persistent notes (not MEMORY.md). The wyk-specific
 conventions below are the delta on top of that.
 
-> ## ⛔ NON-NEGOTIABLE: every `bd create` MUST assign an owner
-> bd auto-sets `owner` (git email) but **NOT `assignee`** (the responsible
-> person), and there is **no bd-level enforcement** — so it's on you, every
-> single time:
+> ## ⛔ NON-NEGOTIABLE: every `bd create` MUST set an `assignee`
+> The "owner" that matters here is the **`assignee`** (the responsible
+> person). bd auto-sets the separate `owner` field (git email) but **NOT
+> `assignee`**, and there is **no bd-level enforcement** — so it's on you,
+> every single time:
 > - **NEVER run a bare `bd create`.** Always pass **`-a <assignee>`** (assign
 >   without starting) **or `--claim`** (assign to yourself + `in_progress`).
 > - This applies to **every** issue: agent-filed, scripted, epics, and
 >   sub-issues. No exceptions.
 > - An unassigned issue is a **defect**. Before ending any session that
->   touched bd, scan for and fix them:
+>   touched bd, scan `bd list --all --json` for any issue with an empty
+>   `assignee` and fix it. With jq:
 >   `bd list --all --json | jq '[.[]|select(.assignee==null or .assignee=="")|.id]'`
 > - This rule has been missed repeatedly; treat it as load-bearing.
 

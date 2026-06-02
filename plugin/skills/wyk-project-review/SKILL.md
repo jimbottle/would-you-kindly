@@ -19,14 +19,18 @@ bd list --status=open --json       # the full open backlog
 wyk depgraph                       # dependency structure (text tree)
 bd doctor --check=conventions      # lint / stale / orphans
 
-# MANDATORY: every issue must have an assignee. This MUST come back empty.
+# MANDATORY: every issue must have an assignee (the "owner" / responsible
+# person — NOT bd's auto-set owner field). Inspect bd list --all --json and
+# confirm NO issue has an empty/missing assignee. With jq installed:
 bd list --all --json | jq '[.[]|select(.assignee==null or .assignee=="")|.id]'
 ```
 
-If that last command returns any IDs, that's a convention violation —
-**fix it before anything else**: `bd update <id> -a <assignee>
---dolt-auto-commit=on` (or `--claim`). bd has no enforcement, so this is
-the only guard.
+The mandatory check is "no issue has an empty `assignee`" — the `jq`
+line is just a convenience (it needs `jq`; if it's absent, scan the
+`bd list --all --json` output yourself). Any unassigned issue is a
+convention violation — **fix it before anything else**: `bd update <id>
+-a <assignee> --dolt-auto-commit=on` (or `--claim`). bd has no
+enforcement, so this is the only guard.
 
 ## 2. Audit each open issue against what you know
 
