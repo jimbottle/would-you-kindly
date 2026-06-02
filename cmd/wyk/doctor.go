@@ -627,12 +627,24 @@ func checkRepo(r registry.Repo) []check {
 		ctx, cancel := context.WithTimeout(context.Background(), doctorPerRepoTimeout)
 		c := beads.NewClient()
 		c.Dir = r.Path
-		_, qerr := c.Query(ctx, `status!=closed`)
+		issues, qerr := c.Query(ctx, `status!=closed`)
 		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()
 		switch {
 		case qerr == nil:
 			out = append(out, check{name: prefix + ": bd query responds", status: statusPass})
+			// Owner convention: every issue must carry an assignee (bd
+			// auto-sets `owner` but not `assignee`, and has no
+			// enforcement). Reuse the open-issue list we just fetched to
+			// surface any that slipped through — the only mechanical guard.
+			if un := unassignedIssueIDs(issues); len(un) > 0 {
+				out = append(out, check{
+					name:   prefix + ": issues without an assignee",
+					status: statusWarn,
+					detail: fmt.Sprintf("%d open issue(s) have no assignee (the owner convention): %s. Assign each with `bd update <id> -a <name> --dolt-auto-commit=on` (or `--claim`).",
+						len(un), summarizeIDs(un, 10)),
+				})
+			}
 		case timedOut:
 			out = append(out, check{
 				name:   prefix + ": bd query responds",
@@ -725,4 +737,27 @@ func checkRepo(r registry.Repo) []check {
 		out = append(out, check{name: prefix + ": core.hooksPath redirect", status: statusWarn, detail: detail})
 	}
 	return out
+}
+
+// unassignedIssueIDs returns the IDs of issues with no assignee — the
+// owner-convention violation `wyk doctor` surfaces. Pulled out so the
+// filter is unit-testable without a live bd workspace.
+func unassignedIssueIDs(issues []beads.Issue) []string {
+	var out []string
+	for _, i := range issues {
+		if strings.TrimSpace(i.Assignee) == "" {
+			out = append(out, i.ID)
+		}
+	}
+	return out
+}
+
+// summarizeIDs joins IDs for a check detail, capping the list at max
+// with a "(+N more)" tail so a repo with dozens of offenders doesn't
+// flood the doctor output.
+func summarizeIDs(ids []string, max int) string {
+	if len(ids) <= max {
+		return strings.Join(ids, ", ")
+	}
+	return strings.Join(ids[:max], ", ") + fmt.Sprintf(" (+%d more)", len(ids)-max)
 }

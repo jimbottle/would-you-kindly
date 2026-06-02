@@ -7,6 +7,26 @@ import (
 	"time"
 )
 
+// TestIssue_ParsesAssignee confirms bd's `assignee` field maps onto
+// Issue.Assignee (the field `wyk doctor`'s owner-convention check reads),
+// and that its absence leaves the field empty.
+func TestIssue_ParsesAssignee(t *testing.T) {
+	var withA Issue
+	if err := json.Unmarshal([]byte(`{"id":"x-1","title":"t","status":"open","priority":2,"assignee":"jimbottle"}`), &withA); err != nil {
+		t.Fatal(err)
+	}
+	if withA.Assignee != "jimbottle" {
+		t.Errorf("Assignee = %q, want %q", withA.Assignee, "jimbottle")
+	}
+	var without Issue
+	if err := json.Unmarshal([]byte(`{"id":"x-2","title":"u","status":"open","priority":2}`), &without); err != nil {
+		t.Fatal(err)
+	}
+	if without.Assignee != "" {
+		t.Errorf("missing assignee should be empty, got %q", without.Assignee)
+	}
+}
+
 // TestIssue_MarshalElidesEmptyButKeepsLoadBearing pins the W1
 // token-elision contract: optional/zero fields drop out of the
 // agent-facing JSON, while the always-present identity/state fields —

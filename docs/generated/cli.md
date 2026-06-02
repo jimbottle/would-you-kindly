@@ -78,7 +78,7 @@ wyk stats [-C <dir>] [-json] [-compact] [-repo name]
 
 ## `wyk doctor`
 
-Checks bd / wyk on PATH, $EDITOR, audit-trail actor, XDG paths, and per-repo .git / .beads / hook state.
+Checks bd / wyk on PATH, $EDITOR, audit-trail actor, XDG paths, agent skills, and per-repo .git / .beads / hook state plus open issues with no assignee.
 
 ```
 wyk doctor [-json] [-fix [-dry-run]]

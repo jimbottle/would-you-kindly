@@ -34,12 +34,17 @@ type Issue struct {
 	// every OPEN issue would otherwise emit (a closed issue's non-zero
 	// ClosedAt is still serialised). Description/Notes are the heaviest
 	// optional fields; an empty one now costs nothing.
-	Description string    `json:"description,omitempty"`
-	Owner       string    `json:"owner,omitempty"`
-	CreatedBy   string    `json:"created_by,omitempty"`
-	ClosedAt    time.Time `json:"closed_at,omitzero"`
-	Notes       string    `json:"notes,omitempty"`
-	Labels      []string  `json:"labels,omitempty"`
+	Description string `json:"description,omitempty"`
+	Owner       string `json:"owner,omitempty"`
+	// Assignee is the responsible person (the "owner" in the project's
+	// convention sense) — distinct from Owner, which bd auto-sets to the
+	// filer's git email. bd does NOT auto-set Assignee; `wyk doctor`
+	// flags open issues that have none.
+	Assignee  string    `json:"assignee,omitempty"`
+	CreatedBy string    `json:"created_by,omitempty"`
+	ClosedAt  time.Time `json:"closed_at,omitzero"`
+	Notes     string    `json:"notes,omitempty"`
+	Labels    []string  `json:"labels,omitempty"`
 
 	DependencyCount int `json:"dependency_count,omitempty"`
 	DependentCount  int `json:"dependent_count,omitempty"`
