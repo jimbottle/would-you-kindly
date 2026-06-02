@@ -21,14 +21,15 @@ bd doctor --check=conventions      # lint / stale / orphans
 
 # MANDATORY: every task must have an OWNER BADGE in the TUI — HUMAN /
 # AGENT / HUMAN-BLOCK, never blank. The badge is blank when an issue has
-# neither the `human` label nor `src:agent` (NOT about bd's owner/assignee
-# fields). Confirm NO issue is badge-blank. With jq installed:
-bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent")|not)|.id]'
+# no `human` label and no `src:` label (both `src:agent` and `src:human`
+# badge AGENT — a human filing a task is agent-owned work; NOT about bd's
+# owner/assignee fields). Confirm NO issue is badge-blank. With jq installed:
+bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent" or .=="src:human")|not)|.id]'
 ```
 
 The mandatory check is "no issue has a blank owner badge" — the `jq` line
 is just a convenience (if it's absent, scan `bd list --all --json` for
-issues whose labels lack both `human` and `src:agent`). A blank badge is
+issues whose labels lack `human`, `src:agent`, and `src:human`). A blank badge is
 a convention violation — **fix it before anything else**: agent-filed →
 `bd label add <id> src:agent --dolt-auto-commit=on` (shows AGENT); a task
 that needs a human → `wyk handoff <id>` (sets `human` → HUMAN). bd has no
@@ -48,7 +49,7 @@ For every open issue, assign a verdict and the bd action it implies:
 - **duplicate** — `bd supersede <dup> --with=<keep> --dolt-auto-commit=on`.
 - **wrong status** — open vs blocked vs deferred. Add the real blocker
   (`bd dep add <id> <blocker>`) or `bd defer <id> --until "…"`.
-- **unowned** — blank owner badge (no `human` and no `src:agent` label).
+- **unowned** — blank owner badge (no `human` and no `src:` label).
   Give it an owner: agent-filed → `bd label add <id> src:agent
   --dolt-auto-commit=on` (AGENT); needs a human → `wyk handoff <id>`
   (HUMAN). Every task must show an owner badge.

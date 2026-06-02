@@ -8,8 +8,10 @@ import (
 )
 
 // TestUnbadgedIssueIDs checks the owner-badge filter: an issue is
-// "unowned" (TUI owner column blank) iff it carries neither the `human`
-// label nor `src:agent` — mirroring responsibilityBadgeFor's blank case.
+// "unowned" (TUI owner column blank) iff it is not `human` and carries no
+// src label at all — mirroring responsibilityBadgeFor's blank case. A
+// `src:human` task badges AGENT (a human filing a task = agent-owned work),
+// so it is NOT flagged.
 func TestUnbadgedIssueIDs(t *testing.T) {
 	issues := []beads.Issue{
 		{ID: "a-1", Labels: []string{"src:agent"}},          // AGENT badge
@@ -17,6 +19,7 @@ func TestUnbadgedIssueIDs(t *testing.T) {
 		{ID: "a-3"},                                         // no labels → blank → flagged
 		{ID: "a-4", Labels: []string{"priority:hi"}},        // unrelated label → blank → flagged
 		{ID: "a-5", Labels: []string{"human", "src:agent"}}, // HUMAN badge
+		{ID: "a-6", Labels: []string{"src:human"}},          // AGENT badge (human-filed agent work)
 	}
 	got := unbadgedIssueIDs(issues)
 	want := []string{"a-3", "a-4"}

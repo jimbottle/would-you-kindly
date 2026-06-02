@@ -84,3 +84,13 @@ func (i Issue) HasLabel(label string) bool {
 func (i Issue) IsHuman() bool {
 	return i.HasLabel("human")
 }
+
+// IsAgentOwned reports whether the issue renders with an AGENT (or, when a
+// human-flagged dep blocks it, HUMAN-BLOCK) badge: it is not `human`-flagged
+// and carries a src label. Per the owner-badge convention a human FILING a
+// task (`src:human`) is agent-owned work — the agent does it — unless the
+// task also carries the `human` label. Mirrors responsibilityBadgeFor's
+// AGENT branch and the doctor's owner guard so the three stay in lockstep.
+func (i Issue) IsAgentOwned() bool {
+	return !i.IsHuman() && (i.HasLabel("src:agent") || i.HasLabel("src:human"))
+}

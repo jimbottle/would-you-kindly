@@ -13,7 +13,9 @@ conventions below are the delta on top of that.
 > "Owner" here is the TUI **owner column** — the responsibility badge
 > **HUMAN / AGENT / HUMAN-BLOCK**, driven by labels, NOT bd's `owner` or
 > `assignee` field (those are out of scope for this project). The badge
-> is **blank** when an issue has neither the `human` label nor `src:agent`.
+> is **blank** when an issue has no `human` label and no `src:` label
+> (both `src:agent` and `src:human` badge — a human filing a task is
+> agent-owned work, so `src:human` reads AGENT unless it is also `human`).
 > A blank badge = a task with no owner = a **defect**.
 > - **NEVER `bd create` without giving it an owner.** Agent-filed work →
 >   add `src:agent` (shows AGENT): `bd create … --labels src:agent`.
@@ -22,7 +24,7 @@ conventions below are the delta on top of that.
 > - **`src:agent` is the label; it is NOT the bd `owner`/`assignee` field.**
 >   Setting `-a`/`--claim` does NOT give a task an owner badge.
 > - Before ending any session that touched bd, confirm no blank badges:
->   `bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent")|not)|.id]'`
+>   `bd list --all --json | jq '[.[]|select((.labels//[])|any(.=="human" or .=="src:agent" or .=="src:human")|not)|.id]'`
 >   must be empty. `wyk doctor` also flags this per repo.
 > - This has been missed repeatedly; treat it as load-bearing.
 

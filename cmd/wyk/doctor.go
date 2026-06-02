@@ -635,14 +635,14 @@ func checkRepo(r registry.Repo) []check {
 			out = append(out, check{name: prefix + ": bd query responds", status: statusPass})
 			// Owner convention: every task must show an owner badge in the
 			// TUI (HUMAN / AGENT / HUMAN-BLOCK). That badge is blank when an
-			// issue carries neither the `human` label nor `src:agent`. Reuse
+			// issue carries no `human` label and no src label. Reuse
 			// the open-issue list to flag any that would render blank — the
 			// mechanical guard for the convention bd can't enforce.
 			if nb := unbadgedIssueIDs(issues); len(nb) > 0 {
 				out = append(out, check{
 					name:   prefix + ": issues with no owner badge",
 					status: statusWarn,
-					detail: fmt.Sprintf("%d non-closed issue(s) have no owner — the TUI owner column is blank (no `human` or `src:agent` label): %s. Agent-filed: `bd label add <id> src:agent --dolt-auto-commit=on`; human tasks: `wyk handoff <id>`.",
+					detail: fmt.Sprintf("%d non-closed issue(s) have no owner — the TUI owner column is blank (no `human` and no `src:` label): %s. Agent-filed: `bd label add <id> src:agent --dolt-auto-commit=on`; human tasks: `wyk handoff <id>`.",
 						len(nb), summarizeIDs(nb, 10)),
 				})
 			}
@@ -741,15 +741,16 @@ func checkRepo(r registry.Repo) []check {
 }
 
 // unbadgedIssueIDs returns the IDs of issues that render with NO owner
-// badge in the TUI — carrying neither the `human` label (HUMAN) nor
-// `src:agent` (AGENT / HUMAN-BLOCK). This mirrors responsibilityBadgeFor's
-// blank case, the project's "task has no owner" signal that bd can't
-// enforce. Pulled out so the filter is unit-testable without a live bd
-// workspace.
+// badge in the TUI — not `human` (HUMAN) and not agent-owned, i.e.
+// carrying no src label at all (so neither AGENT nor HUMAN-BLOCK; a
+// `src:human` task badges AGENT per Issue.IsAgentOwned). This mirrors
+// responsibilityBadgeFor's blank case, the project's "task has no owner"
+// signal that bd can't enforce. Pulled out so the filter is unit-testable
+// without a live bd workspace.
 func unbadgedIssueIDs(issues []beads.Issue) []string {
 	var out []string
 	for _, i := range issues {
-		if !i.IsHuman() && !i.HasLabel("src:agent") {
+		if !i.IsHuman() && !i.IsAgentOwned() {
 			out = append(out, i.ID)
 		}
 	}

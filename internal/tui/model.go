@@ -4909,14 +4909,16 @@ func paddedResponsibilityBadge(i beads.Issue) string {
 //     signal trumps everything else; src distinction is dropped —
 //     a glance at the column should give a yes/no answer, not a
 //     three-way categorisation that buries the lede)
-//   - has `src:agent` and no `human` → AGENT or HUMAN-BLOCK
-//     depending on dep state
-//   - otherwise → empty (no responsibility signal applies)
+//   - not `human` but carries a src label (`src:agent` OR `src:human`)
+//     → AGENT, or HUMAN-BLOCK when a human-flagged dep blocks it. A
+//     human FILING a task is agent-owned work unless they also flag it
+//     `human`, so src:human badges AGENT too (see Issue.IsAgentOwned).
+//   - otherwise (no labels at all) → empty (no responsibility signal)
 func responsibilityBadgeFor(i beads.Issue) string {
 	if i.IsHuman() {
 		return humanBadge.Render("HUMAN")
 	}
-	if i.HasLabel("src:agent") {
+	if i.IsAgentOwned() {
 		// HUMAN-BLOCK takes precedence over plain AGENT so a row
 		// the agent cannot unblock reads visually different from
 		// rows the inbox imperative says to act on. Set by
