@@ -77,7 +77,7 @@ plugin adds a best-effort SessionStart hook that surfaces `wyk inbox`
 (work a human has bounced back) when you open a session:
 
 ```
-/plugin marketplace add jimbottle/would-you-kindly
+/plugin marketplace add raylytics/would-you-kindly
 /plugin install wyk@wyk
 ```
 

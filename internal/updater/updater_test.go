@@ -59,7 +59,7 @@ func TestIsNewer_GarbageInputsReturnFalse(t *testing.T) {
 
 func TestInstallCommand_FormsTheExpectedGoInstall(t *testing.T) {
 	got := InstallCommand("v0.3.0-alpha")
-	want := "go install github.com/jimbottle/would-you-kindly/cmd/wyk@v0.3.0-alpha"
+	want := "go install github.com/raylytics/would-you-kindly/cmd/wyk@v0.3.0-alpha"
 	if got != want {
 		t.Errorf("InstallCommand = %q, want %q", got, want)
 	}

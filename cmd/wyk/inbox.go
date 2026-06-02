@@ -9,8 +9,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/jimbottle/would-you-kindly/internal/beads"
-	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/raylytics/would-you-kindly/internal/registry"
 )
 
 // inboxQuery is the canonical "what's been bounced back to me" query.

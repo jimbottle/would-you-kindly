@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jimbottle/would-you-kindly/internal/beads"
-	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/raylytics/would-you-kindly/internal/registry"
 )
 
 // fakeImportClient is the in-memory bd stand-in. It records every

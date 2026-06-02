@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jimbottle/would-you-kindly/internal/updater"
+	"github.com/raylytics/would-you-kindly/internal/updater"
 )
 
 // captureStderr mirrors captureStdout for the stderr path that

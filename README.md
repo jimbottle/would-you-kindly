@@ -1,6 +1,6 @@
 # would-you-kindly
 
-[![test](https://github.com/jimbottle/would-you-kindly/actions/workflows/test.yml/badge.svg)](https://github.com/jimbottle/would-you-kindly/actions/workflows/test.yml)
+[![test](https://github.com/raylytics/would-you-kindly/actions/workflows/test.yml/badge.svg)](https://github.com/raylytics/would-you-kindly/actions/workflows/test.yml)
 
 A terminal UI over the [beads](https://github.com/gastownhall/beads) issue
 tracker, built for one specific moment: when an agent finishes the
@@ -37,10 +37,10 @@ Then install wyk:
 
 ```bash
 # Latest tagged release:
-go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest
+go install github.com/raylytics/would-you-kindly/cmd/wyk@latest
 
 # Or tip of main:
-go install github.com/jimbottle/would-you-kindly/cmd/wyk@main
+go install github.com/raylytics/would-you-kindly/cmd/wyk@main
 ```
 
 Or from a checkout:
@@ -451,7 +451,7 @@ blocked on a human — next to the Repo / Branch / Status columns and the
 
 `wyk` is actively developed. See the
 [CHANGELOG](CHANGELOG.md) and the
-[GitHub releases](https://github.com/jimbottle/would-you-kindly/releases)
+[GitHub releases](https://github.com/raylytics/would-you-kindly/releases)
 for what's shipped and when. It's a CLI-driven toolkit around the
 human-in-the-loop handoff contract: the multi-repo TUI plus subcommands
 (`init`, `handoff`, `inbox`, `stats`, `dashboard`, `doctor`, `registry`,

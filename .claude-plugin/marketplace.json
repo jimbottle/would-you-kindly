@@ -1,7 +1,7 @@
 {
   "name": "wyk",
   "owner": {
-    "name": "jimbottle"
+    "name": "raylytics"
   },
   "metadata": {
     "description": "The would-you-kindly (wyk) agent integration: skills for the human-in-the-loop bd workflow."

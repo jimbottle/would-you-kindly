@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jimbottle/would-you-kindly/internal/beads"
-	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/raylytics/would-you-kindly/internal/registry"
 )
 
 func TestStatsSubs_RepoNameSelectsOneRegisteredEntry(t *testing.T) {

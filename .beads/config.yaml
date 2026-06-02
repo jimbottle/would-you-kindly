@@ -54,6 +54,6 @@
 # - linear.api_key  → use LINEAR_API_KEY env var instead
 # - github.token    → use GITHUB_TOKEN env var instead
 
-sync.remote: "git+ssh://git@github.com/jimbottle/would-you-kindly.git"
+sync.remote: "git+ssh://git@github.com/raylytics/would-you-kindly.git"
 
 export.git-add: false

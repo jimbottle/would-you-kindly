@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jimbottle/would-you-kindly/internal/beads"
-	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/raylytics/would-you-kindly/internal/registry"
 )
 
 // postCommitHook is the shell script `wyk init` installs at

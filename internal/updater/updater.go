@@ -28,7 +28,7 @@ import (
 // distributed without callers supplying them. If the project moves
 // they get updated here and shipped in the next release.
 const (
-	githubOwner = "jimbottle"
+	githubOwner = "raylytics"
 	githubRepo  = "would-you-kindly"
 )
 

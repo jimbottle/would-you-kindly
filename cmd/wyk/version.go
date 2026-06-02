@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jimbottle/would-you-kindly/internal/updater"
+	"github.com/raylytics/would-you-kindly/internal/updater"
 )
 
 // runVersion handles `wyk version` (and its `--version` / `-v`

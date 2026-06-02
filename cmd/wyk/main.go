@@ -29,16 +29,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"github.com/jimbottle/would-you-kindly/internal/beads"
-	"github.com/jimbottle/would-you-kindly/internal/filter"
-	"github.com/jimbottle/would-you-kindly/internal/filters"
-	"github.com/jimbottle/would-you-kindly/internal/registry"
-	"github.com/jimbottle/would-you-kindly/internal/theme"
-	"github.com/jimbottle/would-you-kindly/internal/tui"
-	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
-	"github.com/jimbottle/would-you-kindly/internal/updater"
-	"github.com/jimbottle/would-you-kindly/internal/watch"
-	"github.com/jimbottle/would-you-kindly/pkg/handoff"
+	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/raylytics/would-you-kindly/internal/filter"
+	"github.com/raylytics/would-you-kindly/internal/filters"
+	"github.com/raylytics/would-you-kindly/internal/registry"
+	"github.com/raylytics/would-you-kindly/internal/theme"
+	"github.com/raylytics/would-you-kindly/internal/tui"
+	"github.com/raylytics/would-you-kindly/internal/uiconfig"
+	"github.com/raylytics/would-you-kindly/internal/updater"
+	"github.com/raylytics/would-you-kindly/internal/watch"
+	"github.com/raylytics/would-you-kindly/pkg/handoff"
 )
 
 // noColorRequested reports whether the user has asked to disable

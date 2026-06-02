@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jimbottle/would-you-kindly/internal/beads"
-	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/raylytics/would-you-kindly/internal/beads"
+	"github.com/raylytics/would-you-kindly/internal/registry"
 )
 
 // withTempRegistry plants a Registry at a per-test path and points

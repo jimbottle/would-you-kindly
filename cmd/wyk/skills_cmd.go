@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jimbottle/would-you-kindly/internal/skills"
+	"github.com/raylytics/would-you-kindly/internal/skills"
 )
 
 // runSkills dispatches `wyk skills <sub>` — manage the Claude Code

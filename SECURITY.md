@@ -9,7 +9,7 @@ recent version (`wyk update`); older tags are not patched.
 
 Please report security issues **privately**, not through public issues.
 
-- Preferred: open a [private security advisory](https://github.com/jimbottle/would-you-kindly/security/advisories/new)
+- Preferred: open a [private security advisory](https://github.com/raylytics/would-you-kindly/security/advisories/new)
   on this repository (GitHub → Security → Report a vulnerability).
 - Include a description, reproduction steps, affected version
   (`wyk --version`), and the impact you observed.
