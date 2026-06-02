@@ -11,3 +11,6 @@
 
 # macOS
 .DS_Store
+
+# Netatalk/AFP/SMB "deletion-in-progress" sentinel temp files (.!NNNNN!<name>)
+.!*!*
