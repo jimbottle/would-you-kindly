@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-06-02
+
+### Changed
+
+- **A null owner now badges AGENT** — an issue with no `src:`/`human`
+  label renders **AGENT** instead of a blank owner column, so the column
+  is never empty. The thing worth watching is now the inverse: a task
+  that needs a human must be handed off (`wyk handoff`), or it silently
+  defaults to AGENT. `wyk doctor`'s old "blank owner badge" check is
+  retired accordingly.
+
 ## [0.6.0] — 2026-06-02
 
 ### Added
