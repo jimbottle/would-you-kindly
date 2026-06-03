@@ -1248,14 +1248,14 @@ func TestDetailView_YankCopiesDescriptionAndNotes(t *testing.T) {
 	clipboardCopy = func(s string) error { copied = s; return nil }
 	t.Cleanup(func() { clipboardCopy = orig })
 
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = model.(Model)
 	want := "step one\nstep two\n\nfirst note"
 	if copied != want {
-		t.Errorf("y in detail mode copied %q, want %q", copied, want)
+		t.Errorf("c in detail mode copied %q, want %q", copied, want)
 	}
-	if !strings.Contains(m.status, "copied a-1 body") {
-		t.Errorf("status should announce the yank; got %q", m.status)
+	if !strings.Contains(m.status, "copied a-1 instructions") {
+		t.Errorf("status should announce the copy; got %q", m.status)
 	}
 }
 
@@ -1277,7 +1277,7 @@ func TestDetailView_YankEmptyBodyNoOp(t *testing.T) {
 	if called {
 		t.Error("empty body must not touch the clipboard")
 	}
-	if !strings.Contains(m.status, "nothing to yank") {
+	if !strings.Contains(m.status, "nothing to copy") {
 		t.Errorf("status should explain the no-op; got %q", m.status)
 	}
 }

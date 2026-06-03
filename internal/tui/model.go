@@ -547,6 +547,9 @@ func New(src Source) Model {
 	h.Styles.ShortDesc = helpStyle
 	// lipgloss.Style is a value type; plain assignment is the copy.
 	h.Styles.ShortSeparator = helpStyle
+	// Use a vertical bar to separate options (instead of the default
+	// bullet), matching the bar-delimited footer style.
+	h.ShortSeparator = " ▕ "
 
 	m := Model{
 		src:            src,
@@ -2089,7 +2092,9 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quitNow()
 	case keyHit(msg, m.keys.Help):
 		return m.openHelp()
-	case keyHit(msg, m.keys.Yank):
+	case msg.String() == "c", keyHit(msg, m.keys.Yank):
+		// `c` copies the issue's instructions (description + notes) to
+		// the clipboard; `y` stays a silent alias for muscle memory.
 		return m.handleYankDetailBody()
 	case msg.Type == tea.KeyTab, msg.String() == "n":
 		// Cycle the dependency/dependent link selection forward. j/k
@@ -2231,7 +2236,7 @@ func (m Model) handleYankDetailBody() (tea.Model, tea.Cmd) {
 	i := m.detailIssue
 	if i.ID == "" {
 		if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
-			m.setStatus("nothing to yank")
+			m.setStatus("nothing to copy")
 			return m, flashClearCmd(m.statusGen)
 		}
 		i = m.visible[m.cursor]
@@ -2248,14 +2253,14 @@ func (m Model) handleYankDetailBody() (tea.Model, tea.Cmd) {
 	}
 	payload := b.String()
 	if payload == "" {
-		m.setStatus("nothing to yank (description and notes are empty)")
+		m.setStatus("nothing to copy (description and notes are empty)")
 		return m, flashClearCmd(m.statusGen)
 	}
 	if err := clipboardCopy(payload); err != nil {
-		m.setStatus("yank failed: " + err.Error())
+		m.setStatus("copy failed: " + err.Error())
 		return m, nil
 	}
-	m.setStatus(fmt.Sprintf("copied %s body (%d bytes)", i.ID, len(payload)))
+	m.setStatus(fmt.Sprintf("copied %s instructions (%d bytes)", i.ID, len(payload)))
 	return m, flashClearCmd(m.statusGen)
 }
 
@@ -5202,15 +5207,15 @@ func (m Model) viewDetail() string {
 	// Footer: scroll percent (only when there's actually
 	// something to scroll) + key hint.
 	b.WriteString("\n")
-	footer := "esc: back   j/k ↑↓ scroll   y: yank body   q: quit"
+	footer := "esc: back ▕ j/k ↑↓ scroll ▕ c: copy instructions ▕ q: quit"
 	// When the issue has dependency/dependent links, advertise the
 	// drill-in nav: Tab highlights a link, Enter opens it.
 	if len(m.detailLinks()) > 0 {
-		footer = "tab: link   ⏎ open   esc: back   j/k ↑↓ scroll   y: yank   q: quit"
+		footer = "tab: link ▕ ⏎ open ▕ esc: back ▕ j/k ↑↓ scroll ▕ c: copy instructions ▕ q: quit"
 	}
 	if m.detailVP.TotalLineCount() > m.detailVP.Height {
 		pct := int(m.detailVP.ScrollPercent() * 100)
-		footer = fmt.Sprintf("%d%%   %s", pct, footer)
+		footer = fmt.Sprintf("%d%% ▕ %s", pct, footer)
 	}
 	b.WriteString(helpStyle.Render(footer))
 	return b.String()

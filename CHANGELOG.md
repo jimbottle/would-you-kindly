@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Detail-view "copy instructions" + bar-delimited footers** — the
+  detail view's body-copy key is now `c` ("copy instructions"; `y`
+  stays a silent alias), and the list help bar and detail footers use a
+  vertical-bar (`▕`) separator between options instead of bullets/spaces.
+
 - **TUI column headers are full, capitalized field names** — the owner
   column header is `Owner` (was lowercase `owner`), the type column is
   `Type` (was `T`), and the priority column is `Priority` (was `P`). The
