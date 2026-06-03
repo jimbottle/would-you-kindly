@@ -83,7 +83,7 @@ wyk
 ```
 
 — and the TUI shows issues from every registered repo, with a
-`Repo` and `Branch` column on the left of the table. Writes (`c`,
+`Repo` and `Branch` column on the left of the table. Writes (`a`,
 `H`, `n`) route to the correct repo automatically. The registry
 lives at `~/.config/wyk/repos.json` (or `$XDG_CONFIG_HOME/wyk/...`)
 and is plain editable JSON.
@@ -315,7 +315,7 @@ to restore the original.
 
 | Key   | Action                                                      |
 | ----- | ----------------------------------------------------------- |
-| `c`   | Close the cursor issue (asks `[y/N]` to confirm)            |
+| `a`   | Close the cursor issue (asks `[y/N]` to confirm)            |
 | `H`   | Toggle the `human` label on the cursor issue                |
 | `n`   | Append a note to the cursor issue (multi-line textarea)     |
 | `N`   | File a new issue in the cursor's repo (QuickAdd; refuses without an owner) |

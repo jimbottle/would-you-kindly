@@ -5259,6 +5259,17 @@ func (m Model) statusBar() string {
 		bindings = m.keys.shortHelpReadOnly()
 		suffix = "  (read-only)"
 	}
+	// Cap the help component to the width left after the status info (and
+	// the read-only suffix) so a long binding list elides with an ellipsis
+	// instead of wrapping the status bar onto a second line. Full keymap
+	// lives in the ? overlay.
+	if m.width > 0 {
+		avail := m.width - lipgloss.Width(left) - lipgloss.Width(suffix) - 2
+		if avail < 0 {
+			avail = 0
+		}
+		m.help.Width = avail
+	}
 	helpLine := m.help.ShortHelpView(bindings) + suffix
 	gap := " "
 	if m.width > 0 {

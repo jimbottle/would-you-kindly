@@ -37,7 +37,7 @@ internal/tui/keymap.go (`DocsKeymap`).
 
 | Key | Action |
 |-----|--------|
-| `c` | close |
+| `a` | close |
 | `H` | ±human |
 | `n` | note |
 | `N` | new issue |

@@ -191,7 +191,7 @@ func defaultKeyMap() keyMap {
 		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 
-		Close:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "close")),
+		Close:       key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "close")),
 		ToggleHuman: key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "±human")),
 		AddNote:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "note")),
 		QuickAdd:    key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "new issue")),

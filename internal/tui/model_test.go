@@ -731,8 +731,8 @@ func TestClose_RequiresConfirmationAndDispatches(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
 
-	// `c` enters confirm mode but does NOT dispatch yet
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	// `a` enters confirm mode but does NOT dispatch yet
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = model.(Model)
 	if m.mode != modeConfirmClose {
 		t.Fatalf("`c` should enter modeConfirmClose, got %v", m.mode)
@@ -758,7 +758,7 @@ func TestClose_RequiresConfirmationAndDispatches(t *testing.T) {
 	}
 
 	// re-enter confirm, then y this time
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = model.(Model)
 	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	m = model.(Model)
@@ -971,7 +971,7 @@ func TestConfirmCloseTargetsCapturedIDNotCursor(t *testing.T) {
 	originalFirstID := s.issues[0].ID
 	m := applyMutatorFetched(New(s), s)
 
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = model.(Model)
 	if m.pendingTarget.ID != originalFirstID {
 		t.Fatalf("setup: expected pendingTarget.ID=%q, got %q", originalFirstID, m.pendingTarget.ID)
@@ -1005,7 +1005,7 @@ func TestConfirmCloseCancelsIfTargetVanishes(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
 
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = model.(Model)
 
 	// refetch with the target removed
@@ -1404,7 +1404,7 @@ func TestReadOnlySourceShowsHintInsteadOfWriting(t *testing.T) {
 	s := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(s), s)
 
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = model.(Model)
 	if cmd != nil {
 		t.Error("read-only `c` must not dispatch a command")
@@ -2952,8 +2952,8 @@ func TestBulkClose_DispatchesAcrossAllMarked(t *testing.T) {
 		t.Fatalf("setup: expected 2 marks; got %d", len(m.marked))
 	}
 
-	// 'c' should enter confirm with the bulk prompt.
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	// 'a' should enter confirm with the bulk prompt.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = model.(Model)
 	if m.mode != modeConfirmClose {
 		t.Fatalf("c should enter modeConfirmClose; got %v", m.mode)
@@ -3491,9 +3491,9 @@ func TestUndo_ReopensLastClosed(t *testing.T) {
 	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(s), s)
 
-	// Close issue 0 (c → confirm with y) and drive the writeMsg
+	// Close issue 0 (a → confirm with y) and drive the writeMsg
 	// so m.lastClosed gets populated by handleWriteResult.
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = model.(Model)
 	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	m = model.(Model)
