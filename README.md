@@ -418,9 +418,9 @@ The agent moves on to other work. The bd issue now carries `human`,
 open). Press `h` to jump to the human view:
 
 ```
-Owner   Repo               Branch  ID     Type  Status  P   Updated  Title
-HUMAN   would-you-kindly   main    2oa    task  open    P1  3h ago   Rotate the staging DB password
-HUMAN   acme-pipeline      feat/x  mc-42  bug   open    P0  1h ago   Latest broken
+Owner   Repo               Branch  ID     Type  Status  Priority  Updated  Title
+HUMAN   would-you-kindly   main    2oa    task  open    P1        3h ago   Rotate the staging DB password
+HUMAN   acme-pipeline      feat/x  mc-42  bug   open    P0        1h ago   Latest broken
 ```
 
 (The `HUMAN` badge is rendered plain regardless of who filed the issue —
@@ -430,17 +430,17 @@ itself stays uniform so the eye reads it as one thing.)
 **The columns, left to right.** Every column is shown below; the `o`
 overlay toggles any of them off (persisted to `ui.json`), and on a
 narrow terminal the lower-value ones auto-hide to keep rows intact.
-`Owner`, `ID`, `P`, and `Title` are always shown.
+`Owner`, `ID`, `Priority`, and `Title` are always shown.
 
 | Column     | Definition                                                                                                              |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `Owner`    | Whose move it is — `HUMAN` (a human must act), `AGENT` (agent-owned; the default for any issue without a `human` label), or `HUMAN-BLOCK` (an agent issue blocked by a human-flagged dependency). Label-driven; never blank. |
+| `Owner`    | Whose move it is. `HUMAN` — a human must act. `AGENT` — agent-owned; the default for any issue without a `human` label. `HUMAN-BLOCK` — an agent issue blocked by a human-flagged dependency. `AGENT-HANDOFF` — another agent is working it, so this agent must not interfere (a human orchestrates the coordination). Label-driven; never blank. |
 | `Repo`     | The registered bd workspace the issue lives in. Shown when the view spans more than one repo.                            |
 | `Branch`   | That repo's current git branch. Shown in multi-repo mode.                                                                |
 | `ID`       | The bd issue ID with the repeated workspace prefix trimmed (e.g. `2oa` for `would-you-kindly-2oa`). Yank it with `y`.    |
 | `Type`     | The issue type, abbreviated to four characters: `task`, `bug`, `feat`(ure), `chor`(e), `epic`, `deci`(sion), `spik`(e), `stor`(y), `mile`(stone). |
 | `Status`   | The bd lifecycle state: `open`, `wip` (in&#95;progress), `blocked`, `deferred`, `closed`. Closed rows are dimmed.        |
-| `P`        | Priority, `P0` (most urgent) through `P4` (backlog). Bump with `+` / `-`; opt into colour emphasis in `ui.json`.         |
+| `Priority` | `P0` (most urgent) through `P4` (backlog). Bump with `+` / `-`; opt into colour emphasis in `ui.json`.                   |
 | `Updated`  | How long since the issue last changed — `now`, `3h ago`, `2d ago`, or a `Jan 2` date once it's older than 30 days.       |
 | `Session`  | The Claude session that filed the issue (first 8 chars of the ID), recorded when it's created via `wyk create`. Blank for issues filed any other way. |
 | `Title`    | The issue's one-line summary, capped at 50 columns for scannability. Press `enter` to read the full title, description, and notes. |

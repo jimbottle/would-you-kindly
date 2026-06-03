@@ -73,6 +73,17 @@ var (
 			Bold(true).
 			Padding(0, 1)
 
+	// agentHandoffBadge renders the "another agent owns this — coordinate
+	// via the human, don't interfere" case. Purple, so it reads as a
+	// distinct fourth state alongside pink HUMAN, green AGENT, and amber
+	// HUMAN-BLOCK. The agent inbox deliberately excludes these rows: this
+	// agent isn't meant to act on them, the human orchestrates.
+	agentHandoffBadge = lipgloss.NewStyle().
+				Background(lipgloss.Color("141")).
+				Foreground(lipgloss.Color("232")).
+				Bold(true).
+				Padding(0, 1)
+
 	cursorStyle = lipgloss.NewStyle().
 			Foreground(cAccent).
 			Bold(true)
@@ -216,6 +227,12 @@ func ApplyTheme(t theme.Theme) {
 	}
 	if t.HumanBlockFG != "" {
 		humanBlockBadge = humanBlockBadge.Foreground(lipgloss.Color(t.HumanBlockFG))
+	}
+	if t.AgentHandoffBG != "" {
+		agentHandoffBadge = agentHandoffBadge.Background(lipgloss.Color(t.AgentHandoffBG))
+	}
+	if t.AgentHandoffFG != "" {
+		agentHandoffBadge = agentHandoffBadge.Foreground(lipgloss.Color(t.AgentHandoffFG))
 	}
 	if t.Cursor != "" {
 		cursorStyle = cursorStyle.Foreground(lipgloss.Color(t.Cursor))

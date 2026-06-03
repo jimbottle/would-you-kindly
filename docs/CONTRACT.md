@@ -120,9 +120,9 @@ consuming the CLI's exit codes should check stderr too.
 
 ## Acting on the inbox
 
-The inbox query (`label=src:agent AND NOT label=human AND
-status!=closed`) returns issues an agent filed that the human is no
-longer blocking. The convention is to **work them**, not just note
+The inbox query (`label=src:agent AND NOT label=human AND NOT
+label=agent-handoff AND status!=closed`) returns issues an agent filed
+that the human is no longer blocking. The convention is to **work them**, not just note
 them. If `wyk inbox` returns items, the agent's default next move
 is to pick up the highest-priority one and resume — that's the loop
 the round-trip is designed to enable. Letting inbox items
@@ -141,6 +141,22 @@ Exceptions are narrow:
   these rows until the blocker closes; the convention treats them
   as inbox-excluded so the "work them now" imperative does not
   fire on tasks that can't move.
+
+## Cross-agent coordination: the `agent-handoff` label
+
+When more than one agent works the same repo, an agent that must
+**not** touch a task another agent owns flags it with the
+`agent-handoff` label. The row then renders as **AGENT-HANDOFF** in
+the TUI's `owner` column (a distinct fourth state alongside HUMAN,
+AGENT, and HUMAN-BLOCK), and the inbox query excludes it so the
+"work them now" imperative never fires on it.
+
+The assumption is that **a human orchestrates** the coordination —
+wyk deliberately does not arbitrate which agent does what. The label
+exists only to call the situation out distinctly so it's handled on
+purpose rather than two agents colliding on the same work. Remove the
+label (`bd label remove <id> agent-handoff`) once the coordination is
+resolved and the task is yours to act on.
 
 ## Status lifecycle
 

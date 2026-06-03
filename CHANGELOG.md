@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`AGENT-HANDOFF` owner state** — a fourth owner-column badge, driven
+  by the `agent-handoff` label, for when one agent must not interfere
+  with a task another agent is working. A human is expected to
+  orchestrate the coordination; the badge just calls the situation out
+  distinctly. These rows are excluded from the agent inbox query so the
+  "work it now" imperative never fires on a task that isn't the current
+  agent's to touch. Themeable via `agent_handoff_bg` / `agent_handoff_fg`.
+
 - **`wyk create`** — a thin wrapper over `bd create` (every flag
   forwarded verbatim) that stamps each new issue with a `session:<id>`
   label recording the Claude session that filed it (from
@@ -30,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (version-agnostic marker), opt out with `-skip-claude-md`.
 
 ### Changed
+
+- **TUI column headers are full, capitalized field names** — the owner
+  column header is `Owner` (was lowercase `owner`), the type column is
+  `Type` (was `T`), and the priority column is `Priority` (was `P`). The
+  README's "A day in the life" section now defines every column.
 
 - **The TUI title column is capped at 50 visual columns** — long titles
   no longer drag across the full width of a wide terminal into an

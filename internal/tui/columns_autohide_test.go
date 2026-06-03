@@ -26,15 +26,16 @@ func TestComputeAutoHidden_DropsLeastImportantFirst(t *testing.T) {
 		t.Errorf("wide terminal should auto-hide nothing; got %v", h)
 	}
 
-	// At 65 cols the two least-valuable shown columns (Updated, Type)
-	// drop; Status and Owner are kept.
-	m.width = 65
+	// At 75 cols the least-valuable shown columns (Session, Updated,
+	// Type) drop in order; Status and Owner are kept. (The breakpoint
+	// moved out from 65 once Priority widened to hold its full header.)
+	m.width = 75
 	h := m.computeAutoHidden()
 	if !h[colIDUpdated] || !h[colIDType] {
-		t.Errorf("expected Updated+Type auto-hidden at 65 cols; got %v", h)
+		t.Errorf("expected Updated+Type auto-hidden at 75 cols; got %v", h)
 	}
 	if h[colIDStatus] || h[colIDOwner] {
-		t.Errorf("Status/Owner should survive at 65 cols; got %v", h)
+		t.Errorf("Status/Owner should survive at 75 cols; got %v", h)
 	}
 }
 

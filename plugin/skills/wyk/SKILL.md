@@ -46,6 +46,14 @@ task with no owner label **defaults to AGENT** — the column is never blank.
 So the one thing that matters: **if a task needs a human, hand it off** —
 otherwise it silently defaults to AGENT and the human never sees it.
 
+The badge has four states: **HUMAN** (a human must act), **AGENT** (yours),
+**HUMAN-BLOCK** (yours but blocked by a human-flagged dep), and
+**AGENT-HANDOFF** (`agent-handoff` label — *another* agent is working it).
+If you see **AGENT-HANDOFF**, do NOT touch that task: a human orchestrates
+the cross-agent coordination, and it's excluded from your inbox for exactly
+this reason. Flag a task that way with `bd label add <id> agent-handoff
+--dolt-auto-commit=on` when you need to fence off work another agent owns.
+
 - **A task that needs a human → use the wyk-handoff skill**, never
   hand-rolled labels: `wyk handoff -create "…"` sets `human` (HUMAN
   badge) with a runbook.

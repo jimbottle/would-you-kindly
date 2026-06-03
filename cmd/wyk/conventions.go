@@ -13,7 +13,7 @@ import (
 // form (conventionsStructured) interpolate the SAME string —
 // previously the two forms duplicated the literal query text and
 // could silently drift.
-const agentInboxQuery = "label=src:agent AND NOT label=human AND status!=closed"
+const agentInboxQuery = "label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed"
 const humanTasksQuery = "label=human AND status!=closed"
 
 // conventionsBody is the agent-ready tip printed by `wyk conventions`.
@@ -24,11 +24,14 @@ const humanTasksQuery = "label=human AND status!=closed"
 var conventionsBody = `bd / wyk task labels
 ====================
 
-wyk filters task issues by two labels. Apply them when filing with bd create:
+wyk filters task issues by these labels. Apply them when filing (with wyk create / bd create):
 
   - Tasks for a HUMAN    → --add-label="human" --add-label="src:agent"
                            (these surface in the TUI's 'h' view and in 'wyk --probe')
   - Tasks the AGENT owns → --add-label="src:agent" only
+  - Another AGENT's work → --add-label="agent-handoff" (badge AGENT-HANDOFF):
+                           a different agent is working it; do NOT interfere,
+                           a human orchestrates. Excluded from the inbox below.
 
 The back-and-forth handshake: a human REMOVES the 'human' label when they're
 done. The agent's inbox is then anything matching:
@@ -142,9 +145,10 @@ Full contract: https://github.com/jimbottle/would-you-kindly/blob/main/docs/CONT
 // stable: callers index by the exact keys here.
 type conventionsJSON struct {
 	Labels struct {
-		Human    string `json:"human"`
-		SrcAgent string `json:"src:agent"`
-		SrcHuman string `json:"src:human"`
+		Human        string `json:"human"`
+		SrcAgent     string `json:"src:agent"`
+		SrcHuman     string `json:"src:human"`
+		AgentHandoff string `json:"agent-handoff"`
 	} `json:"labels"`
 	Queries struct {
 		HumanTasks string `json:"human_tasks"`
@@ -180,6 +184,7 @@ func conventionsStructured() conventionsJSON {
 	c.Labels.Human = "task is for a human to act on; surfaced in TUI 'h' view and 'wyk --probe'"
 	c.Labels.SrcAgent = "filed by an agent (provenance); persists across the back-and-forth"
 	c.Labels.SrcHuman = "filed by a human (provenance); applied by the TUI's N quick-add and wyk handoff -create when stdin is absent"
+	c.Labels.AgentHandoff = "another agent is working this task; THIS agent must not interfere (badge AGENT-HANDOFF). A human orchestrates the coordination; excluded from the agent inbox query"
 	c.Queries.HumanTasks = humanTasksQuery
 	c.Queries.AgentInbox = agentInboxQuery
 	c.InboxRule = "If `wyk inbox` returns items, work them now rather than acknowledging and moving on. The inbox holds tasks where the human is no longer blocking; treating them as 'handle later' defeats the round-trip. Exception: the user is mid-conversation about something explicitly urgent, or the expected unblocker artifact is missing (re-flag `human` and note, don't sit)."

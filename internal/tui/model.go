@@ -4488,13 +4488,13 @@ func (m Model) viewList() string {
 // remaining suffix is usually ≤ 8 chars (e.g. `ma5.2.1`), so the
 // extra width was just whitespace in every row.
 const (
-	colResp    = 13 // responsibility column: " ← HUMAN ", " · HUMAN ", " AGENT ", " HUMAN-BLOCK ", or blank. 13 = " HUMAN-BLOCK " visual width (Padding(0,1) + 11-char content), the widest variant. Shorter badges get trailing whitespace. Placed second-from-left to put the most important "whose move is it" signal where the eye lands first.
+	colResp    = 15 // responsibility column: " AGENT ", " HUMAN ", " HUMAN-BLOCK ", " AGENT-HANDOFF ", or blank. 15 = " AGENT-HANDOFF " visual width (Padding(0,1) + 13-char content), the widest variant. Shorter badges get trailing whitespace. Placed second-from-left to put the most important "whose move is it" signal where the eye lands first.
 	colRepo    = 18
 	colBranch  = 10
 	colID      = 12
 	colType    = 4
 	colStatus  = 8
-	colPrio    = 2
+	colPrio    = 9 // wide enough for the "Priority" header plus its sort-arrow ("Priority↑" = 9), like colUpdated holds "Updated↓". Values ("P0".."P4") are 2 chars and left-align in the slack.
 	colUpdated = 8 // 8 chars so the "Updated↓" sort-arrow decoration fits without overflowing into the Title column. relTime values ("4h ago", "2 weeks", etc.) are all ≤ 7 chars so the extra slack is harmless when no sort is active.
 	colSession = 8 // first 8 chars of the Claude session UUID that filed the issue (via `wyk create`); enough to recognise/disambiguate sessions at a glance. Header "Session" is 7.
 	// colTitleMax caps the title cell so a wide terminal doesn't drag a
@@ -4632,7 +4632,7 @@ func (m Model) renderHeader() string {
 	if m.colVisible(colIDStatus) {
 		fmt.Fprintf(&b, "%-*s  ", colStatus, "Status")
 	}
-	fmt.Fprintf(&b, "%-*s  ", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑", m.sortDesc))
+	fmt.Fprintf(&b, "%-*s  ", colPrio, sortDecorate("Priority", m.sortBy == sortPriority, "↑", m.sortDesc))
 	if m.colVisible(colIDUpdated) {
 		fmt.Fprintf(&b, "%-*s  ", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓", m.sortDesc))
 	}
@@ -4953,19 +4953,29 @@ func paddedResponsibilityBadge(i beads.Issue) string {
 	return badge
 }
 
-// responsibilityBadgeFor returns the badge for the "owner" column,
+// responsibilityBadgeFor returns the badge for the "Owner" column,
 // telling the reader whose move it is. The badge is NEVER blank:
 //   - has `human` label → plain "HUMAN" (the human-needs-to-act
 //     signal trumps everything else; src distinction is dropped —
 //     a glance at the column should give a yes/no answer, not a
 //     three-way categorisation that buries the lede)
-//   - anything else → AGENT, or HUMAN-BLOCK when a human-flagged dep
-//     blocks it. A null owner (no `src:`/`human` label at all) DEFAULTS
-//     to AGENT — a task with no explicit owner is treated as agent-owned
-//     rather than rendering an empty column.
+//   - has `agent-handoff` label → "AGENT-HANDOFF" — another agent owns
+//     this; THIS agent must not interfere, a human orchestrates the
+//     coordination. Ranks above HUMAN-BLOCK/AGENT because it's an
+//     explicit, deliberate flag, not a computed state.
+//   - blocked by a human-flagged dep → "HUMAN-BLOCK"
+//   - anything else → AGENT. A null owner (no `src:`/`human` label at
+//     all) DEFAULTS to AGENT — a task with no explicit owner is treated
+//     as agent-owned rather than rendering an empty column.
 func responsibilityBadgeFor(i beads.Issue) string {
 	if i.IsHuman() {
 		return humanBadge.Render("HUMAN")
+	}
+	// AGENT-HANDOFF is an explicit "leave this to another agent" flag, so it
+	// outranks both the computed HUMAN-BLOCK and the plain AGENT default — a
+	// human is expected to orchestrate the cross-agent coordination.
+	if i.IsAgentHandoff() {
+		return agentHandoffBadge.Render("AGENT-HANDOFF")
 	}
 	// Everything not flagged for a human is agent-owned — including an issue
 	// with NO owner label at all. A null owner DEFAULTS to AGENT rather than

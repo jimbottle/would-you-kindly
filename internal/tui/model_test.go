@@ -1977,6 +1977,27 @@ func TestResponsibilityBadge_HumanBlockForBlockedAgentTask(t *testing.T) {
 	}
 }
 
+func TestResponsibilityBadge_AgentHandoff(t *testing.T) {
+	// agent-handoff label → AGENT-HANDOFF badge: another agent owns it,
+	// a human orchestrates, this agent leaves it alone.
+	handoff := beads.Issue{Labels: []string{"src:agent", "agent-handoff"}}
+	if got := responsibilityBadgeFor(handoff); !strings.Contains(got, "AGENT-HANDOFF") {
+		t.Errorf("agent-handoff label should produce AGENT-HANDOFF badge; got %q", got)
+	}
+
+	// The explicit flag outranks a computed HUMAN-BLOCK.
+	both := beads.Issue{Labels: []string{"src:agent", "agent-handoff"}, BlockedByHuman: true}
+	if got := responsibilityBadgeFor(both); !strings.Contains(got, "AGENT-HANDOFF") || strings.Contains(got, "HUMAN-BLOCK") {
+		t.Errorf("agent-handoff should outrank HUMAN-BLOCK; got %q", got)
+	}
+
+	// But the `human` label still trumps everything.
+	human := beads.Issue{Labels: []string{"src:agent", "agent-handoff", "human"}}
+	if got := responsibilityBadgeFor(human); !strings.Contains(got, "HUMAN") || strings.Contains(got, "AGENT-HANDOFF") {
+		t.Errorf("human label should trump agent-handoff; got %q", got)
+	}
+}
+
 func TestResponsibilityBadge_HumanBlockOnlyWhenFlagSet(t *testing.T) {
 	// An agent task with deps but no BlockedByHuman flag set
 	// stays plain AGENT. The flag is set explicitly by the
@@ -5104,7 +5125,7 @@ func TestSetSortKey_ResetsCursorAndReclampsScroll(t *testing.T) {
 }
 
 func TestRenderHeader_DecoratesActiveSortColumn(t *testing.T) {
-	// Sort by priority should put ↑ next to P; sort by updated
+	// Sort by priority should put ↑ next to Priority; sort by updated
 	// should put ↓ next to Updated. sortNone leaves the header
 	// arrow-free.
 	src := &stubSource{issues: sampleIssues()}
@@ -5114,8 +5135,8 @@ func TestRenderHeader_DecoratesActiveSortColumn(t *testing.T) {
 	}
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m = model.(Model)
-	if got := m.renderHeader(); !strings.Contains(got, "P↑") {
-		t.Errorf("sortPriority should decorate the P column with ↑; got:\n%s", got)
+	if got := m.renderHeader(); !strings.Contains(got, "Priority↑") {
+		t.Errorf("sortPriority should decorate the Priority column with ↑; got:\n%s", got)
 	}
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m = model.(Model)

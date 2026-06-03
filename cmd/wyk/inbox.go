@@ -17,8 +17,11 @@ import (
 // Issues an agent originally filed (`src:agent`) that no longer carry
 // the `human` label and aren't closed — the convention is: the human
 // removes `human` to say "back to you", and the agent picks the issue
-// up from this inbox. See docs/CONTRACT.md.
-const inboxQuery = `label=src:agent AND NOT label=human AND status!=closed`
+// up from this inbox. `agent-handoff` rows are excluded: another agent
+// owns them and a human orchestrates, so the "work it" imperative must
+// not fire here. Kept in lockstep with cmd/wyk.agentInboxQuery. See
+// docs/CONTRACT.md.
+const inboxQuery = `label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed`
 
 // runInbox implements `wyk inbox`: the agent-side view of the
 // handoff loop. Prints issues across every registered workspace

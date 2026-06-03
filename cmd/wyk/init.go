@@ -572,7 +572,7 @@ const rememberedConventionKey = "wyk-handoff-convention"
 // rememberedConventionMemory is the memory text wyk init stores
 // via bd remember. Kept as a const so a test can assert the labels
 // are present.
-const rememberedConventionMemory = "wyk handoff convention: tasks for a human carry label=human + label=src:agent. The agent's inbox is `" + agentInboxQuery + "` (run `wyk inbox`). If wyk inbox returns items, WORK them — they're tasks where the human is no longer blocking. Exception: HUMAN-BLOCK rows (agent task whose deps include a human-flagged blocker via bd dep add) cannot be moved by the agent until the blocker closes — skip them. To file or hand off a human task, prefer `wyk handoff <id>` (or `wyk handoff -create \"<title>\"` for file+handoff in one step) over hand-rolling labels via `bd create`. A handoff runbook MUST include three sections: '## Why this needs you (please confirm this is accurate)' (agent self-verification), '## Steps' (numbered with verification + close), and '## What unblocks me when this returns' (the concrete artifact). Status lifecycle: open=actionable now (default); in_progress=claimed; blocked=waiting on another bd issue (pair with --add-dependency); deferred=waiting on a subsystem that hasn't stabilised yet, hidden from bd ready; closed=done. Reach for DEFERRED instead of holding-open when the blocker is 'the rest of the project hasn't caught up yet'. Full text: `wyk conventions`."
+const rememberedConventionMemory = "wyk handoff convention: tasks for a human carry label=human + label=src:agent. The agent's inbox is `" + agentInboxQuery + "` (run `wyk inbox`). If wyk inbox returns items, WORK them — they're tasks where the human is no longer blocking. Exception: HUMAN-BLOCK rows (agent task whose deps include a human-flagged blocker via bd dep add) cannot be moved by the agent until the blocker closes — skip them. AGENT-HANDOFF rows (label=agent-handoff) belong to ANOTHER agent — do not interfere; a human orchestrates the coordination (they're excluded from the inbox query anyway). To file or hand off a human task, prefer `wyk handoff <id>` (or `wyk handoff -create \"<title>\"` for file+handoff in one step) over hand-rolling labels via `bd create`. A handoff runbook MUST include three sections: '## Why this needs you (please confirm this is accurate)' (agent self-verification), '## Steps' (numbered with verification + close), and '## What unblocks me when this returns' (the concrete artifact). Status lifecycle: open=actionable now (default); in_progress=claimed; blocked=waiting on another bd issue (pair with --add-dependency); deferred=waiting on a subsystem that hasn't stabilised yet, hidden from bd ready; closed=done. Reach for DEFERRED instead of holding-open when the blocker is 'the rest of the project hasn't caught up yet'. Full text: `wyk conventions`."
 
 // teachBDConvention writes a single bd memory describing the wyk
 // label convention into repoRoot's bd workspace. The --key makes
@@ -625,10 +625,14 @@ verbatim): it stamps each issue with the Claude session that filed it, so
 the TUI's Session column can trace work back to a conversation. Plain
 ` + "`bd create`" + ` still works but won't record the session.
 
-### Owner column: HUMAN / AGENT / HUMAN-BLOCK
+### Owner column: HUMAN / AGENT / HUMAN-BLOCK / AGENT-HANDOFF
 wyk's owner column shows whose move it is, driven by labels (NOT bd's
 ` + "`owner`/`assignee`" + ` fields):
 - ` + "`human`" + ` label → **HUMAN** (a human must act).
+- ` + "`agent-handoff`" + ` label → **AGENT-HANDOFF**: another agent is working
+  this task; do NOT interfere — coordinate through the human, who
+  orchestrates. These are excluded from ` + "`wyk inbox`" + ` so the "work it"
+  imperative doesn't fire on a task that isn't yours to touch.
 - agent task blocked by a human-flagged dep → **HUMAN-BLOCK**.
 - everything else → **AGENT**. A null owner defaults to AGENT, so the
   column is never blank — which means **a task that needs a human MUST

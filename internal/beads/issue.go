@@ -85,6 +85,21 @@ func (i Issue) IsHuman() bool {
 	return i.HasLabel("human")
 }
 
+// LabelAgentHandoff marks an issue that another agent is actively
+// working — the current agent must NOT pick it up; a human orchestrates
+// the cross-agent coordination. It drives the AGENT-HANDOFF owner badge
+// and is excluded from the agent inbox so the "work it" imperative
+// doesn't fire on a task that isn't this agent's to touch.
+const LabelAgentHandoff = "agent-handoff"
+
+// IsAgentHandoff reports whether the issue is flagged for cross-agent
+// coordination (the "agent-handoff" label) — owned by a different agent,
+// human-orchestrated. Distinct from IsHuman: no human action is required,
+// but THIS agent should leave it alone.
+func (i Issue) IsAgentHandoff() bool {
+	return i.HasLabel(LabelAgentHandoff)
+}
+
 // IsAgentOwned reports whether the issue renders with an AGENT (or, when a
 // human-flagged dep blocks it, HUMAN-BLOCK) badge: it is not `human`-flagged
 // and carries a src label. Per the owner-badge convention a human FILING a

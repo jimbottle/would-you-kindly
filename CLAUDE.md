@@ -9,10 +9,14 @@ automatically.) Use `bd` for all task tracking (not TodoWrite/markdown TODOs)
 and `bd remember` for persistent notes (not MEMORY.md). The wyk-specific
 conventions below are the delta on top of that.
 
-> ## Owner column: HUMAN / AGENT / HUMAN-BLOCK
+> ## Owner column: HUMAN / AGENT / HUMAN-BLOCK / AGENT-HANDOFF
 > The TUI **owner column** shows whose move it is, driven by labels (NOT
 > bd's `owner`/`assignee` fields, which are out of scope here):
 > - `human` label → **HUMAN** (a human needs to act).
+> - `agent-handoff` label → **AGENT-HANDOFF** (another agent is working
+>   this; THIS agent must not interfere — a human orchestrates the
+>   coordination). Excluded from the agent inbox so the "work it"
+>   imperative doesn't fire on it.
 > - agent task blocked by a human-flagged dep → **HUMAN-BLOCK**.
 > - everything else → **AGENT**. A null owner (no `src:`/`human` label)
 >   **defaults to AGENT**, so the column is never blank.
