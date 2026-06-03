@@ -300,7 +300,7 @@ to restore the original.
 | `]` / `[` | Next / previous human-flagged issue (wraps)       |
 | `enter`   | Open the selected issue (read its instructions)   |
 | `esc`     | Back to the list                                  |
-| `/`       | Open the fuzzy filter input (matches title + body)|
+| `/`       | Open the filter input (fuzzy on the title, substring on the body) |
 | `@name`   | Expand a saved fuzzy filter (manage via `:filter`)|
 | `h`       | Jump to the human-flagged view                    |
 | `tab`     | Cycle preset filters (all → ready → human → mine → blocked) |

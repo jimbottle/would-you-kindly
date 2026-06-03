@@ -37,21 +37,15 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
-// titleSource and descSource each expose ONE field of the issue
-// list to sahilm/fuzzy. We score the two fields separately and take
-// the better of the two per issue, rather than concatenating them
-// into a single haystack — concatenation would let a subsequence
-// query (e.g. "xy") match across the title→description boundary
-// even though those characters live in different fields.
+// titleSource exposes the issue list's titles to sahilm/fuzzy for the
+// subsequence title match. The description is matched separately as a
+// plain substring (see recomputeVisible), so it has no fuzzy source —
+// keeping the two fields independent means a query can't match across
+// the title→description boundary.
 type titleSource []beads.Issue
 
 func (s titleSource) String(i int) string { return s[i].Title }
 func (s titleSource) Len() int            { return len(s) }
-
-type descSource []beads.Issue
-
-func (s descSource) String(i int) string { return s[i].Description }
-func (s descSource) Len() int            { return len(s) }
 
 // refreshInterval is how often the TUI polls bd for changes. A timer
 // keeps things simple and avoids a filesystem-watcher dependency;
@@ -2397,15 +2391,15 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.maybeResolveDeps())
 }
 
-// recomputeVisible applies the fuzzy filter to m.all. The matcher
-// is rank-based (sahilm/fuzzy): subsequence matches score lower
-// than exact substrings, results are sorted best-first, and ties
-// fall back to the issue's position in m.all so the cursor doesn't
-// jump as the user types.
-//
-// Title and description are scored independently and merged on the
-// max score, which avoids letting a query span the title→description
-// boundary (a query "xy" must hit "x" and "y" in the same field).
+// recomputeVisible applies the text filter to m.all. The TITLE is matched
+// with sahilm/fuzzy (subsequence, rank-based: best-first, ties fall back
+// to position in m.all so the cursor doesn't jump as the user types) so
+// abbreviations like "rpw" → "rotate password" work. The DESCRIPTION is
+// matched as a case-insensitive contiguous substring — a fuzzy
+// subsequence over long body text matches almost anything and floods the
+// filter. Title matches rank above description-only matches, and the two
+// fields are matched independently so a query can't span the
+// title→description boundary.
 func (m *Model) recomputeVisible() {
 	// Apply the priority cap first so the fuzzy ranking only ever
 	// runs over rows the user actually wants to see. -1 means "no
@@ -2436,10 +2430,20 @@ func (m *Model) recomputeVisible() {
 		return
 	}
 
-	best := make(map[int]int, len(pool))
+	// The title is matched with sahilm/fuzzy (subsequence), which makes
+	// short abbreviations like "rpw" → "rotate password" work — the title
+	// is short, so a subsequence is a meaningful signal. The DESCRIPTION,
+	// by contrast, is matched as a case-insensitive CONTIGUOUS SUBSTRING:
+	// a description is long, and a fuzzy subsequence over long text matches
+	// almost anything (a 7-char query like "android" lands a scattered
+	// a·n·d·r·o·i·d in nearly every body), which floods the filter with
+	// rows that don't actually mention the term. Title matches outrank
+	// description-only matches.
+	titleScore := make(map[int]int, len(pool))
+	descOnly := make(map[int]bool, len(pool))
 	m.titleMatches = make(map[string][]int, len(pool))
 	for _, mt := range fuzzy.FindFrom(m.query, titleSource(pool)) {
-		best[mt.Index] = mt.Score
+		titleScore[mt.Index] = mt.Score
 		// Capture rune-index positions so renderRow can style
 		// each matched rune. fuzzy.MatchedIndexes are byte
 		// offsets into the source string; convert here once so
@@ -2448,19 +2452,33 @@ func (m *Model) recomputeVisible() {
 		// don't overwrite each other's match indices.
 		m.titleMatches[issueKey(pool[mt.Index])] = byteToRuneIdxs(pool[mt.Index].Title, mt.MatchedIndexes)
 	}
-	for _, mt := range fuzzy.FindFrom(m.query, descSource(pool)) {
-		if s, ok := best[mt.Index]; !ok || mt.Score > s {
-			best[mt.Index] = mt.Score
+	lowerQuery := strings.ToLower(m.query)
+	for idx := range pool {
+		if _, ok := titleScore[idx]; ok {
+			continue // already a (stronger) title match
+		}
+		if strings.Contains(strings.ToLower(pool[idx].Description), lowerQuery) {
+			descOnly[idx] = true
 		}
 	}
 
-	type scored struct{ idx, score int }
-	list := make([]scored, 0, len(best))
-	for idx, score := range best {
-		list = append(list, scored{idx, score})
+	type scored struct {
+		idx, score int
+		title      bool
+	}
+	list := make([]scored, 0, len(titleScore)+len(descOnly))
+	for idx, score := range titleScore {
+		list = append(list, scored{idx, score, true})
+	}
+	for idx := range descOnly {
+		list = append(list, scored{idx: idx, title: false})
 	}
 	sort.Slice(list, func(i, j int) bool {
-		if list[i].score != list[j].score {
+		// Title matches first; within title matches, by fuzzy score.
+		if list[i].title != list[j].title {
+			return list[i].title
+		}
+		if list[i].title && list[i].score != list[j].score {
 			return list[i].score > list[j].score
 		}
 		return list[i].idx < list[j].idx

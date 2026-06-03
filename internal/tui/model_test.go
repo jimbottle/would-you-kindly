@@ -372,6 +372,35 @@ func TestFuzzyFilterMatchesSubsequence(t *testing.T) {
 	}
 }
 
+func TestFilter_DescriptionMatchesSubstringNotSubsequence(t *testing.T) {
+	// Regression: a fuzzy subsequence over a long description matched
+	// almost anything (a 7-char query like "android" finds a scattered
+	// a·n·d·r·o·i·d in nearly any body), flooding the filter. The
+	// description must now match only as a CONTIGUOUS substring. The
+	// title still matches as a subsequence (see the test above).
+	src := &stubSource{issues: []beads.Issue{
+		// "android" is a subsequence of "and droid" but NOT a substring,
+		// and the title carries no a·n·d·r·o·i·d subsequence (no 'n').
+		{ID: "noise", Title: "Rotate creds", Description: "and droid stuff"},
+		// "android" is a real substring of the description → matches.
+		{ID: "real", Title: "Data Safety form", Description: "the android app needs review"},
+	}}
+	m := applyFetched(New(src), src)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	for _, r := range "android" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	got := visibleIDs(m.visible)
+	if len(got) != 1 || got[0] != "real" {
+		t.Errorf("query \"android\" should match only the substring row; got %v", got)
+	}
+}
+
 func TestDisplayID_TrimsCommonPrefix(t *testing.T) {
 	// Single-repo: all IDs share `would-you-kindly-`. displayID
 	// strips it down to the suffix.
