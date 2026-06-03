@@ -4520,9 +4520,9 @@ const (
 )
 
 // colWidths holds the per-paint display width of each fixed column,
-// sized to the wider of the header and the widest value currently shown
-// (clamped to sane bounds) so columns scale to content instead of using
-// one fixed pad. Title is the flex column and isn't tracked here.
+// sized to the wider of the header and the widest value in the current
+// list (clamped to sane bounds) so columns scale to content instead of
+// using one fixed pad. Title is the flex column and isn't tracked here.
 type colWidths struct {
 	owner, repo, branch, id, typ, status, prio, updated, session int
 }
@@ -4533,6 +4533,12 @@ type colWidths struct {
 // toggled. With no rows every column falls back to its header width.
 // The per-column maxima reuse the col* consts as the upper bound, so a
 // pathological value truncates rather than blowing out the row.
+//
+// rows is the whole filtered list (m.visible), not just the on-screen
+// viewport: sizing over the full list keeps column widths stable while
+// you scroll instead of jittering as a wider value enters/leaves view.
+// The cost is one O(len(rows)) pass of cheap rune-width measurements per
+// paint, negligible for realistic backlogs.
 func (m Model) computeColWidths(rows []beads.Issue) colWidths {
 	const (
 		hOwner, hRepo, hBranch, hID = 5, 4, 6, 2 // "Owner" "Repo" "Branch" "ID"

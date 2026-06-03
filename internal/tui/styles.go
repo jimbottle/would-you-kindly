@@ -115,9 +115,6 @@ var (
 	helpStyle = lipgloss.NewStyle().
 			Foreground(cDim)
 
-	// tableHeaderStyle renders the column-header row above the issue
-	// list — underlined for visual separation from the data rows,
-	// otherwise unstyled (matches the data cells' default foreground).
 	// tableHeaderStyle dims the column titles to a secondary grey so the
 	// header reads as a quiet guide and the actual row content stands out.
 	tableHeaderStyle = lipgloss.NewStyle().Foreground(cDim)
