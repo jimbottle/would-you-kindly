@@ -50,13 +50,16 @@ otherwise it silently defaults to AGENT and the human never sees it.
   hand-rolled labels: `wyk handoff -create "…"` sets `human` (HUMAN
   badge) with a runbook.
 
-- **Agent-filed work** → a bare `bd create` already badges AGENT, but
-  pass `--labels src:agent` to be explicit:
+- **Agent-filed work** → file it with `wyk create` (a thin `bd create`
+  wrapper that forwards every flag AND stamps the Claude session, so the
+  TUI's Session column shows which conversation filed it):
 
   ```bash
-  bd create "…" --description "why + what" --type task --labels src:agent --dolt-auto-commit=on
+  wyk create "…" --description "why + what" --type task --labels src:agent
   ```
-  Starting it right now? Also mark it in progress:
+  (`--dolt-auto-commit=on` is added for you. A bare `bd create` still
+  works and badges AGENT, but won't record the session.) Starting it
+  right now? Also mark it in progress:
   `bd update <new-id> --claim --dolt-auto-commit=on`.
 
 ## Finish a task

@@ -1736,9 +1736,9 @@ func TestStickyHeader_CursorStaysInViewWhenModalOpens(t *testing.T) {
 
 func TestColumnOrder_OwnerIsSecondFromLeft_LegacyHumanRenameCheck(t *testing.T) {
 	// Header pin: in multi-repo mode the responsibility column
-	// header is now "owner" (renamed from "human" so the column
-	// can carry AGENT badges too). "owner" must appear before
-	// "repo" so the responsibility signal stays second-from-left.
+	// header is "Owner" (renamed from "human" so the column can carry
+	// AGENT badges too). "Owner" must appear before "Repo" so the
+	// responsibility signal stays second-from-left.
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "alpha-1", Repo: "alpha", Title: "row in alpha"},
 		{ID: "beta-9", Repo: "beta", Title: "row in beta"},
@@ -1748,13 +1748,13 @@ func TestColumnOrder_OwnerIsSecondFromLeft_LegacyHumanRenameCheck(t *testing.T) 
 	m = model.(Model)
 	m = applyFetched(m, src)
 	out := m.View()
-	oi := strings.Index(out, "owner")
+	oi := strings.Index(out, "Owner")
 	ri := strings.Index(out, "Repo")
 	if oi < 0 || ri < 0 {
-		t.Fatalf("expected both 'owner' and 'Repo' headers in view; got:\n%s", out)
+		t.Fatalf("expected both 'Owner' and 'Repo' headers in view; got:\n%s", out)
 	}
 	if oi > ri {
-		t.Errorf("'owner' header should appear before 'Repo' header in the column row; got owner at %d, Repo at %d", oi, ri)
+		t.Errorf("'Owner' header should appear before 'Repo' header in the column row; got Owner at %d, Repo at %d", oi, ri)
 	}
 }
 
@@ -1935,7 +1935,7 @@ func TestResponsibilityBadge_NullOwnerDefaultsToAgent(t *testing.T) {
 }
 
 func TestColumnOrder_OwnerHeaderIsSecondFromLeft(t *testing.T) {
-	// The column header renamed from 'human' to 'owner' to reflect
+	// The column header renamed from 'human' to 'Owner' to reflect
 	// the broader responsibility framing. Header must still appear
 	// before 'Repo' (second-from-left position invariant).
 	src := &stubSource{issues: []beads.Issue{
@@ -1947,13 +1947,13 @@ func TestColumnOrder_OwnerHeaderIsSecondFromLeft(t *testing.T) {
 	m = model.(Model)
 	m = applyFetched(m, src)
 	out := m.View()
-	oi := strings.Index(out, "owner")
+	oi := strings.Index(out, "Owner")
 	ri := strings.Index(out, "Repo")
 	if oi < 0 {
-		t.Errorf("'owner' header missing from view:\n%s", out)
+		t.Errorf("'Owner' header missing from view:\n%s", out)
 	}
 	if oi > ri {
-		t.Errorf("'owner' should appear before 'Repo'; got owner=%d Repo=%d", oi, ri)
+		t.Errorf("'Owner' should appear before 'Repo'; got Owner=%d Repo=%d", oi, ri)
 	}
 }
 
@@ -2283,8 +2283,8 @@ func TestColumnsOverlay_TogglesHidesColumnFromHeader(t *testing.T) {
 	m.width = 200
 
 	// Sanity: type column is in the header by default.
-	if !strings.Contains(m.renderHeader(), " T ") {
-		t.Fatalf("baseline header should include the T column")
+	if !strings.Contains(m.renderHeader(), "Type") {
+		t.Fatalf("baseline header should include the Type column")
 	}
 
 	// Open overlay with `o`.
@@ -2312,8 +2312,8 @@ func TestColumnsOverlay_TogglesHidesColumnFromHeader(t *testing.T) {
 	}
 
 	// Header no longer renders the T column.
-	if strings.Contains(m.renderHeader(), " T ") {
-		t.Errorf("expected T column hidden from header; got %q", m.renderHeader())
+	if strings.Contains(m.renderHeader(), "Type") {
+		t.Errorf("expected Type column hidden from header; got %q", m.renderHeader())
 	}
 }
 

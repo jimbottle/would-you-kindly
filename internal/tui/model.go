@@ -4615,7 +4615,7 @@ func (m Model) renderHeader() string {
 	var b strings.Builder
 	b.WriteString(cursor)
 	if m.colVisible(colIDOwner) {
-		fmt.Fprintf(&b, "%-*s  ", colResp, "owner")
+		fmt.Fprintf(&b, "%-*s  ", colResp, "Owner")
 	}
 	if m.isMultiRepo() {
 		if m.colVisible(colIDRepo) {
@@ -4627,7 +4627,7 @@ func (m Model) renderHeader() string {
 	}
 	fmt.Fprintf(&b, "%-*s  ", colID, sortDecorate("ID", m.sortBy == sortID, "↑", m.sortDesc))
 	if m.colVisible(colIDType) {
-		fmt.Fprintf(&b, "%-*s  ", colType, "T")
+		fmt.Fprintf(&b, "%-*s  ", colType, "Type")
 	}
 	if m.colVisible(colIDStatus) {
 		fmt.Fprintf(&b, "%-*s  ", colStatus, "Status")

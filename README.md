@@ -248,6 +248,17 @@ wyk init
 # wyk init: installed post-commit hook at .git/hooks/post-commit
 ```
 
+`wyk init` is the one-stop bootstrap for a repo. It runs `bd init` if
+there's no bd workspace yet, installs the post-commit auto-close hook
+into git's **active** hooks dir (following `core.hooksPath` so it lands
+where git actually looks), registers the repo so the multi-repo TUI
+finds it, and seeds a **wyk conventions** block into the repo's
+`CLAUDE.md` so agents working there know to file plans as bd issues
+(via `wyk create`) and hand human-only work off with `wyk handoff`.
+Every step is idempotent — re-running is safe. Add `-skills` to also
+install the agent skills; `-skip-claude-md` / `-skip-register` /
+`-skip-bd-init` opt out of individual steps.
+
 After `wyk init`, every commit whose message contains a
 `Closes:`, `Fixes:`, or `Resolves:` trailer (case-insensitive) auto-
 closes the referenced bd issue. Hierarchical IDs work too:
@@ -361,6 +372,7 @@ Empty or missing keys fall through to the defaults. Colors accept ANSI
 ### Other subcommands
 
 ```bash
+wyk create   <bd create args...>                                        # file an issue + stamp the Claude session
 wyk activity [-since 24h] [-priority N] [-repo name] [-status open|closed|all] [-json]
 wyk export   [-since 24h] [-compact] [-repo name]                        # JSON dump
 wyk import   [-file path] [-dry-run] [-repo name]                        # restore from a dump
@@ -406,14 +418,32 @@ The agent moves on to other work. The bd issue now carries `human`,
 open). Press `h` to jump to the human view:
 
 ```
-Repo               Branch     ID         T     Status  P   Updated  Title
-would-you-kindly   main       2oa        task  open    P1  3h ago   Rotate the staging DB password  HUMAN
-acme-pipeline      feat/x     mc-42      bug   open    P0  1h ago   Latest broken                   HUMAN
+Owner   Repo               Branch  ID     Type  Status  P   Updated  Title
+HUMAN   would-you-kindly   main    2oa    task  open    P1  3h ago   Rotate the staging DB password
+HUMAN   acme-pipeline      feat/x  mc-42  bug   open    P0  1h ago   Latest broken
 ```
 
 (The `HUMAN` badge is rendered plain regardless of who filed the issue —
 `src:agent` vs `src:human` is still in the row's labels, but the badge
 itself stays uniform so the eye reads it as one thing.)
+
+**The columns, left to right.** Every column is shown below; the `o`
+overlay toggles any of them off (persisted to `ui.json`), and on a
+narrow terminal the lower-value ones auto-hide to keep rows intact.
+`Owner`, `ID`, `P`, and `Title` are always shown.
+
+| Column     | Definition                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `Owner`    | Whose move it is — `HUMAN` (a human must act), `AGENT` (agent-owned; the default for any issue without a `human` label), or `HUMAN-BLOCK` (an agent issue blocked by a human-flagged dependency). Label-driven; never blank. |
+| `Repo`     | The registered bd workspace the issue lives in. Shown when the view spans more than one repo.                            |
+| `Branch`   | That repo's current git branch. Shown in multi-repo mode.                                                                |
+| `ID`       | The bd issue ID with the repeated workspace prefix trimmed (e.g. `2oa` for `would-you-kindly-2oa`). Yank it with `y`.    |
+| `Type`     | The issue type, abbreviated to four characters: `task`, `bug`, `feat`(ure), `chor`(e), `epic`, `deci`(sion), `spik`(e), `stor`(y), `mile`(stone). |
+| `Status`   | The bd lifecycle state: `open`, `wip` (in&#95;progress), `blocked`, `deferred`, `closed`. Closed rows are dimmed.        |
+| `P`        | Priority, `P0` (most urgent) through `P4` (backlog). Bump with `+` / `-`; opt into colour emphasis in `ui.json`.         |
+| `Updated`  | How long since the issue last changed — `now`, `3h ago`, `2d ago`, or a `Jan 2` date once it's older than 30 days.       |
+| `Session`  | The Claude session that filed the issue (first 8 chars of the ID), recorded when it's created via `wyk create`. Blank for issues filed any other way. |
+| `Title`    | The issue's one-line summary, capped at 50 columns for scannability. Press `enter` to read the full title, description, and notes. |
 
 Press `enter` to read the runbook, `c` to close when done, or `H` to
 bounce it back to the agent if the next step is theirs again. The
@@ -444,7 +474,7 @@ window into it; `wyk handoff` and `wyk inbox` are the agent's.
 
 ![wyk multi-repo view](docs/screenshots/wyk-tui.png)
 
-The default `all` preset across registered repos. The **owner** column
+The default `all` preset across registered repos. The **Owner** column
 carries the "whose move is it" badge — `HUMAN` for handed-off work,
 `AGENT` for issues the agent filed, `HUMAN-BLOCK` for agent issues
 blocked on a human — next to the Repo / Branch / Status columns and the
@@ -457,8 +487,9 @@ blocked on a human — next to the Repo / Branch / Status columns and the
 [GitHub releases](https://github.com/jimbottle/would-you-kindly/releases)
 for what's shipped and when. It's a CLI-driven toolkit around the
 human-in-the-loop handoff contract: the multi-repo TUI plus subcommands
-(`init`, `handoff`, `inbox`, `stats`, `dashboard`, `doctor`, `registry`,
-`export`, `import`, `activity`, `depgraph`, `skills`, `update`), agent
+(`init`, `create`, `handoff`, `inbox`, `stats`, `dashboard`, `doctor`,
+`registry`, `export`, `import`, `activity`, `depgraph`, `skills`,
+`update`), agent
 skills installable into Claude Code, a `theme.json` color overlay with
 light/dark adaptation, and `NO_COLOR` support.
 
