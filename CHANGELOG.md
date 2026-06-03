@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Leaner always-loaded agent context** — the `bd remember` convention
+  memory (surfaced by `bd prime` every session) and the seeded CLAUDE.md
+  wyk block are each ~halved in size, keeping every load-bearing rule
+  (owner states, inbox = work-them, the HUMAN-BLOCK/AGENT-HANDOFF skips,
+  handoff via `wyk handoff`, status lifecycle) and deferring the full
+  runbook format to `wyk conventions`. Re-run `wyk init` to refresh a
+  repo's copy.
+
 - **Content-aware column widths + dimmed headers** — table columns now
   size to the wider of their header and the widest value on screen
   (clamped to sane maxima), so e.g. the Owner column shrinks to fit when

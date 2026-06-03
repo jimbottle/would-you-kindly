@@ -560,7 +560,7 @@ const rememberedConventionKey = "wyk-handoff-convention"
 // rememberedConventionMemory is the memory text wyk init stores
 // via bd remember. Kept as a const so a test can assert the labels
 // are present.
-const rememberedConventionMemory = "wyk handoff convention: tasks for a human carry label=human + label=src:agent. The agent's inbox is `" + agentInboxQuery + "` (run `wyk inbox`). If wyk inbox returns items, WORK them — they're tasks where the human is no longer blocking. Exception: HUMAN-BLOCK rows (agent task whose deps include a human-flagged blocker via bd dep add) cannot be moved by the agent until the blocker closes — skip them. AGENT-HANDOFF rows (label=agent-handoff) belong to ANOTHER agent — do not interfere; a human orchestrates the coordination (they're excluded from the inbox query anyway). To file or hand off a human task, prefer `wyk handoff <id>` (or `wyk handoff -create \"<title>\"` for file+handoff in one step) over hand-rolling labels via `bd create`. A handoff runbook MUST include three sections: '## Why this needs you (please confirm this is accurate)' (agent self-verification), '## Steps' (numbered with verification + close), and '## What unblocks me when this returns' (the concrete artifact). Status lifecycle: open=actionable now (default); in_progress=claimed; blocked=waiting on another bd issue (pair with --add-dependency); deferred=waiting on a subsystem that hasn't stabilised yet, hidden from bd ready; closed=done. Reach for DEFERRED instead of holding-open when the blocker is 'the rest of the project hasn't caught up yet'. Full text: `wyk conventions`."
+const rememberedConventionMemory = "wyk convention: a human task carries label=human + label=src:agent; agent-owned just label=src:agent. Inbox = `" + agentInboxQuery + "` (run `wyk inbox`) — WORK returned items, don't just note them. Skip HUMAN-BLOCK rows (agent task with a human-flagged dep) and AGENT-HANDOFF rows (label=agent-handoff = another agent's; a human coordinates). File/hand off a human task with `wyk handoff <id>` (or `wyk handoff -create \"<title>\"`), never hand-rolled labels. Statuses: open(default)/in_progress/blocked(+--add-dependency)/deferred(subsystem not ready, hidden from bd ready)/closed; prefer deferred over holding a task open. Full text + runbook format: `wyk conventions`."
 
 // teachBDConvention writes a single bd memory describing the wyk
 // label convention into repoRoot's bd workspace. The --key makes
@@ -602,51 +602,31 @@ const (
 const wykConventionsBlock = wykConventionsBeginMarker + `
 ## wyk — planning & handoff over bd
 
-This repo is registered with **wyk**, a view + handoff layer on top of
-**bd (beads)**. "Plan it in wyk" / "build the plan in wyk" means: **file
-the plan as issues** (wire dependencies with ` + "`bd dep add`" + `); wyk then shows
-and routes them. Do NOT capture the plan as markdown or TodoWrite —
-filing issues is the verb.
+This repo uses **wyk**, a view + handoff layer over **bd (beads)**. "Plan
+it in wyk" = **file the plan as bd issues** (deps via ` + "`bd dep add`" + `), not
+markdown/TodoWrite. File with **` + "`wyk create`" + `** (same flags as ` + "`bd create`" + `,
+forwarded verbatim) — it also stamps the Claude session so the TUI's
+Session column traces work back to a conversation.
 
-**Use ` + "`wyk create`" + ` to file issues** (same flags as ` + "`bd create`" + `, forwarded
-verbatim): it stamps each issue with the Claude session that filed it, so
-the TUI's Session column can trace work back to a conversation. Plain
-` + "`bd create`" + ` still works but won't record the session.
+**Owner column** — whose move it is, label-driven (NOT bd's owner/assignee):
+- ` + "`human`" + ` → **HUMAN** (a human must act).
+- ` + "`agent-handoff`" + ` → **AGENT-HANDOFF**: another agent owns it; don't touch,
+  a human coordinates. Excluded from ` + "`wyk inbox`" + `.
+- agent task blocked by a ` + "`human`" + `-flagged dep → **HUMAN-BLOCK** (skip it).
+- else → **AGENT** (the default; a null owner is never blank — so a task
+  that needs a human MUST be handed off, or the human never sees it).
 
-### Owner column: HUMAN / AGENT / HUMAN-BLOCK / AGENT-HANDOFF
-wyk's owner column shows whose move it is, driven by labels (NOT bd's
-` + "`owner`/`assignee`" + ` fields):
-- ` + "`human`" + ` label → **HUMAN** (a human must act).
-- ` + "`agent-handoff`" + ` label → **AGENT-HANDOFF**: another agent is working
-  this task; do NOT interfere — coordinate through the human, who
-  orchestrates. These are excluded from ` + "`wyk inbox`" + ` so the "work it"
-  imperative doesn't fire on a task that isn't yours to touch.
-- agent task blocked by a human-flagged dep → **HUMAN-BLOCK**.
-- everything else → **AGENT**. A null owner defaults to AGENT, so the
-  column is never blank — which means **a task that needs a human MUST
-  be handed off**, or it silently reads as AGENT and the human never
-  sees it.
+**Hand off to a human**: ` + "`wyk handoff <id>`" + ` (or ` + "`wyk handoff -create \"<title>\"`" + `)
+sets ` + "`human`" + ` + writes the runbook. Never hand-roll labels; ` + "`-a`/`--claim`" + `
+are bd's status, not the badge.
 
-### Handing work to a human
-` + "`wyk handoff <id>`" + ` (or ` + "`wyk handoff -create \"<title>\"`" + ` to file + hand off in
-one step) sets the ` + "`human`" + ` label and writes the runbook. Do NOT
-hand-roll labels; ` + "`-a`/`--claim`" + ` are bd's assignee/status, NOT the badge.
+**Pick up work**: ` + "`wyk inbox`" + ` FIRST (items bounced back to you — WORK them),
+then ` + "`wyk`" + ` / ` + "`bd ready`" + `. ` + "`wyk conventions`" + ` prints the full contract.
 
-### Picking up work
-Run ` + "`wyk inbox`" + ` FIRST — items a human bounced back to you; the default
-move is to WORK them. Then ` + "`wyk`" + ` (the TUI) or ` + "`bd ready`" + ` for the ready
-queue. ` + "`wyk conventions`" + ` prints the authoritative contract.
-
-### When something's wrong, address it — don't shrug it off
-If a wyk/bd command errors, a convention looks broken, the TUI shows
-something confusing, or any part of this workflow rubs wrong, that is a
-signal to ACT on, NOT to silently route around. The default move is to
-**file a bd issue** capturing it (` + "`bd create`" + `, assign an owner) and fix it
-or hand it off (` + "`wyk handoff`" + `) if it needs a human — don't just work
-around it and move on. Friction with wyk IS product data about wyk:
-surfacing and resolving it is part of the job, not a distraction from
-it. A problem noticed and dropped is a problem that resurfaces for the
-next agent.
+**Something wrong? Act — don't shrug.** If a wyk/bd command errors, a
+convention looks broken, or the workflow rubs wrong, file a bd issue (with
+an owner) and fix or hand it off — don't route around it silently.
+Friction with wyk is product data; surfacing it is the job.
 ` + wykConventionsEndMarker
 
 // claudeMDPreamble heads a CLAUDE.md that wyk init creates from scratch
