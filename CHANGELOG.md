@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `a·n·d·r·o·i·d` in almost any long body. The filter now matches the
   **repo, branch, ID, and description as case-insensitive substrings**,
   keeping fuzzy subsequence on the (short) title so `rpw` → "rotate
-  password" still works. Title matches rank above the rest.
+  password" still works. Title matches rank above the rest. The match is also **highlighted** in the Repo, Branch, and ID columns, not just the Title.
 
 - **`wyk init` installed the auto-close hook into a bypassed path on a
   fresh repo** — the hook path was resolved before `bd init` ran, so it

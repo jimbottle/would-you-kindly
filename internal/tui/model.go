@@ -4780,15 +4780,15 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	}
 	if m.isMultiRepo() {
 		if m.colVisible(colIDRepo) {
-			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", m.cw.repo, trunc(i.Repo, m.cw.repo))))
+			b.WriteString(renderMatchCell(i.Repo, m.cw.repo, m.query, typeC))
 			b.WriteString(sep)
 		}
 		if m.colVisible(colIDBranch) {
-			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", m.cw.branch, trunc(i.Branch, m.cw.branch))))
+			b.WriteString(renderMatchCell(i.Branch, m.cw.branch, m.query, typeC))
 			b.WriteString(sep)
 		}
 	}
-	b.WriteString(idC.Render(fmt.Sprintf("%-*s", m.cw.id, trunc(m.displayID(i), m.cw.id))))
+	b.WriteString(renderMatchCell(m.displayID(i), m.cw.id, m.query, idC))
 	b.WriteString(sep)
 	if m.colVisible(colIDType) {
 		b.WriteString(typeC.Render(fmt.Sprintf("%-*s", m.cw.typ, abbrevType(i.IssueType))))
@@ -4891,6 +4891,42 @@ func byteToRuneIdxs(s string, byteIdxs []int) []int {
 		runeIdx++
 	}
 	return out
+}
+
+// substringRuneIdxs returns the rune indices of the first
+// case-insensitive occurrence of query in s, or nil if absent. Used to
+// highlight the matched run in the substring-filtered columns (repo,
+// branch, ID) the same way titleMatches highlights the fuzzy title.
+func substringRuneIdxs(s, query string) []int {
+	if s == "" || query == "" {
+		return nil
+	}
+	ls := strings.ToLower(s)
+	bi := strings.Index(ls, strings.ToLower(query))
+	if bi < 0 {
+		return nil
+	}
+	start := utf8.RuneCountInString(ls[:bi])
+	n := utf8.RuneCountInString(query)
+	idxs := make([]int, n)
+	for k := 0; k < n; k++ {
+		idxs[k] = start + k
+	}
+	return idxs
+}
+
+// renderMatchCell renders a fixed-width column cell: value truncated to
+// width, padded out to it, with a case-insensitive substring match of
+// query highlighted in fuzzyMatchStyle and everything else (including the
+// trailing pad) in base. Mirrors the title's fuzzy highlight for the
+// substring-filtered columns. Empty/absent query → plain base cell.
+func renderMatchCell(value string, width int, query string, base lipgloss.Style) string {
+	val := trunc(value, width)
+	if pad := width - lipgloss.Width(val); pad > 0 {
+		val += strings.Repeat(" ", pad)
+	}
+	rest := base
+	return highlightRunesWithRest(val, substringRuneIdxs(val, query), fuzzyMatchStyle, &rest)
 }
 
 // highlightRunes returns s with the runes at the given rune

@@ -2669,6 +2669,54 @@ func TestHighlightRunes_StylesMatchedRunesOnly(t *testing.T) {
 	}
 }
 
+func TestSubstringRuneIdxs(t *testing.T) {
+	// The rune indices feeding the repo/branch/ID column highlight.
+	cases := []struct {
+		s, q string
+		want []int
+	}{
+		{"android", "droid", []int{2, 3, 4, 5, 6}}, // case-sensitive position
+		{"Android", "andro", []int{0, 1, 2, 3, 4}}, // case-insensitive
+		{"ebay-watchlist-watch", "watch", []int{5, 6, 7, 8, 9}},
+		{"android", "xyz", nil}, // no match
+		{"android", "", nil},    // empty query
+		{"", "android", nil},    // empty value
+	}
+	for _, c := range cases {
+		got := substringRuneIdxs(c.s, c.q)
+		if len(got) != len(c.want) {
+			t.Errorf("substringRuneIdxs(%q,%q) = %v, want %v", c.s, c.q, got, c.want)
+			continue
+		}
+		for k := range got {
+			if got[k] != c.want[k] {
+				t.Errorf("substringRuneIdxs(%q,%q) = %v, want %v", c.s, c.q, got, c.want)
+				break
+			}
+		}
+	}
+}
+
+func TestRenderMatchCell_PreservesValueAndWidth(t *testing.T) {
+	base := lipgloss.NewStyle()
+	// A matched query still renders the full value, truncated/padded to
+	// the column width — highlighting must not change the visible text.
+	for _, q := range []string{"", "droid", "xyz"} {
+		cell := stripANSI(renderMatchCell("android", 12, q, base))
+		if lipgloss.Width(cell) != 12 {
+			t.Errorf("query %q: cell width = %d, want 12", q, lipgloss.Width(cell))
+		}
+		if !strings.HasPrefix(cell, "android") {
+			t.Errorf("query %q: cell = %q, want it to start with the value", q, cell)
+		}
+	}
+	// A value longer than the column is truncated with an ellipsis.
+	long := stripANSI(renderMatchCell("ebay-watchlist-watch", 10, "watch", base))
+	if lipgloss.Width(long) != 10 || !strings.Contains(long, "…") {
+		t.Errorf("long value should truncate to width 10 with ellipsis; got %q (w=%d)", long, lipgloss.Width(long))
+	}
+}
+
 func TestHighlightRunes_OutOfRangeIndicesDropped(t *testing.T) {
 	// Match indices past the end of s (e.g., truncated title) are
 	// silently skipped — no panic, no trailing ANSI noise.
