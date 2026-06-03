@@ -5326,18 +5326,35 @@ func (m Model) statusBar() string {
 		bindings = m.keys.shortHelpReadOnly()
 		suffix = "  (read-only)"
 	}
-	// Cap the help component to the width left after the status info (and
-	// the read-only suffix) so a long binding list elides with an ellipsis
-	// instead of wrapping the status bar onto a second line. Full keymap
-	// lives in the ? overlay.
+	// Build the short help inline ("key desc ▕ key desc …") and render it
+	// ourselves rather than via help.ShortHelpView: bubbles' own
+	// width-truncation mismeasures the multi-byte ▕ separator and lets the
+	// line overflow the terminal instead of eliding. Every segment shares
+	// one helpStyle (cDim), so truncating the PLAIN text to the available
+	// width and styling the whole thing is safe — no ANSI escape is sliced
+	// mid-sequence. Full keymap lives in the ? overlay.
+	parts := make([]string, 0, len(bindings))
+	for _, bnd := range bindings {
+		if !bnd.Enabled() {
+			continue
+		}
+		h := bnd.Help()
+		parts = append(parts, h.Key+" "+h.Desc)
+	}
+	plainHelp := strings.Join(parts, " ▕ ")
 	if m.width > 0 {
-		avail := m.width - lipgloss.Width(left) - lipgloss.Width(suffix) - 2
+		// Reserve the statusBarStyle Padding(0,1) (2 cols) plus a 1-col
+		// gap between the status info and the help, so the truncated help
+		// can't push the padded line past the terminal edge.
+		avail := m.width - lipgloss.Width(left) - lipgloss.Width(suffix) - 3
 		if avail < 0 {
 			avail = 0
 		}
-		m.help.Width = avail
+		if lipgloss.Width(plainHelp) > avail {
+			plainHelp = trunc(plainHelp, avail)
+		}
 	}
-	helpLine := m.help.ShortHelpView(bindings) + suffix
+	helpLine := helpStyle.Render(plainHelp) + suffix
 	gap := " "
 	if m.width > 0 {
 		need := lipgloss.Width(left) + lipgloss.Width(helpLine) + 2
