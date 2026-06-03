@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Content-aware column widths + dimmed headers** — table columns now
+  size to the wider of their header and the widest value on screen
+  (clamped to sane maxima), so e.g. the Owner column shrinks to fit when
+  no long badge is present instead of always reserving room for
+  `AGENT-HANDOFF`, and a `main`-only Branch column collapses to its
+  header. The priority value is padded to its column so it lines up under
+  the `Priority` header, and column headers render in a dim grey so the
+  row content reads as primary.
+
 - **Detail-view "copy instructions" + bar-delimited footers** — the
   detail view's body-copy key is now `c` ("copy instructions"; `y`
   stays a silent alias), and the list help bar and detail footers use a

@@ -76,9 +76,9 @@ func (m Model) computeAutoHidden() map[string]bool {
 		return nil
 	}
 	colWidth := map[string]int{
-		colIDOwner: colResp, colIDRepo: colRepo, colIDBranch: colBranch,
-		colIDType: colType, colIDStatus: colStatus, colIDUpdated: colUpdated,
-		colIDSession: colSession,
+		colIDOwner: m.cw.owner, colIDRepo: m.cw.repo, colIDBranch: m.cw.branch,
+		colIDType: m.cw.typ, colIDStatus: m.cw.status, colIDUpdated: m.cw.updated,
+		colIDSession: m.cw.session,
 	}
 	// shown = rendered before any width-driven hiding: not user-hidden,
 	// and repo/branch only count in multi-repo mode.
@@ -92,7 +92,7 @@ func (m Model) computeAutoHidden() map[string]bool {
 		return true
 	}
 	// Always-present cost: cursor + ID + Priority + a minimum title.
-	total := 2 + (colID + sep) + (colPrio + sep) + minTitle
+	total := 2 + (m.cw.id + sep) + (m.cw.prio + sep) + minTitle
 	for id, w := range colWidth {
 		if shown(id) {
 			total += w + sep

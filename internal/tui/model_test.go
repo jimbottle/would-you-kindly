@@ -5156,6 +5156,9 @@ func TestRenderHeader_DecoratedColumnsStayWithinTheirWidth(t *testing.T) {
 		{ID: "beta-9", Repo: "beta", Title: "y"},
 	}}
 	m := applyFetched(New(src), src)
+	// Seed the per-paint column widths the way viewList does, so the
+	// header renders against the same content-sized widths.
+	m.cw = m.computeColWidths(m.visible)
 
 	cases := []struct {
 		label string
@@ -5167,23 +5170,22 @@ func TestRenderHeader_DecoratedColumnsStayWithinTheirWidth(t *testing.T) {
 		{"repo", sortRepo},
 		{"id", sortID},
 	}
-	// Anchor against an absolute expectation derived from the
-	// column-width constants. Self-referential baselines (using
-	// sortNone as the source of truth for the other cases) would
-	// silently mask a layout bug that shifted the baseline itself
-	// — every case here, including sortNone, is validated against
-	// the same expected rune-column.
+	// Anchor against an absolute expectation derived from the computed
+	// column widths. Self-referential baselines (using sortNone as the
+	// source of truth for the other cases) would silently mask a layout
+	// bug that shifted the baseline itself — every case here, including
+	// sortNone, is validated against the same expected rune-column.
 	const sep = 2 // two-space separator after each column
 	expectedTitleRune := 2 /* leading cursor */ +
-		colResp + sep +
-		colRepo + sep +
-		colBranch + sep +
-		colID + sep +
-		colType + sep +
-		colStatus + sep +
-		colPrio + sep +
-		colUpdated + sep +
-		colSession + sep
+		m.cw.owner + sep +
+		m.cw.repo + sep +
+		m.cw.branch + sep +
+		m.cw.id + sep +
+		m.cw.typ + sep +
+		m.cw.status + sep +
+		m.cw.prio + sep +
+		m.cw.updated + sep +
+		m.cw.session + sep
 
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {

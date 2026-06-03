@@ -426,6 +426,12 @@ type Model struct {
 	// Never persisted.
 	autoHidden map[string]bool
 
+	// cw holds the per-paint display width of each fixed column, sized
+	// to its content (header vs widest value, clamped). viewList
+	// recomputes it each paint before rendering; renderHeader/renderRow/
+	// titleBudget/computeAutoHidden read it. Never persisted.
+	cw colWidths
+
 	// uiConfigPath is the resolved on-disk path to ui.json so the
 	// overlay can persist column-visibility changes without
 	// re-resolving XDG every time. Empty disables persistence
@@ -4321,9 +4327,11 @@ func exampleFullID(m Model) string {
 func (m Model) viewList() string {
 	var b strings.Builder
 
-	// Recompute which columns must auto-hide to fit the current width.
-	// Seeded on the local m so colVisible (used by renderHeader,
-	// renderRow, and titleBudget below) reflects it for this paint only.
+	// Size each column to its content for this paint, then recompute
+	// which columns must auto-hide to fit the width. Both are seeded on
+	// the local m so renderHeader/renderRow/titleBudget/computeAutoHidden
+	// (all below) read them for this paint only.
+	m.cw = m.computeColWidths(m.visible)
 	m.autoHidden = m.computeAutoHidden()
 
 	header := titleStyle.Render("would-you-kindly")
@@ -4511,6 +4519,57 @@ const (
 	colTitleMax = 50
 )
 
+// colWidths holds the per-paint display width of each fixed column,
+// sized to the wider of the header and the widest value currently shown
+// (clamped to sane bounds) so columns scale to content instead of using
+// one fixed pad. Title is the flex column and isn't tracked here.
+type colWidths struct {
+	owner, repo, branch, id, typ, status, prio, updated, session int
+}
+
+// computeColWidths sizes each fixed column to max(header, widest value)
+// over rows, clamped to [headerWidth, max]. Sortable columns reserve a
+// column for the sort arrow so the width doesn't jump when the sort is
+// toggled. With no rows every column falls back to its header width.
+// The per-column maxima reuse the col* consts as the upper bound, so a
+// pathological value truncates rather than blowing out the row.
+func (m Model) computeColWidths(rows []beads.Issue) colWidths {
+	const (
+		hOwner, hRepo, hBranch, hID = 5, 4, 6, 2 // "Owner" "Repo" "Branch" "ID"
+		hType, hStatus, hSess       = 4, 6, 7    // "Type" "Status" "Session"
+	)
+	w := colWidths{
+		owner:   hOwner,
+		repo:    hRepo + 1, // sortable → reserve the arrow cell
+		branch:  hBranch,
+		id:      hID + 1, // sortable
+		typ:     hType,
+		status:  hStatus,
+		prio:    colPrio,    // header-dominated; const already fits "Priority↑"
+		updated: colUpdated, // header-dominated; const already fits "Updated↓"
+		session: hSess,
+	}
+	for _, i := range rows {
+		w.owner = max(w.owner, lipgloss.Width(responsibilityBadgeFor(i)))
+		w.repo = max(w.repo, lipgloss.Width(i.Repo))
+		w.branch = max(w.branch, lipgloss.Width(i.Branch))
+		w.id = max(w.id, lipgloss.Width(m.displayID(i)))
+		w.typ = max(w.typ, lipgloss.Width(abbrevType(i.IssueType)))
+		w.status = max(w.status, lipgloss.Width(abbrevStatus(i.Status)))
+		w.session = max(w.session, lipgloss.Width(sessionShort(i)))
+		// prio ("P0".."P4") and updated (relTime) values are always
+		// narrower than their headers, so they stay header-driven.
+	}
+	w.owner = min(w.owner, colResp)
+	w.repo = min(w.repo, colRepo)
+	w.branch = min(w.branch, colBranch+6) // a little more room than the old fixed 10 for "docs/…" branches
+	w.id = min(w.id, colID+4)
+	w.typ = min(w.typ, colType+2)
+	w.status = min(w.status, colStatus+1)
+	w.session = min(w.session, colSession)
+	return w
+}
+
 // isMultiRepo reports whether the current list has any issue with
 // a populated Repo field. The Repo/Branch columns are gated on this
 // — they render whenever the source decorates issues. In practice
@@ -4620,29 +4679,29 @@ func (m Model) renderHeader() string {
 	var b strings.Builder
 	b.WriteString(cursor)
 	if m.colVisible(colIDOwner) {
-		fmt.Fprintf(&b, "%-*s  ", colResp, "Owner")
+		fmt.Fprintf(&b, "%-*s  ", m.cw.owner, "Owner")
 	}
 	if m.isMultiRepo() {
 		if m.colVisible(colIDRepo) {
-			fmt.Fprintf(&b, "%-*s  ", colRepo, sortDecorate("Repo", m.sortBy == sortRepo, "↑", m.sortDesc))
+			fmt.Fprintf(&b, "%-*s  ", m.cw.repo, sortDecorate("Repo", m.sortBy == sortRepo, "↑", m.sortDesc))
 		}
 		if m.colVisible(colIDBranch) {
-			fmt.Fprintf(&b, "%-*s  ", colBranch, "Branch")
+			fmt.Fprintf(&b, "%-*s  ", m.cw.branch, "Branch")
 		}
 	}
-	fmt.Fprintf(&b, "%-*s  ", colID, sortDecorate("ID", m.sortBy == sortID, "↑", m.sortDesc))
+	fmt.Fprintf(&b, "%-*s  ", m.cw.id, sortDecorate("ID", m.sortBy == sortID, "↑", m.sortDesc))
 	if m.colVisible(colIDType) {
-		fmt.Fprintf(&b, "%-*s  ", colType, "Type")
+		fmt.Fprintf(&b, "%-*s  ", m.cw.typ, "Type")
 	}
 	if m.colVisible(colIDStatus) {
-		fmt.Fprintf(&b, "%-*s  ", colStatus, "Status")
+		fmt.Fprintf(&b, "%-*s  ", m.cw.status, "Status")
 	}
-	fmt.Fprintf(&b, "%-*s  ", colPrio, sortDecorate("Priority", m.sortBy == sortPriority, "↑", m.sortDesc))
+	fmt.Fprintf(&b, "%-*s  ", m.cw.prio, sortDecorate("Priority", m.sortBy == sortPriority, "↑", m.sortDesc))
 	if m.colVisible(colIDUpdated) {
-		fmt.Fprintf(&b, "%-*s  ", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓", m.sortDesc))
+		fmt.Fprintf(&b, "%-*s  ", m.cw.updated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓", m.sortDesc))
 	}
 	if m.colVisible(colIDSession) {
-		fmt.Fprintf(&b, "%-*s  ", colSession, "Session")
+		fmt.Fprintf(&b, "%-*s  ", m.cw.session, "Session")
 	}
 	b.WriteString("Title")
 	return tableHeaderStyle.Render(b.String())
@@ -4709,30 +4768,32 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	var b strings.Builder
 	b.WriteString(cursor)
 	if m.colVisible(colIDOwner) {
-		b.WriteString(paddedResponsibilityBadge(i))
+		b.WriteString(paddedResponsibilityBadge(i, m.cw.owner))
 		b.WriteString(sep)
 	}
 	if m.isMultiRepo() {
 		if m.colVisible(colIDRepo) {
-			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colRepo, trunc(i.Repo, colRepo))))
+			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", m.cw.repo, trunc(i.Repo, m.cw.repo))))
 			b.WriteString(sep)
 		}
 		if m.colVisible(colIDBranch) {
-			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colBranch, trunc(i.Branch, colBranch))))
+			b.WriteString(typeC.Render(fmt.Sprintf("%-*s", m.cw.branch, trunc(i.Branch, m.cw.branch))))
 			b.WriteString(sep)
 		}
 	}
-	b.WriteString(idC.Render(fmt.Sprintf("%-*s", colID, trunc(m.displayID(i), colID))))
+	b.WriteString(idC.Render(fmt.Sprintf("%-*s", m.cw.id, trunc(m.displayID(i), m.cw.id))))
 	b.WriteString(sep)
 	if m.colVisible(colIDType) {
-		b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colType, abbrevType(i.IssueType))))
+		b.WriteString(typeC.Render(fmt.Sprintf("%-*s", m.cw.typ, abbrevType(i.IssueType))))
 		b.WriteString(sep)
 	}
 	if m.colVisible(colIDStatus) {
-		b.WriteString(statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", colStatus, abbrevStatus(i.Status))))
+		b.WriteString(statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", m.cw.status, abbrevStatus(i.Status))))
 		b.WriteString(sep)
 	}
-	prio := fmt.Sprintf("P%d", i.Priority)
+	// Pad the priority value to the column width so it aligns under the
+	// "Priority" header (which is wider than the bare "Pn" value).
+	prio := fmt.Sprintf("%-*s", m.cw.prio, fmt.Sprintf("P%d", i.Priority))
 	switch {
 	case i.Status == "closed":
 		b.WriteString(dim(prio)) // closed-row dim wins over priority emphasis
@@ -4743,11 +4804,11 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	}
 	b.WriteString(sep)
 	if m.colVisible(colIDUpdated) {
-		b.WriteString(updatedC.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt))))
+		b.WriteString(updatedC.Render(fmt.Sprintf("%-*s", m.cw.updated, relTime(i.UpdatedAt))))
 		b.WriteString(sep)
 	}
 	if m.colVisible(colIDSession) {
-		b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colSession, sessionShort(i))))
+		b.WriteString(typeC.Render(fmt.Sprintf("%-*s", m.cw.session, sessionShort(i))))
 		b.WriteString(sep)
 	}
 	// Truncate the title to whatever space remains after every
@@ -4900,29 +4961,29 @@ func (m Model) titleBudget() int {
 	const sep = 2
 	used := 2 // cursor (▶ or 2 spaces is 2 visual cols either way)
 	if m.colVisible(colIDOwner) {
-		used += colResp + sep
+		used += m.cw.owner + sep
 	}
 	if m.isMultiRepo() {
 		if m.colVisible(colIDRepo) {
-			used += colRepo + sep
+			used += m.cw.repo + sep
 		}
 		if m.colVisible(colIDBranch) {
-			used += colBranch + sep
+			used += m.cw.branch + sep
 		}
 	}
-	used += colID + sep
+	used += m.cw.id + sep
 	if m.colVisible(colIDType) {
-		used += colType + sep
+		used += m.cw.typ + sep
 	}
 	if m.colVisible(colIDStatus) {
-		used += colStatus + sep
+		used += m.cw.status + sep
 	}
-	used += colPrio + sep // "Pn" is 2 chars
+	used += m.cw.prio + sep
 	if m.colVisible(colIDUpdated) {
-		used += colUpdated + sep
+		used += m.cw.updated + sep
 	}
 	if m.colVisible(colIDSession) {
-		used += colSession + sep
+		used += m.cw.session + sep
 	}
 	avail := m.width - used
 	if avail < 20 {
@@ -4946,12 +5007,12 @@ func (m Model) titleBudget() int {
 // styled badge padded out to the same visual width with trailing
 // blanks. We can't just %-*s the badge string because lipgloss
 // escape codes would be counted as visual width by fmt.
-func paddedResponsibilityBadge(i beads.Issue) string {
+func paddedResponsibilityBadge(i beads.Issue, width int) string {
 	badge := responsibilityBadgeFor(i)
 	if badge == "" {
-		return strings.Repeat(" ", colResp)
+		return strings.Repeat(" ", width)
 	}
-	pad := colResp - lipgloss.Width(badge)
+	pad := width - lipgloss.Width(badge)
 	if pad > 0 {
 		badge += strings.Repeat(" ", pad)
 	}

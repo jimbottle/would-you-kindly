@@ -16,26 +16,33 @@ import (
 func TestComputeAutoHidden_DropsLeastImportantFirst(t *testing.T) {
 	src := &stubSource{issues: manyIssues(5)} // single-repo (no Repo set)
 	m := applyFetched(New(src), src)
+	m.cw = m.computeColWidths(m.visible) // seed widths as viewList does
 
 	m.width = 0
 	if m.computeAutoHidden() != nil {
 		t.Error("unknown width should auto-hide nothing (nil)")
 	}
-	m.width = 200
+	m.width = 1000
 	if h := m.computeAutoHidden(); len(h) != 0 {
 		t.Errorf("wide terminal should auto-hide nothing; got %v", h)
 	}
 
-	// At 75 cols the least-valuable shown columns (Session, Updated,
-	// Type) drop in order; Status and Owner are kept. (The breakpoint
-	// moved out from 65 once Priority widened to hold its full header.)
-	m.width = 75
+	// Single-repo: the shown toggleables are owner, type, status,
+	// updated, session (repo/branch don't render). Drop order is
+	// session, updated, type, status, owner. Pick the exact width at
+	// which session+updated+type have just dropped but status+owner
+	// survive — derived from the computed widths so it's robust to the
+	// content-sized columns.
+	const sep, minTitle = 2, 20
+	base := 2 + (m.cw.id + sep) + (m.cw.prio + sep) + minTitle
+	full := base + (m.cw.owner + sep) + (m.cw.typ + sep) + (m.cw.status + sep) + (m.cw.updated + sep) + (m.cw.session + sep)
+	m.width = full - (m.cw.session + sep) - (m.cw.updated + sep) - (m.cw.typ + sep)
 	h := m.computeAutoHidden()
 	if !h[colIDUpdated] || !h[colIDType] {
-		t.Errorf("expected Updated+Type auto-hidden at 75 cols; got %v", h)
+		t.Errorf("expected Updated+Type auto-hidden at width %d; got %v", m.width, h)
 	}
 	if h[colIDStatus] || h[colIDOwner] {
-		t.Errorf("Status/Owner should survive at 75 cols; got %v", h)
+		t.Errorf("Status/Owner should survive at width %d; got %v", m.width, h)
 	}
 }
 
@@ -51,6 +58,7 @@ func TestNarrowWidth_RowDoesNotOverflow(t *testing.T) {
 		ID: "a-1", Title: strings.Repeat("x", 200), Status: "open", Priority: 2,
 	}}}
 	m := applyFetched(New(src), src)
+	m.cw = m.computeColWidths(m.visible) // width-independent; seed once
 	for _, w := range []int{40, 50, 65, 80, 120, 200} {
 		m.width = w
 		m.autoHidden = m.computeAutoHidden()
