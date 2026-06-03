@@ -26,6 +26,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"unicode"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 	"github.com/sahilm/fuzzy"
@@ -4897,22 +4899,37 @@ func byteToRuneIdxs(s string, byteIdxs []int) []int {
 // case-insensitive occurrence of query in s, or nil if absent. Used to
 // highlight the matched run in the substring-filtered columns (repo,
 // branch, ID) the same way titleMatches highlights the fuzzy title.
+//
+// It compares rune-by-rune with unicode.ToLower rather than lowercasing
+// the whole string and mapping byte offsets back: strings.ToLower can
+// change a string's rune count (e.g. İ → i + combining dot), which would
+// shift the highlight onto the wrong runes of the original-case value.
 func substringRuneIdxs(s, query string) []int {
 	if s == "" || query == "" {
 		return nil
 	}
-	ls := strings.ToLower(s)
-	bi := strings.Index(ls, strings.ToLower(query))
-	if bi < 0 {
-		return nil
+	sr := []rune(s)
+	qr := []rune(query)
+	for k := range qr {
+		qr[k] = unicode.ToLower(qr[k])
 	}
-	start := utf8.RuneCountInString(ls[:bi])
-	n := utf8.RuneCountInString(query)
-	idxs := make([]int, n)
-	for k := 0; k < n; k++ {
-		idxs[k] = start + k
+	for start := 0; start+len(qr) <= len(sr); start++ {
+		matched := true
+		for k := range qr {
+			if unicode.ToLower(sr[start+k]) != qr[k] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			idxs := make([]int, len(qr))
+			for k := range idxs {
+				idxs[k] = start + k
+			}
+			return idxs
+		}
 	}
-	return idxs
+	return nil
 }
 
 // renderMatchCell renders a fixed-width column cell: value truncated to

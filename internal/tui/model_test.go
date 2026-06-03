@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
@@ -2697,20 +2698,37 @@ func TestSubstringRuneIdxs(t *testing.T) {
 	}
 }
 
-func TestRenderMatchCell_PreservesValueAndWidth(t *testing.T) {
+func TestRenderMatchCell_HighlightsAndPreservesValue(t *testing.T) {
+	// Force a real color profile so fuzzyMatchStyle emits escape codes —
+	// lipgloss strips them in the non-TTY test env, which would let a
+	// regression that dropped highlighting pass silently. Restore after.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
 	base := lipgloss.NewStyle()
-	// A matched query still renders the full value, truncated/padded to
-	// the column width — highlighting must not change the visible text.
-	for _, q := range []string{"", "droid", "xyz"} {
-		cell := stripANSI(renderMatchCell("android", 12, q, base))
-		if lipgloss.Width(cell) != 12 {
-			t.Errorf("query %q: cell width = %d, want 12", q, lipgloss.Width(cell))
-		}
-		if !strings.HasPrefix(cell, "android") {
-			t.Errorf("query %q: cell = %q, want it to start with the value", q, cell)
+
+	// A matching query wraps each matched rune in fuzzyMatchStyle
+	// (highlightRunesWithRest styles runes individually). The 'r' in
+	// "droid" is matched and unambiguous.
+	cell := renderMatchCell("android", 12, "droid", base)
+	if want := fuzzyMatchStyle.Render("r"); !strings.Contains(cell, want) {
+		t.Errorf("matching query should highlight the matched runes; got %q", cell)
+	}
+	// Empty and non-matching queries emit NO styling (plain == raw).
+	for _, q := range []string{"", "xyz"} {
+		if c := renderMatchCell("android", 12, q, base); c != stripANSI(c) {
+			t.Errorf("query %q should not add styling; got %q", q, c)
 		}
 	}
-	// A value longer than the column is truncated with an ellipsis.
+	// The visible text is preserved and padded/truncated to the width.
+	for _, q := range []string{"", "droid", "xyz"} {
+		plain := stripANSI(renderMatchCell("android", 12, q, base))
+		if lipgloss.Width(plain) != 12 || !strings.HasPrefix(plain, "android") {
+			t.Errorf("query %q: cell = %q (w=%d), want value + width 12", q, plain, lipgloss.Width(plain))
+		}
+	}
+	// A value longer than the column truncates with an ellipsis.
 	long := stripANSI(renderMatchCell("ebay-watchlist-watch", 10, "watch", base))
 	if lipgloss.Width(long) != 10 || !strings.Contains(long, "…") {
 		t.Errorf("long value should truncate to width 10 with ellipsis; got %q (w=%d)", long, lipgloss.Width(long))
