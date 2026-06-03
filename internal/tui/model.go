@@ -20,7 +20,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -326,12 +325,6 @@ type Model struct {
 	// actually doing something during the initial bd fetch.
 	spinner spinner.Model
 
-	// help renders the one-line footer from the keymap so the
-	// status bar's hint can't drift from the actual bindings.
-	// Configured to show writes only when the source is a Mutator
-	// via the source-of-truth swap in statusBar.
-	help help.Model
-
 	// priorityCap caps the visible rows at "<= Pn" so the most
 	// common triage move ('show me only the urgent stuff') is a
 	// single keystroke. -1 means no cap (the default; all rows
@@ -544,19 +537,6 @@ func New(src Source) Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = setupHintStyle
 
-	h := help.New()
-	// The status-bar palette already supplies its own bg/fg; the
-	// help component shouldn't inject a separate background colour
-	// or the bindings render in a different shade than the line
-	// they're embedded in.
-	h.Styles.ShortKey = helpStyle
-	h.Styles.ShortDesc = helpStyle
-	// lipgloss.Style is a value type; plain assignment is the copy.
-	h.Styles.ShortSeparator = helpStyle
-	// Use a vertical bar to separate options (instead of the default
-	// bullet), matching the bar-delimited footer style.
-	h.ShortSeparator = " ▕ "
-
 	m := Model{
 		src:            src,
 		keys:           defaultKeyMap(),
@@ -568,7 +548,6 @@ func New(src Source) Model {
 		detailVP:       viewport.New(80, 20),
 		outputVP:       viewport.New(80, 20),
 		spinner:        sp,
-		help:           h,
 		priorityCap:    -1,
 		detailLinkIdx:  -1,
 		depCache:       map[string][]beads.Issue{},
