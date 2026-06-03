@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -84,7 +85,7 @@ func runInit(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print what would happen without writing the hook")
 	skipBD := fs.Bool("skip-bd-init", false, "do not run `bd init` even if .beads is missing")
 	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
-	skipClaudeMD := fs.Bool("skip-claude-md", false, "do not seed wyk's conventions block into the repo's CLAUDE.md (created if absent, refreshed in place if present)")
+	skipClaudeMD := fs.Bool("skip-claude-md", false, "do not seed the agent enrichment: wyk's conventions block in CLAUDE.md AND the bd-create-guard PreToolUse hook in .claude/settings.json (which redirects `bd create` to `wyk create`)")
 	scanRoot := fs.String("scan", "", "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path")
 	uninstall := fs.Bool("uninstall", false, "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks")
 	fixForeignHooks := fs.Bool("fix-foreign-hooks", false, "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)")
@@ -247,6 +248,16 @@ func runInit(args []string) int {
 			fmt.Fprintln(os.Stderr, "wyk init: continuing — this enrichment is best-effort, the post-commit hook is the load-bearing install step")
 		} else {
 			fmt.Println("wyk init:", action)
+		}
+		// Step 1.7: register the bd-create-guard PreToolUse hook so an
+		// agent that runs `bd create` is redirected to `wyk create` (which
+		// records the session). Enforces the convention at the harness
+		// level rather than leaving it to docs an agent can skip.
+		if sAction, sErr := seedClaudeSettings(repoRoot, *dryRun); sErr != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: .claude/settings.json:", sErr)
+			fmt.Fprintln(os.Stderr, "wyk init: continuing — best-effort enrichment")
+		} else {
+			fmt.Println("wyk init:", sAction)
 		}
 	}
 
@@ -606,7 +617,9 @@ This repo uses **wyk**, a view + handoff layer over **bd (beads)**. "Plan
 it in wyk" = **file the plan as bd issues** (deps via ` + "`bd dep add`" + `), not
 markdown/TodoWrite. File with **` + "`wyk create`" + `** (same flags as ` + "`bd create`" + `,
 forwarded verbatim) — it also stamps the Claude session so the TUI's
-Session column traces work back to a conversation.
+Session column traces work back to a conversation. A PreToolUse hook
+blocks raw ` + "`bd create`" + ` and tells you to switch; that's expected — just
+re-run as ` + "`wyk create`" + `.
 
 **Owner column** — whose move it is, label-driven (NOT bd's owner/assignee):
 - ` + "`human`" + ` → **HUMAN** (a human must act).
@@ -703,6 +716,92 @@ func seedWykConventions(repoRoot string, dryRun bool) (string, error) {
 		return "", werr
 	}
 	return "appended wyk conventions to CLAUDE.md", nil
+}
+
+// claudeSettingsHook is the command wyk init registers as a PreToolUse
+// hook so an agent that runs `bd create` is redirected to `wyk create`
+// (see runHookBDCreateGuard).
+const claudeSettingsHook = "wyk hook bd-create-guard"
+
+// seedClaudeSettings ensures repoRoot/.claude/settings.json registers the
+// bd-create-guard PreToolUse hook. It merges into any existing settings
+// (bd init writes SessionStart/PreCompact hooks there) and is idempotent
+// — re-running doesn't duplicate the entry. Returns a short action
+// description for the init log. A malformed existing file is reported as
+// an error rather than overwritten.
+func seedClaudeSettings(repoRoot string, dryRun bool) (string, error) {
+	path := filepath.Join(repoRoot, ".claude", "settings.json")
+	root := map[string]any{}
+	switch b, err := os.ReadFile(path); {
+	case errors.Is(err, os.ErrNotExist):
+		// fresh file
+	case err != nil:
+		return "", err
+	default:
+		if uerr := json.Unmarshal(b, &root); uerr != nil {
+			return "", fmt.Errorf("parse %s: %w", path, uerr)
+		}
+		if root == nil {
+			root = map[string]any{}
+		}
+	}
+	if claudeSettingsHasHook(root, claudeSettingsHook) {
+		return "bd-create-guard hook already in .claude/settings.json", nil
+	}
+	if dryRun {
+		return "would register the bd-create-guard PreToolUse hook in .claude/settings.json", nil
+	}
+	addPreToolUseHook(root, claudeSettingsHook)
+	out, merr := json.MarshalIndent(root, "", "  ")
+	if merr != nil {
+		return "", merr
+	}
+	out = append(out, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return "", err
+	}
+	return "registered the bd-create-guard PreToolUse hook in .claude/settings.json", nil
+}
+
+// claudeSettingsHasHook reports whether any PreToolUse hook command in the
+// parsed settings equals cmd — the idempotency check for seedClaudeSettings.
+func claudeSettingsHasHook(root map[string]any, cmd string) bool {
+	hooks, _ := root["hooks"].(map[string]any)
+	entries, _ := hooks["PreToolUse"].([]any)
+	for _, e := range entries {
+		entry, _ := e.(map[string]any)
+		inner, _ := entry["hooks"].([]any)
+		for _, h := range inner {
+			hm, _ := h.(map[string]any)
+			if c, _ := hm["command"].(string); c == cmd {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// addPreToolUseHook appends a Bash-matched PreToolUse entry running cmd,
+// creating the hooks / PreToolUse containers as needed. Preserves any
+// existing hook entries (e.g. bd's SessionStart/PreCompact).
+func addPreToolUseHook(root map[string]any, cmd string) {
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+		root["hooks"] = hooks
+	}
+	entries, _ := hooks["PreToolUse"].([]any)
+	entries = append(entries, map[string]any{
+		"matcher": "Bash",
+		"hooks": []any{map[string]any{
+			"type":    "command",
+			"command": cmd,
+		}},
+	})
+	hooks["PreToolUse"] = entries
 }
 
 // resolveGitHookPath returns the absolute path to <hook> inside

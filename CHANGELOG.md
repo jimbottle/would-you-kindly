@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`bd-create-guard` PreToolUse hook** — `wyk init` now registers a
+  Claude Code hook in `.claude/settings.json` that blocks an agent's raw
+  `bd create` and tells it to use `wyk create` instead (same flags, plus
+  the session stamp). This enforces the "use wyk create" convention at
+  the harness level so the TUI's Session column actually fills, rather
+  than relying on an agent following the docs. Bypass a one-off with
+  `WYK_ALLOW_BD_CREATE=1`; opt out at init with `-skip-claude-md`.
+
 - **`AGENT-HANDOFF` owner state** — a fourth owner-column badge, driven
   by the `agent-handoff` label, for when one agent must not interfere
   with a task another agent is working. A human is expected to

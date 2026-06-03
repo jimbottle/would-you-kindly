@@ -2,8 +2,42 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestBDCreateGuard(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    int // 0 allow, 2 block
+	}{
+		{"bd create blocks", `{"tool_name":"Bash","tool_input":{"command":"bd create --title x"}}`, 2},
+		{"chained bd create blocks", `{"tool_name":"Bash","tool_input":{"command":"cd x && bd create -t y"}}`, 2},
+		{"subshell bd create blocks", `{"tool_name":"Bash","tool_input":{"command":"id=$(bd create -t y)"}}`, 2},
+		{"wyk create allowed", `{"tool_name":"Bash","tool_input":{"command":"wyk create --title x"}}`, 0},
+		{"bd list allowed", `{"tool_name":"Bash","tool_input":{"command":"bd list --json"}}`, 0},
+		{"bd create as arg allowed", `{"tool_name":"Bash","tool_input":{"command":"echo bd create"}}`, 0},
+		{"bd createX not matched", `{"tool_name":"Bash","tool_input":{"command":"bd createfoo"}}`, 0},
+		{"non-Bash tool allowed", `{"tool_name":"Edit","tool_input":{"command":"bd create x"}}`, 0},
+		{"malformed payload allowed", `not json`, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := runHookBDCreateGuard(strings.NewReader(c.payload)); got != c.want {
+				t.Errorf("guard(%q) = %d, want %d", c.payload, got, c.want)
+			}
+		})
+	}
+}
+
+func TestBDCreateGuard_BypassEnv(t *testing.T) {
+	t.Setenv("WYK_ALLOW_BD_CREATE", "1")
+	payload := `{"tool_name":"Bash","tool_input":{"command":"bd create --title x"}}`
+	if got := runHookBDCreateGuard(strings.NewReader(payload)); got != 0 {
+		t.Errorf("WYK_ALLOW_BD_CREATE=1 should bypass; got exit %d", got)
+	}
+}
 
 func TestParseCloseRefs(t *testing.T) {
 	cases := []struct {

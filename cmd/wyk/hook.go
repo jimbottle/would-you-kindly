@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -63,10 +65,56 @@ func runHook(args []string) int {
 	switch args[0] {
 	case "post-commit":
 		return runHookPostCommit(args[1:])
+	case "bd-create-guard":
+		return runHookBDCreateGuard(os.Stdin)
 	default:
 		fmt.Fprintf(os.Stderr, "wyk hook: unknown subcommand %q\n", args[0])
 		return 64
 	}
+}
+
+// bdCreateRE matches an invocation of `bd create` at a command position
+// — line start or right after a shell separator (newline, ; && || |,
+// opening paren) — so `bd create …` is caught while an arg such as
+// `echo "bd create"` or the `wyk create` wrapper itself is not.
+var bdCreateRE = regexp.MustCompile(`(?:^|[\n;&|(])\s*bd\s+create\b`)
+
+// runHookBDCreateGuard is the Claude Code PreToolUse hook `wyk init`
+// installs. It reads the tool-call JSON from stdin and, when an agent is
+// about to run `bd create` in a Bash tool call, blocks it (exit 2) with a
+// message telling the agent to use `wyk create` instead — which forwards
+// the same flags to bd create AND stamps the Claude session so the TUI's
+// Session column is populated. This makes the "use wyk create" convention
+// enforced by the harness rather than a doc directive an agent can skip.
+//
+// `wyk create` itself shells out to `bd create` as a child process (not a
+// Bash tool call), so the guard never sees it — no recursion. Set
+// WYK_ALLOW_BD_CREATE=1 to bypass for a genuinely-needed raw bd create.
+// Anything it can't parse or doesn't recognise is allowed (exit 0): a
+// guard that fails closed would wedge the agent on every Bash call.
+func runHookBDCreateGuard(stdin io.Reader) int {
+	if os.Getenv("WYK_ALLOW_BD_CREATE") != "" {
+		return 0
+	}
+	var in struct {
+		ToolName  string `json:"tool_name"`
+		ToolInput struct {
+			Command string `json:"command"`
+		} `json:"tool_input"`
+	}
+	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
+		return 0
+	}
+	if in.ToolName != "Bash" || !bdCreateRE.MatchString(in.ToolInput.Command) {
+		return 0
+	}
+	fmt.Fprintln(os.Stderr,
+		"Use `wyk create` instead of `bd create`. It forwards the SAME flags to "+
+			"`bd create` and also records the Claude session, so the issue shows up in "+
+			"the TUI's Session column (traceable back to this conversation). Re-run the "+
+			"command with `wyk create …`. "+
+			"(If you genuinely need raw bd create, set WYK_ALLOW_BD_CREATE=1.)")
+	return 2 // PreToolUse exit 2 blocks the tool call; stderr is shown to Claude.
 }
 
 // runHookPostCommit is invoked by .git/hooks/post-commit (installed

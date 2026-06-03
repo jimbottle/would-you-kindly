@@ -252,12 +252,15 @@ wyk init
 there's no bd workspace yet, installs the post-commit auto-close hook
 into git's **active** hooks dir (following `core.hooksPath` so it lands
 where git actually looks), registers the repo so the multi-repo TUI
-finds it, and seeds a **wyk conventions** block into the repo's
-`CLAUDE.md` so agents working there know to file plans as bd issues
-(via `wyk create`) and hand human-only work off with `wyk handoff`.
+finds it, and seeds the **agent enrichment**: a wyk conventions block in
+the repo's `CLAUDE.md` (so agents know to file plans as bd issues via
+`wyk create` and hand human-only work off with `wyk handoff`), plus a
+**`bd-create-guard` PreToolUse hook** in `.claude/settings.json` that
+redirects an agent's raw `bd create` to `wyk create` — so the session
+actually gets recorded instead of relying on the agent reading the docs.
 Every step is idempotent — re-running is safe. Add `-skills` to also
-install the agent skills; `-skip-claude-md` / `-skip-register` /
-`-skip-bd-init` opt out of individual steps.
+install the agent skills; `-skip-claude-md` (covers both enrichment
+pieces) / `-skip-register` / `-skip-bd-init` opt out of individual steps.
 
 After `wyk init`, every commit whose message contains a
 `Closes:`, `Fixes:`, or `Resolves:` trailer (case-insensitive) auto-

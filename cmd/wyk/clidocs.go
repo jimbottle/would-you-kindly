@@ -62,7 +62,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-dry-run", Default: "false", Description: "print what would happen without writing the hook"},
 			{Name: "-skip-bd-init", Default: "false", Description: "do not run `bd init` even if .beads is missing"},
 			{Name: "-skip-register", Default: "false", Description: "do not add this repo to ~/.config/wyk/repos.json"},
-			{Name: "-skip-claude-md", Default: "false", Description: "do not seed wyk's conventions block into the repo's CLAUDE.md (created if absent, refreshed in place if present)"},
+			{Name: "-skip-claude-md", Default: "false", Description: "do not seed the agent enrichment: wyk's conventions block in CLAUDE.md AND the bd-create-guard PreToolUse hook in .claude/settings.json (which redirects `bd create` to `wyk create`)"},
 			{Name: "-scan", Default: "", Description: "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path"},
 			{Name: "-uninstall", Default: "false", Description: "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks"},
 			{Name: "-fix-foreign-hooks", Default: "false", Description: "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)"},
