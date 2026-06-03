@@ -76,11 +76,14 @@ func runHook(args []string) int {
 // bdCreateRE matches an invocation of `bd create` at a command position
 // — line start or right after a shell separator (newline, ; && || |, or
 // an opening `(` / backtick command-substitution) — AND requires the
-// `create` token to end at whitespace, end-of-string, or a separator. So
-// `bd create …` and `$(bd create …)` / “ `bd create …` “ are caught,
-// while an arg such as `echo "bd create"`, the `wyk create` wrapper, and
-// a hypothetical hyphenated subcommand like `bd create-template` are not.
-var bdCreateRE = regexp.MustCompile("(?:^|[\\n;&|(`])\\s*bd\\s+create(?:\\s|$|[;&|)`])")
+// `create` token to END at a token boundary: whitespace, end-of-string,
+// a separator, or a redirect (`<`/`>`, e.g. `bd create>out`). So
+// `bd create …`, `$(bd create …)`, and `bd create>out` are caught, while
+// an arg like `echo "bd create"`, the `wyk create` wrapper, a hyphenated
+// subcommand like `bd create-template`, and the concatenation
+// `bd create"x"` (which is the token `createx`, a DIFFERENT subcommand,
+// not a quoted arg to `create`) are not.
+var bdCreateRE = regexp.MustCompile("(?:^|[\\n;&|(`])\\s*bd\\s+create(?:\\s|$|[;&|)`<>])")
 
 // runHookBDCreateGuard is the Claude Code PreToolUse hook `wyk init`
 // installs. It reads the tool-call JSON from stdin and, when an agent is
