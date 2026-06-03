@@ -15,6 +15,8 @@ func TestBDCreateGuard(t *testing.T) {
 		{"bd create blocks", `{"tool_name":"Bash","tool_input":{"command":"bd create --title x"}}`, 2},
 		{"chained bd create blocks", `{"tool_name":"Bash","tool_input":{"command":"cd x && bd create -t y"}}`, 2},
 		{"subshell bd create blocks", `{"tool_name":"Bash","tool_input":{"command":"id=$(bd create -t y)"}}`, 2},
+		{"backtick subshell bd create blocks", "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"id=`bd create -t y`\"}}", 2},
+		{"bd create-template not matched", `{"tool_name":"Bash","tool_input":{"command":"bd create-template foo"}}`, 0},
 		{"wyk create allowed", `{"tool_name":"Bash","tool_input":{"command":"wyk create --title x"}}`, 0},
 		{"bd list allowed", `{"tool_name":"Bash","tool_input":{"command":"bd list --json"}}`, 0},
 		{"bd create as arg allowed", `{"tool_name":"Bash","tool_input":{"command":"echo bd create"}}`, 0},

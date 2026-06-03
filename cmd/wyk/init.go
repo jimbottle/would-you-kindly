@@ -757,13 +757,46 @@ func seedClaudeSettings(repoRoot string, dryRun bool) (string, error) {
 		return "", merr
 	}
 	out = append(out, '\n')
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := writeFileAtomic(path, out, 0o644); err != nil {
 		return "", err
 	}
 	return "registered the bd-create-guard PreToolUse hook in .claude/settings.json", nil
+}
+
+// writeFileAtomic writes data to path via a sibling temp file + rename so
+// an interrupted write can't truncate or corrupt an existing file —
+// matching the durability the registry/session writers use. This matters
+// for settings.json, which already holds bd's SessionStart/PreCompact
+// hooks the merge works to preserve. Creates the parent dir on demand.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".settings.json.*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 // claudeSettingsHasHook reports whether any PreToolUse hook command in the

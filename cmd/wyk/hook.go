@@ -74,10 +74,13 @@ func runHook(args []string) int {
 }
 
 // bdCreateRE matches an invocation of `bd create` at a command position
-// — line start or right after a shell separator (newline, ; && || |,
-// opening paren) — so `bd create …` is caught while an arg such as
-// `echo "bd create"` or the `wyk create` wrapper itself is not.
-var bdCreateRE = regexp.MustCompile(`(?:^|[\n;&|(])\s*bd\s+create\b`)
+// — line start or right after a shell separator (newline, ; && || |, or
+// an opening `(` / backtick command-substitution) — AND requires the
+// `create` token to end at whitespace, end-of-string, or a separator. So
+// `bd create …` and `$(bd create …)` / “ `bd create …` “ are caught,
+// while an arg such as `echo "bd create"`, the `wyk create` wrapper, and
+// a hypothetical hyphenated subcommand like `bd create-template` are not.
+var bdCreateRE = regexp.MustCompile("(?:^|[\\n;&|(`])\\s*bd\\s+create(?:\\s|$|[;&|)`])")
 
 // runHookBDCreateGuard is the Claude Code PreToolUse hook `wyk init`
 // installs. It reads the tool-call JSON from stdin and, when an agent is
