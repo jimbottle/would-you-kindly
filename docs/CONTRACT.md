@@ -59,15 +59,18 @@ follow-up work. The agent picks it up, either closes it (work is
 done) or re-applies `human` after another step (back to the human
 for another round). The label flips trace the conversation.
 
-**Assumption: one agent per workspace.** The `src:agent` label is
-collective, not per-identity. If two agents share a workspace
-(e.g. Claude and another assistant running concurrently, or two
-sessions of the same agent), they will both see — and may both act
-on — the same inbox items. This contract version (`wyk-contract/v1`)
-does not address that race. A future revision could introduce a
-`src:agent:<name>` convention; until then, scope multi-agent
-collaboration to separate workspaces (one bd workspace per agent
-identity).
+**Assumption: one agent per workspace (with a coordination escape
+hatch).** The `src:agent` label is collective, not per-identity. If two
+agents share a workspace (e.g. Claude and another assistant running
+concurrently, or two sessions of the same agent), they will both see —
+and may both act on — the same inbox items. `wyk-contract/v2` adds the
+`agent-handoff` label as a partial mechanism: an agent can fence off a
+task another agent owns (it renders **AGENT-HANDOFF** and is excluded
+from the inbox query), with a human expected to orchestrate the overall
+coordination. The label does NOT assign work per-identity — a future
+revision could introduce a `src:agent:<name>` convention for that. Until
+then, prefer scoping heavy multi-agent collaboration to separate
+workspaces (one bd workspace per agent identity).
 
 **Partial-failure visibility for `wyk inbox -json`.** When one
 registered repo's bd is broken (moved, deleted, daemon unreachable),
@@ -295,4 +298,10 @@ This document is the contract. If the labels or the field-mapping change,
 bump the **Schema** line below and update `wyk`'s preset query strings in the
 same commit.
 
-**Schema:** `wyk-contract/v1`
+**Schema:** `wyk-contract/v2`
+
+Changelog:
+- **v2** — adds the `agent-handoff` label (badge AGENT-HANDOFF) and
+  excludes it from the agent inbox query.
+- **v1** — initial contract: `human` / `src:agent` / `src:human` labels
+  and the agent inbox query.

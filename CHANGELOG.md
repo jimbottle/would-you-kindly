@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distinctly. These rows are excluded from the agent inbox query so the
   "work it now" imperative never fires on a task that isn't the current
   agent's to touch. Themeable via `agent_handoff_bg` / `agent_handoff_fg`.
+  Bumps the handoff contract to `wyk-contract/v2`.
 
 - **`wyk create`** — a thin wrapper over `bd create` (every flag
   forwarded verbatim) that stamps each new issue with a `session:<id>`

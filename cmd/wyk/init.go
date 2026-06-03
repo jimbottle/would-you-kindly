@@ -183,16 +183,12 @@ func runInit(args []string) int {
 	// gates the refusal so a normal worktree (whose shared hooks legitimately
 	// live outside the worktree root, but with no core.hooksPath set) isn't
 	// mistaken for a redirect.
-	hookPath, herr := resolveGitHookPath(repoRoot, "post-commit")
-	if herr != nil {
-		fmt.Fprintln(os.Stderr, "wyk init: resolve hook path:", herr)
-		return 1
-	}
-	if _, set := coreHooksPath(repoRoot); set && !pathWithin(repoRoot, filepath.Dir(hookPath)) {
-		fmt.Fprintf(os.Stderr, "wyk init: git's core.hooksPath points outside this repo:\n          %s\n", filepath.Dir(hookPath))
-		fmt.Fprintln(os.Stderr, "          That's almost certainly stale — clear it and re-run wyk init:")
-		fmt.Fprintln(os.Stderr, "          git -C "+repoRoot+" config --unset core.hooksPath")
-		return 64
+	// Up-front: run the guard for its side effect — refuse a pre-existing
+	// out-of-repo stale redirect BEFORE mutating any state. The resolved
+	// path is intentionally discarded; the authoritative resolution
+	// happens after `bd init` (which can repoint core.hooksPath).
+	if _, code := resolveAndGuardHookPath(repoRoot); code != 0 {
+		return code
 	}
 
 	// Step 1: bootstrap a bd workspace if there isn't one.
@@ -265,17 +261,9 @@ func runInit(args []string) int {
 	// actually looks. Re-run the within-repo guard in case bd (or a
 	// pre-existing config) pointed the redirect outside the repo: better
 	// to fail loud than install into a bypassed path.
-	if reResolved, herr := resolveGitHookPath(repoRoot, "post-commit"); herr != nil {
-		fmt.Fprintln(os.Stderr, "wyk init: resolve hook path:", herr)
-		return 1
-	} else {
-		hookPath = reResolved
-	}
-	if _, set := coreHooksPath(repoRoot); set && !pathWithin(repoRoot, filepath.Dir(hookPath)) {
-		fmt.Fprintf(os.Stderr, "wyk init: git's core.hooksPath points outside this repo:\n          %s\n", filepath.Dir(hookPath))
-		fmt.Fprintln(os.Stderr, "          That's almost certainly stale — clear it and re-run wyk init:")
-		fmt.Fprintln(os.Stderr, "          git -C "+repoRoot+" config --unset core.hooksPath")
-		return 64
+	hookPath, code := resolveAndGuardHookPath(repoRoot)
+	if code != 0 {
+		return code
 	}
 
 	// hookPath now reflects git's active hooks dir (re-resolved above,
@@ -766,6 +754,30 @@ func resolveGitHookPath(repoDir, hook string) (string, error) {
 		p = filepath.Join(repoDir, p)
 	}
 	return p, nil
+}
+
+// resolveAndGuardHookPath resolves repoRoot's active post-commit hook
+// path and refuses an out-of-repo core.hooksPath redirect. It returns
+// (path, 0) to continue, or ("", code) where code is the exit status
+// runInit should return (1 = resolve failure, 64 = stale out-of-repo
+// redirect). runInit calls it twice — once up front (to refuse a
+// pre-existing stale redirect before mutating state) and once after
+// `bd init` (which can repoint core.hooksPath at .beads/hooks) — so the
+// resolution and the guard live in one place rather than drifting across
+// two near-identical copies.
+func resolveAndGuardHookPath(repoRoot string) (string, int) {
+	hookPath, herr := resolveGitHookPath(repoRoot, "post-commit")
+	if herr != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: resolve hook path:", herr)
+		return "", 1
+	}
+	if _, set := coreHooksPath(repoRoot); set && !pathWithin(repoRoot, filepath.Dir(hookPath)) {
+		fmt.Fprintf(os.Stderr, "wyk init: git's core.hooksPath points outside this repo:\n          %s\n", filepath.Dir(hookPath))
+		fmt.Fprintln(os.Stderr, "          That's almost certainly stale — clear it and re-run wyk init:")
+		fmt.Fprintln(os.Stderr, "          git -C "+repoRoot+" config --unset core.hooksPath")
+		return "", 64
+	}
+	return hookPath, 0
 }
 
 // coreHooksPath returns git's configured core.hooksPath for repoDir

@@ -327,6 +327,52 @@ func docRepo(t *testing.T, withGit, withBeads bool, hookBody string) registry.Re
 	return registry.Repo{Name: filepath.Base(dir), Path: resolved}
 }
 
+// checkNamed returns the first check whose name contains sub, or a zero
+// check if none match — a small helper for asserting on one row out of
+// checkRepo's slice.
+func checkNamed(checks []check, sub string) (check, bool) {
+	for _, c := range checks {
+		if strings.Contains(c.name, sub) {
+			return c, true
+		}
+	}
+	return check{}, false
+}
+
+func TestCheckRepo_CLAUDEMDWykAware(t *testing.T) {
+	// PASS when CLAUDE.md carries the wyk conventions marker; WARN when
+	// the file exists without it; WARN when the file is absent. Pins the
+	// three-way branch so an inverted Contains or swapped status is caught.
+	cases := []struct {
+		name    string
+		content *string // nil → no CLAUDE.md file
+		want    checkStatus
+	}{
+		{"with marker", strPtr("# Doc\n\n" + wykConventionsBeginMarker + "\n...\n" + wykConventionsEndMarker + "\n"), statusPass},
+		{"without marker", strPtr("# Doc\n\nno wyk block here\n"), statusWarn},
+		{"no file", nil, statusWarn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := docRepo(t, true, true, "") // git + beads so checkRepo reaches the CLAUDE.md branch
+			if tc.content != nil {
+				if err := os.WriteFile(filepath.Join(r.Path, "CLAUDE.md"), []byte(*tc.content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c, ok := checkNamed(checkRepo(r), "CLAUDE.md wyk-aware")
+			if !ok {
+				t.Fatalf("no 'CLAUDE.md wyk-aware' check emitted for %+v", checkRepo(r))
+			}
+			if c.status != tc.want {
+				t.Errorf("status = %s, want %s (detail: %s)", c.status, tc.want, c.detail)
+			}
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
 func TestCheckEditor_WarnsOnFallbackPassesOnSet(t *testing.T) {
 	// Unset → fallback "vi", WARN if it resolves (most systems
 	// have vi).

@@ -82,11 +82,17 @@ func realBDCreateWithSession(dir string, passthrough []string, sessionLabel stri
 	return id, nil
 }
 
-// hasFlag reports whether args contains the given flag, matching both
-// `--flag` and `--flag=value` forms.
+// hasFlag reports whether args contains the given flag in any accepted
+// form — -flag, --flag, -flag=value, or --flag=value. Leading dashes on
+// both `flag` and each arg are normalised away before comparison, so the
+// single-dash form (which Go's flag package also accepts) is detected
+// too and we don't append a duplicate that could override an explicit
+// value (e.g. a user's `-dolt-auto-commit=off`).
 func hasFlag(args []string, flag string) bool {
+	name := strings.TrimLeft(flag, "-")
 	for _, a := range args {
-		if a == flag || strings.HasPrefix(a, flag+"=") {
+		bare := strings.TrimLeft(a, "-")
+		if bare == name || strings.HasPrefix(bare, name+"=") {
 			return true
 		}
 	}
@@ -118,22 +124,24 @@ func runCreate(args []string) int {
 	}
 
 	id, err := runBDCreateWithSession("", args, label)
-	if err != nil {
-		// A non-empty id means the create succeeded but the session
-		// stamp didn't — report the partial success rather than implying
-		// nothing was filed.
-		if id != "" {
-			fmt.Fprintln(os.Stderr, "wyk create:", err)
-			fmt.Println(id)
-			return 1
-		}
+	if id == "" {
+		// The create itself failed — nothing was filed.
 		fmt.Fprintln(os.Stderr, "wyk create:", err)
 		return 1
 	}
-
-	if label != "" {
+	// The issue exists. stdout uniformly carries the "created <id>" line
+	// regardless of exit code, so a caller parses it the same way whether
+	// or not the session stamp succeeded; the error (if any) goes to
+	// stderr and only the exit code distinguishes partial success.
+	switch {
+	case err != nil:
+		// Partial success: created, but the session label didn't stamp.
+		fmt.Printf("wyk create: created %s (session NOT recorded)\n", id)
+		fmt.Fprintln(os.Stderr, "wyk create:", err)
+		return 1
+	case label != "":
 		fmt.Printf("wyk create: created %s (session %s)\n", id, shortSession(session))
-	} else {
+	default:
 		fmt.Printf("wyk create: created %s (no %s in env — session not recorded)\n", id, sessionEnvVar)
 	}
 	return 0

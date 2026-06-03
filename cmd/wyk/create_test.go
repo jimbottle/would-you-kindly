@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +56,28 @@ func TestRunCreate_StampsSessionFromEnv(t *testing.T) {
 	}
 }
 
+func TestRunCreate_PartialSuccessReportsIDAndExits1(t *testing.T) {
+	// Issue created (non-empty id) but the session label failed to stamp:
+	// runCreate must exit 1 AND still report the created ID on stdout, in
+	// the same `wyk create: created <id>` format as the success path.
+	t.Setenv(sessionEnvVar, "sess-1234")
+	withStubCreate(t, "demo-xyz", errors.New("label add failed"))
+
+	var code int
+	out := captureStdout(t, func() {
+		code = runCreate([]string{"--title", "x"})
+	})
+	if code != 1 {
+		t.Errorf("exit %d, want 1 on partial success", code)
+	}
+	if !strings.Contains(out, "demo-xyz") {
+		t.Errorf("partial-success stdout should still report the created ID; got %q", out)
+	}
+	if !strings.Contains(out, "wyk create: created") {
+		t.Errorf("partial-success stdout should use the standard created line; got %q", out)
+	}
+}
+
 func TestRunCreate_NoSessionEnvStillCreates(t *testing.T) {
 	t.Setenv(sessionEnvVar, "")
 	cap := withStubCreate(t, "demo-xyz", nil)
@@ -91,5 +115,13 @@ func TestHasFlag(t *testing.T) {
 	}
 	if hasFlag(args, "--priority") {
 		t.Error("want hasFlag --priority false")
+	}
+	// Single-dash forms are detected too (Go's flag package accepts them),
+	// so we don't append a duplicate that could override an explicit value.
+	if !hasFlag([]string{"-silent"}, "--silent") {
+		t.Error("want hasFlag to detect single-dash -silent")
+	}
+	if !hasFlag([]string{"-dolt-auto-commit=off"}, "--dolt-auto-commit") {
+		t.Error("want hasFlag to detect single-dash -dolt-auto-commit=off")
 	}
 }
