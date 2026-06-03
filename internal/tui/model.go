@@ -4496,6 +4496,13 @@ const (
 	colStatus  = 8
 	colPrio    = 2
 	colUpdated = 8 // 8 chars so the "Updated↓" sort-arrow decoration fits without overflowing into the Title column. relTime values ("4h ago", "2 weeks", etc.) are all ≤ 7 chars so the extra slack is harmless when no sort is active.
+	// colTitleMax caps the title cell so a wide terminal doesn't drag a
+	// single title across the entire row (the complaint that titles "go
+	// off the page and become unreadable"). 72 visual columns is a
+	// comfortable reading measure; beyond it the row stops being
+	// scannable. titleBudget() still shrinks BELOW this to fit a narrow
+	// pane — this is only the ceiling. The detail view shows full text.
+	colTitleMax = 72
 )
 
 // isMultiRepo reports whether the current list has any issue with
@@ -4879,6 +4886,14 @@ func (m Model) titleBudget() int {
 	avail := m.width - used
 	if avail < 20 {
 		avail = 20 // floor so we don't render an empty title cell
+	}
+	// Cap the title at a readable maximum so a wide terminal doesn't
+	// stretch one title across the whole row — past ~colTitleMax the eye
+	// can't track the line and the freed width is better spent on the
+	// other columns (or just left as quiet margin). The detail view
+	// (enter) always shows the untruncated text, so nothing is lost.
+	if avail > colTitleMax {
+		avail = colTitleMax
 	}
 	return avail
 }

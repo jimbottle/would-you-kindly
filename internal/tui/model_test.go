@@ -1798,6 +1798,31 @@ func TestTitleTruncation_WideTerminalShowsFullTitle(t *testing.T) {
 	}
 }
 
+func TestTitleTruncation_WideTerminalCapsAtMax(t *testing.T) {
+	// Even on a very wide terminal the title is capped at colTitleMax
+	// so it can't sprawl across the whole row (the "titles go off the
+	// page and become unreadable" complaint). A title longer than the
+	// cap must be ellipsized, not shown in full.
+	long := strings.Repeat("x", colTitleMax+40)
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "a-1", Title: long, Status: "open", Labels: []string{}},
+	}}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 400, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	if got := m.titleBudget(); got != colTitleMax {
+		t.Errorf("titleBudget on a 400-col terminal = %d, want the cap %d", got, colTitleMax)
+	}
+	out := m.View()
+	if strings.Contains(out, long) {
+		t.Errorf("title should be capped at %d cols, not shown in full; got:\n%s", colTitleMax, out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Errorf("a title past the cap should be ellipsized; got:\n%s", out)
+	}
+}
+
 func TestUpdateNudge_RenderedAboveStatusBar(t *testing.T) {
 	// When WithUpdateNudge is set, the model renders the nudge
 	// line above the status bar. Pin both that it appears AND
