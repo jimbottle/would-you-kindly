@@ -1851,27 +1851,34 @@ func TestSessionColumn_RendersShortSessionFromLabel(t *testing.T) {
 	}
 }
 
-func TestStatusBar_NeverOverflowsTerminalWidth(t *testing.T) {
-	// Regression: the short-help list could exceed the terminal width and
-	// run off the right edge. The footer uses ambiguous-width glyphs
-	// (·, ±, ▕) that terminals configured for "ambiguous = wide" render
-	// as 2 cells while lipgloss counts 1, so the line "fit" by lipgloss
-	// yet overran the pane and truncation never fired. The status bar must
-	// stay within the terminal width measured BOTH ways at every realistic
-	// size. The floor is 60: below that the status info itself is wider
-	// than the pane.
+func TestStatusBar_WrapsWithinWidthAndKeepsAllKeys(t *testing.T) {
+	// The footer wraps the key bindings into a column-aligned grid below
+	// the info line so EVERY binding stays visible (no truncation), and
+	// no single line exceeds the terminal width — measured BOTH by
+	// lipgloss AND by the ambiguous-wide width (the ▕/·/± glyphs render as
+	// 2 cells on "ambiguous = wide" terminals, which is what made the old
+	// one-line footer run off the edge). Floor is 60: below that the info
+	// line itself is wider than the pane.
 	src := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(src), src)
+	// Every short-help binding's description must appear somewhere in the
+	// rendered footer at every width.
+	wantKeys := []string{"nav", "open", "filter", "human", "preset", "refresh", "close", "note", "help", "quit"}
 	for _, w := range []int{60, 70, 80, 100, 120, 133, 145, 160, 200} {
 		m.width = w
 		out := stripANSI(m.statusBar())
-		if got := lipgloss.Width(out); got > w {
-			t.Errorf("width=%d: status bar lipgloss-width %d, overflows", w, got)
+		for _, line := range strings.Split(out, "\n") {
+			if got := lipgloss.Width(line); got > w {
+				t.Errorf("width=%d: footer line lipgloss-width %d > %d: %q", w, got, w, line)
+			}
+			if got := dispWidth(line); got > w {
+				t.Errorf("width=%d: footer line ambiguous-wide %d > %d: %q", w, got, w, line)
+			}
 		}
-		// The load-bearing check: an ambiguous-wide terminal must not
-		// overflow either.
-		if got := dispWidth(out); got > w {
-			t.Errorf("width=%d: status bar ambiguous-wide render %d, overflows", w, got)
+		for _, k := range wantKeys {
+			if !strings.Contains(out, k) {
+				t.Errorf("width=%d: footer dropped binding %q (should wrap, not truncate):\n%s", w, k, out)
+			}
 		}
 	}
 }

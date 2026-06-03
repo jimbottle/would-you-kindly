@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The status-bar footer wraps into a column-aligned key grid** — the
+  status info sits on its own line and the key bindings flow into a
+  roborev-style grid below it (the most columns that fit, padded so the
+  bar separators line up between rows). Every binding stays visible and
+  no line exceeds the terminal width — including on terminals that render
+  ambiguous-width glyphs as two cells, which is what made the old
+  one-line footer run off the right edge.
+
 - **Leaner always-loaded agent context** — the `bd remember` convention
   memory (surfaced by `bd prime` every session) and the seeded CLAUDE.md
   wyk block are each ~halved in size, keeping every load-bearing rule

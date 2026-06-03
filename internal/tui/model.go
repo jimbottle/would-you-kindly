@@ -5296,59 +5296,24 @@ func (m Model) statusBar() string {
 	if m.refreshing {
 		left += "  ↻ refreshing"
 	}
-	// Render the right-side help inline from the keymap so the
-	// status bar's bindings can't drift from the actual handlers.
-	// Read-only mode swaps in shortHelpReadOnly so the footer
-	// doesn't advertise write keys that just produce a banner.
+	// Read-only mode swaps in shortHelpReadOnly so the footer doesn't
+	// advertise write keys that just produce a banner; the "(read-only)"
+	// note rides on the info line.
 	bindings := m.keys.ShortHelp()
-	suffix := ""
 	if m.mutator() == nil {
 		bindings = m.keys.shortHelpReadOnly()
-		suffix = "  (read-only)"
+		left += "  (read-only)"
 	}
-	// Build the short help inline ("key desc ▕ key desc …") and render it
-	// ourselves rather than via help.ShortHelpView. Every segment shares
-	// one helpStyle (cDim), so truncating the PLAIN text and styling the
-	// whole thing is safe — no ANSI escape is sliced mid-sequence.
-	//
-	// Width is measured with dispWidth, which counts ambiguous-width
-	// glyphs (·, ±, ▕, arrows) as 2 cells. Terminals configured to render
-	// ambiguous chars double-wide draw them that way, but lipgloss.Width
-	// counts 1 — so a line of 10× ▕ "fits" by lipgloss yet overruns the
-	// terminal by ~10 cells and the truncation never fires. Budgeting with
-	// dispWidth keeps the footer inside the pane on those terminals; on
-	// narrow-rendering terminals it just truncates a hair early. Full
-	// keymap lives in the ? overlay.
-	parts := make([]string, 0, len(bindings))
-	for _, bnd := range bindings {
-		if !bnd.Enabled() {
-			continue
-		}
-		h := bnd.Help()
-		parts = append(parts, h.Key+" "+h.Desc)
+	// Status info on its own line, then the key bindings wrapped into a
+	// column-aligned grid below it (roborev's footer style) so every
+	// binding stays visible rather than running off the edge. The grid's
+	// height is fed back through chromeExtra so the table shrinks to make
+	// room. helpGridLines is the single source of truth for both.
+	out := statusBarStyle.Render(left)
+	for _, gl := range m.helpGridLines(bindings, m.width) {
+		out += "\n" + gl
 	}
-	plainHelp := strings.Join(parts, " ▕ ")
-	leftW, sufW := dispWidth(left), dispWidth(suffix)
-	if m.width > 0 {
-		// Reserve the statusBarStyle Padding(0,1) (2 cols) plus a 1-col
-		// gap between the status info and the help, so the truncated help
-		// can't push the padded line past the terminal edge.
-		avail := m.width - leftW - sufW - 3
-		if avail < 0 {
-			avail = 0
-		}
-		plainHelp = truncWide(plainHelp, avail)
-	}
-	helpW := dispWidth(plainHelp) + sufW
-	helpLine := helpStyle.Render(plainHelp) + suffix
-	gap := " "
-	if m.width > 0 {
-		need := leftW + helpW + 2
-		if need < m.width {
-			gap = strings.Repeat(" ", m.width-need)
-		}
-	}
-	return statusBarStyle.Render(left + gap + helpLine)
+	return out
 }
 
 // ambWide measures display width treating East-Asian *ambiguous*-width
@@ -5365,33 +5330,63 @@ var ambWide = func() *runewidth.Condition {
 // dispWidth is ambWide.StringWidth for a plain (ANSI-free) string.
 func dispWidth(s string) int { return ambWide.StringWidth(s) }
 
-// truncWide truncates s so its ambiguous-wide display width is at most
-// max, appending an ellipsis when it cuts. Like trunc, but measures by
-// dispWidth so it pairs with the status bar's ambiguous-wide budget.
-func truncWide(s string, max int) string {
-	if max <= 0 {
-		return ""
+// helpGridLines lays the short-help bindings out as a column-aligned grid
+// (roborev's footer style): the most columns whose row-major layout fits
+// `avail` — fewest rows — with every column padded to its widest cell and
+// joined by " ▕ " so the separators line up between rows. All bindings
+// stay visible; the grid grows downward rather than truncating. Returns
+// the styled lines (helpStyle), or nil when the width is unknown or there
+// is nothing to show. Widths are measured with dispWidth so ambiguous-
+// width glyphs (▕, ·, ±) don't push a row past the edge.
+func (m Model) helpGridLines(bindings []key.Binding, avail int) []string {
+	if avail < 1 {
+		return nil
 	}
-	if dispWidth(s) <= max {
-		return s
+	items := make([]string, 0, len(bindings))
+	for _, bnd := range bindings {
+		if !bnd.Enabled() {
+			continue
+		}
+		h := bnd.Help()
+		items = append(items, h.Key+" "+h.Desc)
 	}
-	ell := "…"
-	ew := dispWidth(ell)
-	if max <= ew {
-		ell, ew = "", 0 // no room for the ellipsis; hard-cut to max cells
+	if len(items) == 0 {
+		return nil
 	}
-	target := max - ew
-	w := 0
-	var b strings.Builder
-	for _, r := range s {
-		rw := ambWide.RuneWidth(r)
-		if w+rw > target {
+	sepW := dispWidth(" ▕ ")
+	gridWidth := func(cols int) (int, []int) {
+		w := make([]int, cols)
+		for i, it := range items {
+			if d := dispWidth(it); d > w[i%cols] {
+				w[i%cols] = d
+			}
+		}
+		total := sepW * (cols - 1)
+		for _, cw := range w {
+			total += cw
+		}
+		return total, w
+	}
+	cols, colW := 1, []int{0}
+	for c := len(items); c >= 1; c-- {
+		if total, w := gridWidth(c); total <= avail {
+			cols, colW = c, w
 			break
 		}
-		b.WriteRune(r)
-		w += rw
 	}
-	return b.String() + ell
+	var lines []string
+	for r := 0; r*cols < len(items); r++ {
+		cells := make([]string, 0, cols)
+		for c := 0; c < cols && r*cols+c < len(items); c++ {
+			it := items[r*cols+c]
+			if pad := colW[c] - dispWidth(it); pad > 0 {
+				it += strings.Repeat(" ", pad)
+			}
+			cells = append(cells, it)
+		}
+		lines = append(lines, helpStyle.Render(strings.Join(cells, " ▕ ")))
+	}
+	return lines
 }
 
 func keyHit(msg tea.KeyMsg, b key.Binding) bool {
@@ -5525,6 +5520,15 @@ const chromeMinOverhead = 5
 // matches what's actually rendered.
 func (m Model) chromeExtra() int {
 	n := 0
+	// The status-bar key bindings wrap into a grid BELOW the info line
+	// (the info line itself is counted in chromeMinOverhead). Each wrapped
+	// row is an extra line competing with table rows. Use the same builder
+	// statusBar renders so the budget can't drift from the layout.
+	bindings := m.keys.ShortHelp()
+	if m.mutator() == nil {
+		bindings = m.keys.shortHelpReadOnly()
+	}
+	n += len(m.helpGridLines(bindings, m.width))
 	if m.setupHint != "" {
 		// setupHint can wrap; count newlines + 1.
 		n += 1 + strings.Count(m.setupHint, "\n")
