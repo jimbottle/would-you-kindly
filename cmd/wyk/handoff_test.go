@@ -83,6 +83,7 @@ func TestHandoff_DryRunBareIDPrintsPlanWithoutWriting(t *testing.T) {
 }
 
 func TestHandoff_DryRunCreatePrintsCreatePlanWithoutWriting(t *testing.T) {
+	t.Setenv(sessionEnvVar, "") // deterministic labels (no session stamp)
 	path := writeRunbook(t, "do the thing")
 	out := captureHandoffStdout(t, func() {
 		if code := runHandoff([]string{
@@ -101,5 +102,20 @@ func TestHandoff_DryRunCreatePrintsCreatePlanWithoutWriting(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run -create output missing %q; got:\n%s", want, out)
 		}
+	}
+}
+
+func TestHandoff_CreateStampsSessionLabel(t *testing.T) {
+	// `wyk handoff -create` records the Claude session like `wyk create`,
+	// so handoff-filed issues populate the TUI's Session column too.
+	t.Setenv(sessionEnvVar, "sess-9999")
+	path := writeRunbook(t, "do the thing")
+	out := captureHandoffStdout(t, func() {
+		runHandoff([]string{
+			"-dry-run", "-create", "A handoff", "-file", path,
+		})
+	})
+	if !strings.Contains(out, "session:sess-9999") {
+		t.Errorf("dry-run -create should plan the session label; got:\n%s", out)
 	}
 }

@@ -22,6 +22,22 @@ const sessionEnvVar = "CLAUDE_CODE_SESSION_ID"
 // in sync.
 const sessionLabelPrefix = "session:"
 
+// sessionLabel returns the `session:<id>` label for a (trimmed) session
+// ID, or "" when the ID is empty. Shared by `wyk create` and `wyk handoff
+// -create` so any issue filed through wyk records which conversation
+// filed it; an empty session (e.g. outside Claude Code) records nothing.
+func sessionLabel(session string) string {
+	if session == "" {
+		return ""
+	}
+	return sessionLabelPrefix + session
+}
+
+// sessionLabelFromEnv is sessionLabel applied to $CLAUDE_CODE_SESSION_ID.
+func sessionLabelFromEnv() string {
+	return sessionLabel(strings.TrimSpace(os.Getenv(sessionEnvVar)))
+}
+
 // createUsage describes `wyk create`. It is intentionally thin: every
 // flag is forwarded verbatim to `bd create`, so the authoritative flag
 // reference is bd's own (`bd create --help`).
@@ -118,10 +134,7 @@ func runCreate(args []string) int {
 	}
 
 	session := strings.TrimSpace(os.Getenv(sessionEnvVar))
-	label := ""
-	if session != "" {
-		label = sessionLabelPrefix + session
-	}
+	label := sessionLabel(session)
 
 	id, err := runBDCreateWithSession("", args, label)
 	if id == "" {

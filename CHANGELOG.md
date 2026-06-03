@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overlay and auto-hidden first on narrow terminals; blank for issues
   filed without `wyk create`.
 
+- **`wyk handoff -create` also stamps the Claude session** — so
+  handoff-filed issues populate the TUI's Session column too, not only
+  issues filed with `wyk create`. (Raw `bd create` still records nothing —
+  wyk can't intercept it.)
+
 - **`wyk init` now seeds a wyk conventions block into `CLAUDE.md`** — so
   a freshly-init'd repo is wyk-aware, not just bd-aware. Without it, an
   agent told to "build the plan in wyk" had no local definition mapping

@@ -436,6 +436,15 @@ func runHandoff(args []string) int {
 		return 64
 	}
 
+	// Labels for a -create'd issue: src:agent (BounceToHuman adds `human`
+	// on top), plus the Claude session (like `wyk create`) so the TUI's
+	// Session column is populated for handoff-filed issues too. Empty
+	// session (outside Claude Code) records nothing.
+	createLabels := []string{"src:agent"}
+	if sl := sessionLabelFromEnv(); sl != "" {
+		createLabels = append(createLabels, sl)
+	}
+
 	// -dry-run short-circuits before any bd writes. Print the
 	// plan and exit; nothing is created, no labels are flipped.
 	// The plan covers both -create (would-create banner + the
@@ -443,8 +452,8 @@ func runHandoff(args []string) int {
 	if *dryRun {
 		fmt.Println("DRY-RUN: no bd writes performed")
 		if *createTitle != "" {
-			fmt.Printf("would create: title=%q priority=%s type=%s labels=[src:agent]\n",
-				*createTitle, *priority, *issueType)
+			fmt.Printf("would create: title=%q priority=%s type=%s labels=%v\n",
+				*createTitle, *priority, *issueType, createLabels)
 			fmt.Println("would hand off the new issue to human (label=human added, description replaced)")
 		} else {
 			fmt.Printf("would hand off %s to human (label=human added, description replaced)\n", fs.Arg(0))
@@ -468,7 +477,7 @@ func runHandoff(args []string) int {
 	if *createTitle != "" {
 		newID, err := client.Create(context.Background(), beads.CreateOptions{
 			Title:     *createTitle,
-			Labels:    []string{"src:agent"}, // BounceToHuman will add `human` on top
+			Labels:    createLabels,
 			Priority:  *priority,
 			IssueType: *issueType,
 		})
