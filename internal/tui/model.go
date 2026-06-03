@@ -27,6 +27,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -5306,12 +5307,18 @@ func (m Model) statusBar() string {
 		suffix = "  (read-only)"
 	}
 	// Build the short help inline ("key desc ▕ key desc …") and render it
-	// ourselves rather than via help.ShortHelpView: bubbles' own
-	// width-truncation mismeasures the multi-byte ▕ separator and lets the
-	// line overflow the terminal instead of eliding. Every segment shares
-	// one helpStyle (cDim), so truncating the PLAIN text to the available
-	// width and styling the whole thing is safe — no ANSI escape is sliced
-	// mid-sequence. Full keymap lives in the ? overlay.
+	// ourselves rather than via help.ShortHelpView. Every segment shares
+	// one helpStyle (cDim), so truncating the PLAIN text and styling the
+	// whole thing is safe — no ANSI escape is sliced mid-sequence.
+	//
+	// Width is measured with dispWidth, which counts ambiguous-width
+	// glyphs (·, ±, ▕, arrows) as 2 cells. Terminals configured to render
+	// ambiguous chars double-wide draw them that way, but lipgloss.Width
+	// counts 1 — so a line of 10× ▕ "fits" by lipgloss yet overruns the
+	// terminal by ~10 cells and the truncation never fires. Budgeting with
+	// dispWidth keeps the footer inside the pane on those terminals; on
+	// narrow-rendering terminals it just truncates a hair early. Full
+	// keymap lives in the ? overlay.
 	parts := make([]string, 0, len(bindings))
 	for _, bnd := range bindings {
 		if !bnd.Enabled() {
@@ -5321,27 +5328,70 @@ func (m Model) statusBar() string {
 		parts = append(parts, h.Key+" "+h.Desc)
 	}
 	plainHelp := strings.Join(parts, " ▕ ")
+	leftW, sufW := dispWidth(left), dispWidth(suffix)
 	if m.width > 0 {
 		// Reserve the statusBarStyle Padding(0,1) (2 cols) plus a 1-col
 		// gap between the status info and the help, so the truncated help
 		// can't push the padded line past the terminal edge.
-		avail := m.width - lipgloss.Width(left) - lipgloss.Width(suffix) - 3
+		avail := m.width - leftW - sufW - 3
 		if avail < 0 {
 			avail = 0
 		}
-		if lipgloss.Width(plainHelp) > avail {
-			plainHelp = trunc(plainHelp, avail)
-		}
+		plainHelp = truncWide(plainHelp, avail)
 	}
+	helpW := dispWidth(plainHelp) + sufW
 	helpLine := helpStyle.Render(plainHelp) + suffix
 	gap := " "
 	if m.width > 0 {
-		need := lipgloss.Width(left) + lipgloss.Width(helpLine) + 2
+		need := leftW + helpW + 2
 		if need < m.width {
 			gap = strings.Repeat(" ", m.width-need)
 		}
 	}
 	return statusBarStyle.Render(left + gap + helpLine)
+}
+
+// ambWide measures display width treating East-Asian *ambiguous*-width
+// glyphs (·, ±, ▕, arrows, …) as 2 cells. Many terminals render those
+// double-wide; lipgloss/the default runewidth count them as 1. We use
+// this only for the status-bar budget, where under-measuring lets the
+// footer overrun the pane on ambiguous-wide terminals.
+var ambWide = func() *runewidth.Condition {
+	c := runewidth.NewCondition()
+	c.EastAsianWidth = true
+	return c
+}()
+
+// dispWidth is ambWide.StringWidth for a plain (ANSI-free) string.
+func dispWidth(s string) int { return ambWide.StringWidth(s) }
+
+// truncWide truncates s so its ambiguous-wide display width is at most
+// max, appending an ellipsis when it cuts. Like trunc, but measures by
+// dispWidth so it pairs with the status bar's ambiguous-wide budget.
+func truncWide(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if dispWidth(s) <= max {
+		return s
+	}
+	ell := "…"
+	ew := dispWidth(ell)
+	if max <= ew {
+		ell, ew = "", 0 // no room for the ellipsis; hard-cut to max cells
+	}
+	target := max - ew
+	w := 0
+	var b strings.Builder
+	for _, r := range s {
+		rw := ambWide.RuneWidth(r)
+		if w+rw > target {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + ell
 }
 
 func keyHit(msg tea.KeyMsg, b key.Binding) bool {

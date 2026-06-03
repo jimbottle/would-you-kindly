@@ -1852,18 +1852,26 @@ func TestSessionColumn_RendersShortSessionFromLabel(t *testing.T) {
 }
 
 func TestStatusBar_NeverOverflowsTerminalWidth(t *testing.T) {
-	// Regression: the short-help list could exceed the terminal width
-	// and run off the right edge (bubbles' own width-truncation
-	// mismeasured the multi-byte ▕ separator). The status bar must now
-	// render within the terminal width at every realistic size — the
-	// help truncates with an ellipsis rather than overflowing. The floor
-	// is 60: below that the status info itself is wider than the pane.
+	// Regression: the short-help list could exceed the terminal width and
+	// run off the right edge. The footer uses ambiguous-width glyphs
+	// (·, ±, ▕) that terminals configured for "ambiguous = wide" render
+	// as 2 cells while lipgloss counts 1, so the line "fit" by lipgloss
+	// yet overran the pane and truncation never fired. The status bar must
+	// stay within the terminal width measured BOTH ways at every realistic
+	// size. The floor is 60: below that the status info itself is wider
+	// than the pane.
 	src := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(src), src)
-	for _, w := range []int{60, 70, 80, 100, 120, 133, 160, 200} {
+	for _, w := range []int{60, 70, 80, 100, 120, 133, 145, 160, 200} {
 		m.width = w
-		if got := lipgloss.Width(m.statusBar()); got > w {
-			t.Errorf("width=%d: status bar rendered %d cols, overflows", w, got)
+		out := stripANSI(m.statusBar())
+		if got := lipgloss.Width(out); got > w {
+			t.Errorf("width=%d: status bar lipgloss-width %d, overflows", w, got)
+		}
+		// The load-bearing check: an ambiguous-wide terminal must not
+		// overflow either.
+		if got := dispWidth(out); got > w {
+			t.Errorf("width=%d: status bar ambiguous-wide render %d, overflows", w, got)
 		}
 	}
 }
