@@ -5296,24 +5296,42 @@ func (m Model) statusBar() string {
 	if m.refreshing {
 		left += "  ↻ refreshing"
 	}
-	// Read-only mode swaps in shortHelpReadOnly so the footer doesn't
-	// advertise write keys that just produce a banner; the "(read-only)"
-	// note rides on the info line.
-	bindings := m.keys.ShortHelp()
+	// The "(read-only)" note rides on the info line (footerBindings drops
+	// the write keys when there's no Mutator).
 	if m.mutator() == nil {
-		bindings = m.keys.shortHelpReadOnly()
 		left += "  (read-only)"
 	}
-	// Status info on its own line, then the key bindings wrapped into a
-	// column-aligned grid below it (roborev's footer style) so every
-	// binding stays visible rather than running off the edge. The grid's
-	// height is fed back through chromeExtra so the table shrinks to make
-	// room. helpGridLines is the single source of truth for both.
+	// Status info on its own full-width bar, then the key bindings wrapped
+	// into a column-aligned grid below it (roborev's footer style) so every
+	// binding stays visible rather than running off the edge. The info line
+	// keeps statusBarStyle's filled-bar look, padded out so the bar spans
+	// the whole row instead of a ragged segment. We pad with dispWidth (and
+	// let the bg cover the trailing spaces) rather than lipgloss's .Width():
+	// .Width measures the · separator narrow and would overrun ambiguous-
+	// wide terminals by a cell. The 2 accounts for statusBarStyle's
+	// Padding(0,1). The grid rows are dim helpStyle below it, and the grid's
+	// height feeds chromeExtra so the table shrinks to make room.
+	if m.width > 0 {
+		if fill := m.width - 2 - dispWidth(left); fill > 0 {
+			left += strings.Repeat(" ", fill)
+		}
+	}
 	out := statusBarStyle.Render(left)
-	for _, gl := range m.helpGridLines(bindings, m.width) {
+	for _, gl := range m.helpGridLines(m.footerBindings(), m.width) {
 		out += "\n" + gl
 	}
 	return out
+}
+
+// footerBindings is the short-help set the status-bar footer renders: the
+// write-aware list, minus the write keys when there's no Mutator wired up.
+// Shared by statusBar (render) and chromeExtra (height budget) so the two
+// can't drift on the read-only swap rule.
+func (m Model) footerBindings() []key.Binding {
+	if m.mutator() == nil {
+		return m.keys.shortHelpReadOnly()
+	}
+	return m.keys.ShortHelp()
 }
 
 // ambWide measures display width treating East-Asian *ambiguous*-width
@@ -5379,8 +5397,15 @@ func (m Model) helpGridLines(bindings []key.Binding, avail int) []string {
 		cells := make([]string, 0, cols)
 		for c := 0; c < cols && r*cols+c < len(items); c++ {
 			it := items[r*cols+c]
-			if pad := colW[c] - dispWidth(it); pad > 0 {
-				it += strings.Repeat(" ", pad)
+			// Pad every cell EXCEPT the last one in the row to its column
+			// width so the ▕ separators line up; the row's final cell has
+			// no following separator, so padding it is just dead trailing
+			// whitespace.
+			last := c == cols-1 || r*cols+c == len(items)-1
+			if !last {
+				if pad := colW[c] - dispWidth(it); pad > 0 {
+					it += strings.Repeat(" ", pad)
+				}
 			}
 			cells = append(cells, it)
 		}
@@ -5523,12 +5548,8 @@ func (m Model) chromeExtra() int {
 	// The status-bar key bindings wrap into a grid BELOW the info line
 	// (the info line itself is counted in chromeMinOverhead). Each wrapped
 	// row is an extra line competing with table rows. Use the same builder
-	// statusBar renders so the budget can't drift from the layout.
-	bindings := m.keys.ShortHelp()
-	if m.mutator() == nil {
-		bindings = m.keys.shortHelpReadOnly()
-	}
-	n += len(m.helpGridLines(bindings, m.width))
+	// and binding set statusBar renders so the budget can't drift.
+	n += len(m.helpGridLines(m.footerBindings(), m.width))
 	if m.setupHint != "" {
 		// setupHint can wrap; count newlines + 1.
 		n += 1 + strings.Count(m.setupHint, "\n")

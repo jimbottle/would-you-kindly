@@ -1861,9 +1861,17 @@ func TestStatusBar_WrapsWithinWidthAndKeepsAllKeys(t *testing.T) {
 	// line itself is wider than the pane.
 	src := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
 	m := applyMutatorFetched(New(src), src)
-	// Every short-help binding's description must appear somewhere in the
-	// rendered footer at every width.
-	wantKeys := []string{"nav", "open", "filter", "human", "preset", "refresh", "close", "note", "help", "quit"}
+	// Derive the exact "key desc" cells the footer should render (incl.
+	// "H ±human") from the same binding set, so a genuinely dropped
+	// binding can't be masked by an incidental substring match.
+	var wantCells []string
+	for _, bnd := range m.footerBindings() {
+		if !bnd.Enabled() {
+			continue
+		}
+		h := bnd.Help()
+		wantCells = append(wantCells, h.Key+" "+h.Desc)
+	}
 	for _, w := range []int{60, 70, 80, 100, 120, 133, 145, 160, 200} {
 		m.width = w
 		out := stripANSI(m.statusBar())
@@ -1875,9 +1883,9 @@ func TestStatusBar_WrapsWithinWidthAndKeepsAllKeys(t *testing.T) {
 				t.Errorf("width=%d: footer line ambiguous-wide %d > %d: %q", w, got, w, line)
 			}
 		}
-		for _, k := range wantKeys {
-			if !strings.Contains(out, k) {
-				t.Errorf("width=%d: footer dropped binding %q (should wrap, not truncate):\n%s", w, k, out)
+		for _, cell := range wantCells {
+			if !strings.Contains(out, cell) {
+				t.Errorf("width=%d: footer dropped binding %q (should wrap, not truncate):\n%s", w, cell, out)
 			}
 		}
 	}
