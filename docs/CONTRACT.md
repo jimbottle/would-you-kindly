@@ -35,7 +35,7 @@ Two supporting conventions complete the contract:
 ### Closing the loop
 
 When the human finishes the task, they close the issue (`bd close <id>`,
-or `c` in the TUI). If they cannot complete it and want to bounce it
+or `a` in the TUI). If they cannot complete it and want to bounce it
 back to the agent, they remove the `human` label (`bd label remove
 <id> human`, or `H` in the TUI).
 

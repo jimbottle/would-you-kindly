@@ -201,9 +201,10 @@ wyk conventions -json    # structured for programmatic ingestion
 ```
 
 If you're writing code that interacts with bd in a wyk-tracked repo,
-this is the first thing to run. It documents the two labels (`human`,
-`src:agent`), the inbox query, the preferred handoff command, and a
-concrete `bd create` example. `wyk init` also writes the same
+this is the first thing to run. It documents the label set (`human`,
+`src:agent`, and `agent-handoff` for another agent's work), the inbox
+query, the preferred handoff command, and a concrete filing example.
+`wyk init` also writes the same
 convention into bd's `remember` store, so `bd prime` surfaces it on
 every agent session start without an extra command.
 
@@ -326,6 +327,7 @@ to restore the original.
 | `L`   | Toggle an arbitrary label on the cursor issue               |
 | `O`   | Change the cursor issue's owner                             |
 | `d`   | Defer the cursor issue (`bd update --defer`)                |
+| `T`   | Cycle the cursor issue's type (task → bug → feat → …)       |
 | `+`/`-` | Bump the cursor issue's priority                          |
 | `v`   | Multi-select; bulk close / flag / defer the marked rows     |
 | `u`   | Undo the last close (reopens via `bd reopen`; one-deep)     |
@@ -348,7 +350,9 @@ above the help bar (e.g. `closed wyk-42`, or `close wyk-42 failed: …`).
 The detail view (`enter` on a row) shows the issue's full
 description and any accumulated notes (added via `n` or `bd note`).
 Notes lazy-load via a `bd show` call on entry, so the section
-appears a beat after the rest of the detail view.
+appears a beat after the rest of the detail view. In the detail
+view, `c` copies the instructions (the description body) to the
+clipboard.
 
 The list also refreshes itself every 10 seconds. On platforms with
 fsnotify support, external `bd` writes (a `git pull`, another `wyk`
@@ -448,7 +452,7 @@ narrow terminal the lower-value ones auto-hide to keep rows intact.
 | `Session`  | The Claude session that filed the issue (first 8 chars of the ID), recorded when it's created via `wyk create`. Blank for issues filed any other way. |
 | `Title`    | The issue's one-line summary, capped at 50 columns for scannability. Press `enter` to read the full title, description, and notes. |
 
-Press `enter` to read the runbook, `c` to close when done, or `H` to
+Press `enter` to read the runbook, `a` to close when done, or `H` to
 bounce it back to the agent if the next step is theirs again. The
 list refreshes every 10 seconds and across every repo you've
 registered with `wyk init`.
