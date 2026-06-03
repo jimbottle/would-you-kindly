@@ -401,6 +401,32 @@ func TestFilter_DescriptionMatchesSubstringNotSubsequence(t *testing.T) {
 	}
 }
 
+func TestFilter_MatchesRepoBranchAndID(t *testing.T) {
+	// Repo is the most common filter target — the filter must match it
+	// (plus branch and ID) as a substring, not only title/description.
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "android-1", Repo: "android", Branch: "main", Title: "unrelated title", Description: ""},
+		{ID: "ebay-9", Repo: "ebay-watchlist-watch", Branch: "feat/x", Title: "another thing", Description: "nothing here"},
+	}}
+	for _, c := range []struct {
+		query string
+		want  []string
+	}{
+		{"android", []string{"android-1"}}, // repo (and ID) substring
+		{"feat/x", []string{"ebay-9"}},     // branch substring
+		{"ebay-9", []string{"ebay-9"}},     // ID substring
+		{"watchlist", []string{"ebay-9"}},  // repo substring
+	} {
+		m := applyFetched(New(src), src)
+		m.query = c.query
+		m.recomputeVisible()
+		got := visibleIDs(m.visible)
+		if len(got) != len(c.want) || (len(got) > 0 && got[0] != c.want[0]) {
+			t.Errorf("query %q: got %v, want %v", c.query, got, c.want)
+		}
+	}
+}
+
 func TestDisplayID_TrimsCommonPrefix(t *testing.T) {
 	// Single-repo: all IDs share `would-you-kindly-`. displayID
 	// strips it down to the suffix.

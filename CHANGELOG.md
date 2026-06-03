@@ -86,13 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The `/` filter no longer floods on common words** — the description
-  was matched with the same fuzzy-subsequence as the title, so a query
-  like `android` matched a scattered `a·n·d·r·o·i·d` in almost any long
-  body and surfaced rows that don't mention the term. The body is now
-  matched as a case-insensitive **substring**; the title keeps fuzzy
-  subsequence (so `rpw` → "rotate password" still works). Title matches
-  rank above body-only matches.
+- **The `/` filter now matches repo / branch / ID, and no longer floods
+  on common words** — it previously searched only the title (fuzzy) and
+  description, so filtering by repo name (the most common use) didn't
+  work, and the description's fuzzy-subsequence matched a scattered
+  `a·n·d·r·o·i·d` in almost any long body. The filter now matches the
+  **repo, branch, ID, and description as case-insensitive substrings**,
+  keeping fuzzy subsequence on the (short) title so `rpw` → "rotate
+  password" still works. Title matches rank above the rest.
 
 - **`wyk init` installed the auto-close hook into a bypassed path on a
   fresh repo** — the hook path was resolved before `bd init` ran, so it

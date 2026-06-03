@@ -2394,12 +2394,11 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // recomputeVisible applies the text filter to m.all. The TITLE is matched
 // with sahilm/fuzzy (subsequence, rank-based: best-first, ties fall back
 // to position in m.all so the cursor doesn't jump as the user types) so
-// abbreviations like "rpw" → "rotate password" work. The DESCRIPTION is
-// matched as a case-insensitive contiguous substring — a fuzzy
-// subsequence over long body text matches almost anything and floods the
-// filter. Title matches rank above description-only matches, and the two
-// fields are matched independently so a query can't span the
-// title→description boundary.
+// abbreviations like "rpw" → "rotate password" work. Every other field —
+// repo, branch, ID, description — is matched as a case-insensitive
+// contiguous substring (repo being the most common target). Fields are
+// matched independently so a query can't span a field boundary, and
+// title matches rank above the rest.
 func (m *Model) recomputeVisible() {
 	// Apply the priority cap first so the fuzzy ranking only ever
 	// runs over rows the user actually wants to see. -1 means "no
@@ -2432,15 +2431,15 @@ func (m *Model) recomputeVisible() {
 
 	// The title is matched with sahilm/fuzzy (subsequence), which makes
 	// short abbreviations like "rpw" → "rotate password" work — the title
-	// is short, so a subsequence is a meaningful signal. The DESCRIPTION,
-	// by contrast, is matched as a case-insensitive CONTIGUOUS SUBSTRING:
-	// a description is long, and a fuzzy subsequence over long text matches
-	// almost anything (a 7-char query like "android" lands a scattered
-	// a·n·d·r·o·i·d in nearly every body), which floods the filter with
-	// rows that don't actually mention the term. Title matches outrank
-	// description-only matches.
+	// is short, so a subsequence is a meaningful signal. Every OTHER field
+	// (repo, branch, ID, description) is matched as a case-insensitive
+	// CONTIGUOUS SUBSTRING. Repo is the most common target ("show me the
+	// android repo's rows"), and substring keeps it predictable: a fuzzy
+	// subsequence over the long description matched almost anything (a
+	// 7-char query like "android" lands a scattered a·n·d·r·o·i·d in nearly
+	// every body), flooding the filter. Title matches outrank the rest.
 	titleScore := make(map[int]int, len(pool))
-	descOnly := make(map[int]bool, len(pool))
+	metaMatch := make(map[int]bool, len(pool))
 	m.titleMatches = make(map[string][]int, len(pool))
 	for _, mt := range fuzzy.FindFrom(m.query, titleSource(pool)) {
 		titleScore[mt.Index] = mt.Score
@@ -2453,12 +2452,16 @@ func (m *Model) recomputeVisible() {
 		m.titleMatches[issueKey(pool[mt.Index])] = byteToRuneIdxs(pool[mt.Index].Title, mt.MatchedIndexes)
 	}
 	lowerQuery := strings.ToLower(m.query)
+	contains := func(s string) bool {
+		return s != "" && strings.Contains(strings.ToLower(s), lowerQuery)
+	}
 	for idx := range pool {
 		if _, ok := titleScore[idx]; ok {
 			continue // already a (stronger) title match
 		}
-		if strings.Contains(strings.ToLower(pool[idx].Description), lowerQuery) {
-			descOnly[idx] = true
+		i := pool[idx]
+		if contains(i.Repo) || contains(i.Branch) || contains(i.ID) || contains(i.Description) {
+			metaMatch[idx] = true
 		}
 	}
 
@@ -2466,11 +2469,11 @@ func (m *Model) recomputeVisible() {
 		idx, score int
 		title      bool
 	}
-	list := make([]scored, 0, len(titleScore)+len(descOnly))
+	list := make([]scored, 0, len(titleScore)+len(metaMatch))
 	for idx, score := range titleScore {
 		list = append(list, scored{idx, score, true})
 	}
-	for idx := range descOnly {
+	for idx := range metaMatch {
 		list = append(list, scored{idx: idx, title: false})
 	}
 	sort.Slice(list, func(i, j int) bool {
