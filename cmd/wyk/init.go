@@ -84,6 +84,7 @@ func runInit(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print what would happen without writing the hook")
 	skipBD := fs.Bool("skip-bd-init", false, "do not run `bd init` even if .beads is missing")
 	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
+	skipClaudeMD := fs.Bool("skip-claude-md", false, "do not seed wyk's conventions block into the repo's CLAUDE.md (created if absent, refreshed in place if present)")
 	scanRoot := fs.String("scan", "", "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path")
 	uninstall := fs.Bool("uninstall", false, "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks")
 	fixForeignHooks := fs.Bool("fix-foreign-hooks", false, "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)")
@@ -96,7 +97,7 @@ func runInit(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk init [-force | -chain] [-dry-run] [-skip-bd-init] [-skip-register]")
+		fmt.Fprintln(os.Stderr, "usage: wyk init [-force | -chain] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-claude-md]")
 		fmt.Fprintln(os.Stderr, "   or: wyk init -scan <root> [-dry-run]")
 		fmt.Fprintln(os.Stderr, "   or: wyk init -uninstall [-dry-run]")
 		fmt.Fprintln(os.Stderr, "   or: wyk init -fix-foreign-hooks [-dry-run]")
@@ -114,7 +115,7 @@ func runInit(args []string) int {
 		var bad []string
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "force", "chain", "skip-bd-init", "skip-register", "scan", "uninstall":
+			case "force", "chain", "skip-bd-init", "skip-register", "skip-claude-md", "scan", "uninstall":
 				bad = append(bad, "-"+f.Name)
 			}
 		})
@@ -133,7 +134,7 @@ func runInit(args []string) int {
 		var bad []string
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "force", "chain", "skip-bd-init", "skip-register", "scan":
+			case "force", "chain", "skip-bd-init", "skip-register", "skip-claude-md", "scan":
 				bad = append(bad, "-"+f.Name)
 			}
 		})
@@ -153,7 +154,7 @@ func runInit(args []string) int {
 		var bad []string
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "force", "chain", "skip-bd-init", "skip-register":
+			case "force", "chain", "skip-bd-init", "skip-register", "skip-claude-md":
 				bad = append(bad, "-"+f.Name)
 			}
 		})
@@ -235,8 +236,50 @@ func runInit(args []string) int {
 		}
 	}
 
-	// hookPath (the active post-commit path) was resolved and validated
-	// up front, before any state-mutating step.
+	// Step 1.6: seed wyk's conventions into the repo's CLAUDE.md so the
+	// next AGENT that opens this repo is wyk-aware, not just bd-aware.
+	// Without this, "build the plan in wyk" is a no-op — there is no
+	// `wyk create`, so an agent with only bd boilerplate has no local
+	// definition mapping that phrase to `bd create` issues. The block is
+	// marker-delimited and refreshed in place, so re-running init keeps
+	// it current. Best-effort: a failure WARNs but doesn't gate the
+	// load-bearing hook install.
+	if !*skipClaudeMD {
+		action, err := seedWykConventions(repoRoot, *dryRun)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: CLAUDE.md:", err)
+			fmt.Fprintln(os.Stderr, "wyk init: continuing — this enrichment is best-effort, the post-commit hook is the load-bearing install step")
+		} else {
+			fmt.Println("wyk init:", action)
+		}
+	}
+
+	// Re-resolve the active hook path NOW, after bd init. The up-front
+	// resolution (used only to refuse a pre-existing out-of-repo stale
+	// redirect before we mutate anything) predates `bd init`, which
+	// points core.hooksPath at .beads/hooks. On a fresh repo that means
+	// the up-front path is .git/hooks/post-commit while git now reads
+	// from .beads/hooks — so writing there would install wyk's auto-close
+	// hook into a directory git ignores, and Closes:/Fixes: would
+	// silently never fire. Re-resolving makes the hook land where git
+	// actually looks. Re-run the within-repo guard in case bd (or a
+	// pre-existing config) pointed the redirect outside the repo: better
+	// to fail loud than install into a bypassed path.
+	if reResolved, herr := resolveGitHookPath(repoRoot, "post-commit"); herr != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: resolve hook path:", herr)
+		return 1
+	} else {
+		hookPath = reResolved
+	}
+	if _, set := coreHooksPath(repoRoot); set && !pathWithin(repoRoot, filepath.Dir(hookPath)) {
+		fmt.Fprintf(os.Stderr, "wyk init: git's core.hooksPath points outside this repo:\n          %s\n", filepath.Dir(hookPath))
+		fmt.Fprintln(os.Stderr, "          That's almost certainly stale — clear it and re-run wyk init:")
+		fmt.Fprintln(os.Stderr, "          git -C "+repoRoot+" config --unset core.hooksPath")
+		return 64
+	}
+
+	// hookPath now reflects git's active hooks dir (re-resolved above,
+	// after bd init may have set core.hooksPath).
 	preWykPath := hookPath + ".pre-wyk"
 
 	// Step 2: install the post-commit hook. Each branch sets
@@ -543,6 +586,148 @@ const rememberedConventionMemory = "wyk handoff convention: tasks for a human ca
 // and won't survive `bd dolt push`).
 func teachBDConvention(repoRoot string) error {
 	return bdRememberRunner(repoRoot, rememberedConventionKey, rememberedConventionMemory)
+}
+
+// wykConventionsBeginMarker / wykConventionsEndMarker delimit the block
+// `wyk init` manages inside CLAUDE.md. They mirror bd's own
+// `<!-- BEGIN BEADS INTEGRATION -->` markers so the two installers
+// coexist without stepping on each other, and so re-running init can
+// refresh wyk's block in place rather than appending duplicates. The
+// `v:1` lets a future version detect and migrate an older block.
+const (
+	wykConventionsBeginMarker = "<!-- BEGIN WYK CONVENTIONS v:1 -->"
+	wykConventionsEndMarker   = "<!-- END WYK CONVENTIONS -->"
+	// wykConventionsBeginPrefix matches ANY version of the begin marker
+	// (the v:N suffix varies). Detection and refresh key off this prefix
+	// so re-running init upgrades an older block in place — and so a
+	// hand-rolled block without a version is recognised — rather than
+	// appending a duplicate.
+	wykConventionsBeginPrefix = "<!-- BEGIN WYK CONVENTIONS"
+)
+
+// wykConventionsBlock is the marker-delimited section wyk init writes
+// into CLAUDE.md. It is the canonical, repo-local statement of what
+// "wyk" means to an agent: there is no `wyk create`, planning is
+// `bd create`, the owner column is label-driven, and human work is
+// handed off via `wyk handoff`. Kept as one const so the refresh path
+// can compare the existing block byte-for-byte and skip a no-op write.
+const wykConventionsBlock = wykConventionsBeginMarker + `
+## wyk — planning & handoff over bd
+
+This repo is registered with **wyk**, a view + handoff layer on top of
+**bd (beads)**. wyk does NOT replace bd and there is **no ` + "`wyk create`" + `** —
+wyk surfaces and routes bd issues, it doesn't file them. So "plan it in
+wyk" / "build the plan in wyk" means: **file the plan as ` + "`bd create`" + `
+issues** (wire dependencies with ` + "`bd dep add`" + `); wyk then shows and routes
+them. Do NOT capture the plan as markdown or TodoWrite — ` + "`bd create`" + ` is
+the verb.
+
+### Owner column: HUMAN / AGENT / HUMAN-BLOCK
+wyk's owner column shows whose move it is, driven by labels (NOT bd's
+` + "`owner`/`assignee`" + ` fields):
+- ` + "`human`" + ` label → **HUMAN** (a human must act).
+- agent task blocked by a human-flagged dep → **HUMAN-BLOCK**.
+- everything else → **AGENT**. A null owner defaults to AGENT, so the
+  column is never blank — which means **a task that needs a human MUST
+  be handed off**, or it silently reads as AGENT and the human never
+  sees it.
+
+### Handing work to a human
+` + "`wyk handoff <id>`" + ` (or ` + "`wyk handoff -create \"<title>\"`" + ` to file + hand off in
+one step) sets the ` + "`human`" + ` label and writes the runbook. Do NOT
+hand-roll labels; ` + "`-a`/`--claim`" + ` are bd's assignee/status, NOT the badge.
+
+### Picking up work
+Run ` + "`wyk inbox`" + ` FIRST — items a human bounced back to you; the default
+move is to WORK them. Then ` + "`wyk`" + ` (the TUI) or ` + "`bd ready`" + ` for the ready
+queue. ` + "`wyk conventions`" + ` prints the authoritative contract.
+
+### When something's wrong, address it — don't shrug it off
+If a wyk/bd command errors, a convention looks broken, the TUI shows
+something confusing, or any part of this workflow rubs wrong, that is a
+signal to ACT on, NOT to silently route around. The default move is to
+**file a bd issue** capturing it (` + "`bd create`" + `, assign an owner) and fix it
+or hand it off (` + "`wyk handoff`" + `) if it needs a human — don't just work
+around it and move on. Friction with wyk IS product data about wyk:
+surfacing and resolving it is part of the job, not a distraction from
+it. A problem noticed and dropped is a problem that resurfaces for the
+next agent.
+` + wykConventionsEndMarker
+
+// claudeMDPreamble heads a CLAUDE.md that wyk init creates from scratch
+// (no file present). When CLAUDE.md already exists we never touch
+// anything outside our markers, so this is only used on first creation.
+const claudeMDPreamble = `# Project Instructions for AI Agents
+
+This file provides instructions and context for AI coding agents working on this project.
+
+`
+
+// seedWykConventions ensures repoRoot/CLAUDE.md carries wyk's
+// conventions block. It returns a short human-readable description of
+// what it did (for the init log) and never touches content outside the
+// BEGIN/END markers. Behaviour:
+//
+//   - no CLAUDE.md            → create it (preamble + block)
+//   - block present, current  → no-op ("already current")
+//   - block present, stale    → replace the block in place
+//   - block absent            → append the block (one blank line before)
+//   - BEGIN without END       → refuse (don't corrupt a malformed file)
+//
+// With dryRun, it reports the action it would take and writes nothing.
+func seedWykConventions(repoRoot string, dryRun bool) (string, error) {
+	path := filepath.Join(repoRoot, "CLAUDE.md")
+	existing, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		if dryRun {
+			return "would create CLAUDE.md with wyk conventions", nil
+		}
+		if werr := os.WriteFile(path, []byte(claudeMDPreamble+wykConventionsBlock+"\n"), 0o644); werr != nil {
+			return "", werr
+		}
+		return "created CLAUDE.md with wyk conventions", nil
+	case err != nil:
+		return "", err
+	}
+
+	content := string(existing)
+	if i := strings.Index(content, wykConventionsBeginPrefix); i >= 0 {
+		end := strings.Index(content, wykConventionsEndMarker)
+		if end < i {
+			return "", fmt.Errorf("CLAUDE.md has %q without a matching %q after it; leaving it untouched",
+				wykConventionsBeginPrefix, wykConventionsEndMarker)
+		}
+		end += len(wykConventionsEndMarker)
+		if content[i:end] == wykConventionsBlock {
+			return "wyk conventions already current in CLAUDE.md", nil
+		}
+		if dryRun {
+			return "would refresh the wyk conventions block in CLAUDE.md", nil
+		}
+		updated := content[:i] + wykConventionsBlock + content[end:]
+		if werr := os.WriteFile(path, []byte(updated), 0o644); werr != nil {
+			return "", werr
+		}
+		return "refreshed the wyk conventions block in CLAUDE.md", nil
+	}
+
+	if dryRun {
+		return "would append wyk conventions to CLAUDE.md", nil
+	}
+	// Guarantee exactly one blank line between the existing content and
+	// our block, regardless of how the file currently ends.
+	prefix := content
+	if !strings.HasSuffix(prefix, "\n") {
+		prefix += "\n"
+	}
+	if !strings.HasSuffix(prefix, "\n\n") {
+		prefix += "\n"
+	}
+	if werr := os.WriteFile(path, []byte(prefix+wykConventionsBlock+"\n"), 0o644); werr != nil {
+		return "", werr
+	}
+	return "appended wyk conventions to CLAUDE.md", nil
 }
 
 // resolveGitHookPath returns the absolute path to <hook> inside

@@ -650,6 +650,34 @@ func checkRepo(r registry.Repo) []check {
 		}
 	}
 
+	// CLAUDE.md carries wyk's conventions? This is what makes a repo
+	// usable BY AN AGENT — without it the agent is bd-aware but not
+	// wyk-aware ("build the plan in wyk" is a no-op). Repos init'd
+	// before this seed existed won't have the block; nudge them to
+	// re-run init. WARN, not FAIL: the block is enrichment, the bd
+	// workspace + hook are the load-bearing parts.
+	claudeMDPath := filepath.Join(r.Path, "CLAUDE.md")
+	switch body, err := os.ReadFile(claudeMDPath); {
+	case err == nil && bytes.Contains(body, []byte(wykConventionsBeginPrefix)):
+		out = append(out, check{name: prefix + ": CLAUDE.md wyk-aware", status: statusPass})
+	case err == nil || errors.Is(err, os.ErrNotExist):
+		noun := "CLAUDE.md has no wyk conventions block"
+		if errors.Is(err, os.ErrNotExist) {
+			noun = "no CLAUDE.md"
+		}
+		out = append(out, check{
+			name:   prefix + ": CLAUDE.md wyk-aware",
+			status: statusWarn,
+			detail: noun + " — agents here are bd-aware but not wyk-aware (`build the plan in wyk` won't map to `bd create`). Re-run `(cd " + r.Path + " && wyk init)` to seed it.",
+		})
+	default:
+		out = append(out, check{
+			name:   prefix + ": CLAUDE.md wyk-aware",
+			status: statusWarn,
+			detail: "couldn't read CLAUDE.md: " + err.Error(),
+		})
+	}
+
 	// post-commit hook — is wyk's (plain or chained), foreign, or absent?
 	// Resolve via git so gitlinks (.git as a file) and worktrees land on
 	// the right hook; raw filepath.Join(r.Path, ".git", ...) breaks for

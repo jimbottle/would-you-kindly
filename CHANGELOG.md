@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`wyk init` now seeds a wyk conventions block into `CLAUDE.md`** — so
+  a freshly-init'd repo is wyk-aware, not just bd-aware. Without it, an
+  agent told to "build the plan in wyk" had no local definition mapping
+  that to `bd create` (there is no `wyk create`), and silently fell back
+  to markdown/TodoWrite. The block covers planning-as-bd-issues, the
+  owner column, handoff, and an explicit "address problems, don't shrug
+  them off" rule. Created if absent, refreshed in place if present
+  (version-agnostic marker), opt out with `-skip-claude-md`.
+
+- **`wyk doctor` CLAUDE.md wyk-awareness check** — flags any registered
+  repo whose `CLAUDE.md` lacks the wyk conventions block (WARN), with a
+  re-run-init nudge. Surfaces repos init'd before the seed existed.
+
+### Fixed
+
+- **`wyk init` installed the auto-close hook into a bypassed path on a
+  fresh repo** — the hook path was resolved before `bd init` ran, so it
+  predated bd pointing `core.hooksPath` at `.beads/hooks`. wyk then wrote
+  to `.git/hooks/post-commit` while git read from `.beads/hooks`, and
+  `Closes:`/`Fixes:` auto-close silently never fired. The hook path is now
+  re-resolved after `bd init`, so it lands where git actually looks.
+
 ## [0.6.1] — 2026-06-02
 
 ### Changed
