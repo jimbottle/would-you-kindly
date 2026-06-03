@@ -47,15 +47,22 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		},
 	},
 	{
+		Name:    "create",
+		Summary: "File a bd issue (forwarding every flag to `bd create`) and stamp it with the Claude session that created it, so the TUI's Session column can trace work back to a conversation.",
+		Usage:   "wyk create <bd create args...>",
+		Flags:   nil, // every flag is forwarded verbatim to `bd create`; see `bd create --help`
+	},
+	{
 		Name:    "init",
 		Summary: "Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.",
-		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]",
+		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-claude-md] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]",
 		Flags: []cliFlag{
 			{Name: "-force", Default: "false", Description: "overwrite an existing post-commit hook (destructive — drops the existing hook entirely)"},
 			{Name: "-chain", Default: "false", Description: "preserve an existing post-commit hook and chain wyk's logic after it (preferred over -force when the existing hook is from another tool like roborev)"},
 			{Name: "-dry-run", Default: "false", Description: "print what would happen without writing the hook"},
 			{Name: "-skip-bd-init", Default: "false", Description: "do not run `bd init` even if .beads is missing"},
 			{Name: "-skip-register", Default: "false", Description: "do not add this repo to ~/.config/wyk/repos.json"},
+			{Name: "-skip-claude-md", Default: "false", Description: "do not seed wyk's conventions block into the repo's CLAUDE.md (created if absent, refreshed in place if present)"},
 			{Name: "-scan", Default: "", Description: "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path"},
 			{Name: "-uninstall", Default: "false", Description: "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks"},
 			{Name: "-fix-foreign-hooks", Default: "false", Description: "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)"},

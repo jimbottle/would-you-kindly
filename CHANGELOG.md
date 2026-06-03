@@ -8,14 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`wyk create`** — a thin wrapper over `bd create` (every flag
+  forwarded verbatim) that stamps each new issue with a `session:<id>`
+  label recording the Claude session that filed it (from
+  `$CLAUDE_CODE_SESSION_ID`). Use it instead of `bd create` so work can
+  be traced back to a conversation; plain `bd create` still works but
+  won't record the session.
+
+- **TUI Session column** — shows the short Claude session ID that
+  created each issue (populated by `wyk create`). Toggleable via the `o`
+  overlay and auto-hidden first on narrow terminals; blank for issues
+  filed without `wyk create`.
+
 - **`wyk init` now seeds a wyk conventions block into `CLAUDE.md`** — so
   a freshly-init'd repo is wyk-aware, not just bd-aware. Without it, an
   agent told to "build the plan in wyk" had no local definition mapping
-  that to `bd create` (there is no `wyk create`), and silently fell back
-  to markdown/TodoWrite. The block covers planning-as-bd-issues, the
-  owner column, handoff, and an explicit "address problems, don't shrug
-  them off" rule. Created if absent, refreshed in place if present
+  that to filing issues, and silently fell back to markdown/TodoWrite.
+  The block covers planning-as-bd-issues (via `wyk create`), the owner
+  column, handoff, and an explicit "address problems, don't shrug them
+  off" rule. Created if absent, refreshed in place if present
   (version-agnostic marker), opt out with `-skip-claude-md`.
+
+### Changed
+
+- **The TUI title column is capped at 50 visual columns** — long titles
+  no longer drag across the full width of a wide terminal into an
+  unreadable wall of text. The column still shrinks below the cap to fit
+  a narrow pane; the detail view (enter) shows the full title.
 
 - **`wyk doctor` CLAUDE.md wyk-awareness check** — flags any registered
   repo whose `CLAUDE.md` lacks the wyk conventions block (WARN), with a

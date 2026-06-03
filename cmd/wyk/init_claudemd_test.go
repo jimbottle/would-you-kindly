@@ -27,7 +27,7 @@ func TestSeedWykConventions_CreatesWhenAbsent(t *testing.T) {
 		"# Project Instructions for AI Agents",
 		wykConventionsBeginMarker,
 		wykConventionsEndMarker,
-		"no `wyk create`",
+		"`wyk create`",
 		"HUMAN-BLOCK",
 	} {
 		if !strings.Contains(string(body), want) {
@@ -116,7 +116,7 @@ func TestSeedWykConventions_RefreshesStaleBlock(t *testing.T) {
 	if !strings.Contains(s, "# Top matter") || !strings.Contains(s, "## Trailing section kept") {
 		t.Errorf("refresh disturbed content outside the markers:\n%s", s)
 	}
-	if !strings.Contains(s, "no `wyk create`") {
+	if !strings.Contains(s, "`wyk create`") {
 		t.Errorf("refresh did not install the current block:\n%s", s)
 	}
 }

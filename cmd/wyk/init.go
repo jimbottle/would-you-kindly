@@ -615,12 +615,15 @@ const wykConventionsBlock = wykConventionsBeginMarker + `
 ## wyk — planning & handoff over bd
 
 This repo is registered with **wyk**, a view + handoff layer on top of
-**bd (beads)**. wyk does NOT replace bd and there is **no ` + "`wyk create`" + `** —
-wyk surfaces and routes bd issues, it doesn't file them. So "plan it in
-wyk" / "build the plan in wyk" means: **file the plan as ` + "`bd create`" + `
-issues** (wire dependencies with ` + "`bd dep add`" + `); wyk then shows and routes
-them. Do NOT capture the plan as markdown or TodoWrite — ` + "`bd create`" + ` is
-the verb.
+**bd (beads)**. "Plan it in wyk" / "build the plan in wyk" means: **file
+the plan as issues** (wire dependencies with ` + "`bd dep add`" + `); wyk then shows
+and routes them. Do NOT capture the plan as markdown or TodoWrite —
+filing issues is the verb.
+
+**Use ` + "`wyk create`" + ` to file issues** (same flags as ` + "`bd create`" + `, forwarded
+verbatim): it stamps each issue with the Claude session that filed it, so
+the TUI's Session column can trace work back to a conversation. Plain
+` + "`bd create`" + ` still works but won't record the session.
 
 ### Owner column: HUMAN / AGENT / HUMAN-BLOCK
 wyk's owner column shows whose move it is, driven by labels (NOT bd's

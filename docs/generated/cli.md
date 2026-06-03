@@ -23,12 +23,22 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <
 | `-note` | `_(empty)_` | after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook |
 | `-dry-run` | `false` | print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it |
 
+## `wyk create`
+
+File a bd issue (forwarding every flag to `bd create`) and stamp it with the Claude session that created it, so the TUI's Session column can trace work back to a conversation.
+
+```
+wyk create <bd create args...>
+```
+
+_no flags_
+
 ## `wyk init`
 
 Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.
 
 ```
-wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]
+wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-claude-md] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]
 ```
 
 | Flag | Default | Description |
@@ -38,6 +48,7 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skills]
 | `-dry-run` | `false` | print what would happen without writing the hook |
 | `-skip-bd-init` | `false` | do not run `bd init` even if .beads is missing |
 | `-skip-register` | `false` | do not add this repo to ~/.config/wyk/repos.json |
+| `-skip-claude-md` | `false` | do not seed wyk's conventions block into the repo's CLAUDE.md (created if absent, refreshed in place if present) |
 | `-scan` | `_(empty)_` | scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path |
 | `-uninstall` | `false` | remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks |
 | `-fix-foreign-hooks` | `false` | scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone) |

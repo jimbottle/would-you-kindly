@@ -21,6 +21,7 @@ import (
 // canonical `version` is listed.
 var wykSubcommands = []string{
 	"handoff",
+	"create",
 	"init",
 	"inbox",
 	"stats",

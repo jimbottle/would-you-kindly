@@ -73,6 +73,8 @@ func main() {
 		switch os.Args[1] {
 		case "handoff":
 			os.Exit(runHandoff(os.Args[2:]))
+		case "create":
+			os.Exit(runCreate(os.Args[2:]))
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
 		case "hook":
@@ -619,6 +621,7 @@ Usage:
 
 Subcommands:
   handoff      hand a bd issue to a human (preferred over hand-rolling labels)
+  create       file a bd issue, stamping the Claude session that created it
   inbox        list issues a human bounced back to the agent
   init         install the post-commit auto-close hook in this repo
   doctor       diagnose installation / registry / per-repo configuration

@@ -4496,13 +4496,14 @@ const (
 	colStatus  = 8
 	colPrio    = 2
 	colUpdated = 8 // 8 chars so the "Updated↓" sort-arrow decoration fits without overflowing into the Title column. relTime values ("4h ago", "2 weeks", etc.) are all ≤ 7 chars so the extra slack is harmless when no sort is active.
+	colSession = 8 // first 8 chars of the Claude session UUID that filed the issue (via `wyk create`); enough to recognise/disambiguate sessions at a glance. Header "Session" is 7.
 	// colTitleMax caps the title cell so a wide terminal doesn't drag a
 	// single title across the entire row (the complaint that titles "go
-	// off the page and become unreadable"). 72 visual columns is a
-	// comfortable reading measure; beyond it the row stops being
-	// scannable. titleBudget() still shrinks BELOW this to fit a narrow
-	// pane — this is only the ceiling. The detail view shows full text.
-	colTitleMax = 72
+	// off the page and become unreadable"). 50 visual columns keeps the
+	// row scannable; beyond it the eye can't track the line. titleBudget()
+	// still shrinks BELOW this to fit a narrow pane — this is only the
+	// ceiling. The detail view (enter) shows the full text.
+	colTitleMax = 50
 )
 
 // isMultiRepo reports whether the current list has any issue with
@@ -4542,6 +4543,31 @@ func (m Model) displayID(i beads.Issue) string {
 		}
 	}
 	return i.ID
+}
+
+// sessionLabelPrefix is the bd label namespace recording which Claude
+// session filed an issue (`session:<id>`), stamped by `wyk create`. The
+// CLI side (cmd/wyk.sessionLabelPrefix) writes the same prefix — keep
+// the two in sync.
+const sessionLabelPrefix = "session:"
+
+// sessionShort returns the first colSession runes of the session ID
+// recorded on the issue's `session:` label, for the Session column. An
+// issue filed without `wyk create` (no label) renders blank.
+func sessionShort(i beads.Issue) string {
+	for _, l := range i.Labels {
+		if v, ok := strings.CutPrefix(l, sessionLabelPrefix); ok {
+			v = strings.TrimSpace(v)
+			// Plain leading-rune slice (no ellipsis): a session prefix is
+			// an opaque hash, so "abcdef01" reads better than "abcde01…".
+			r := []rune(v)
+			if len(r) > colSession {
+				return string(r[:colSession])
+			}
+			return v
+		}
+	}
+	return ""
 }
 
 // commonIDPrefix returns the longest common prefix of every issue's
@@ -4609,6 +4635,9 @@ func (m Model) renderHeader() string {
 	fmt.Fprintf(&b, "%-*s  ", colPrio, sortDecorate("P", m.sortBy == sortPriority, "↑", m.sortDesc))
 	if m.colVisible(colIDUpdated) {
 		fmt.Fprintf(&b, "%-*s  ", colUpdated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓", m.sortDesc))
+	}
+	if m.colVisible(colIDSession) {
+		fmt.Fprintf(&b, "%-*s  ", colSession, "Session")
 	}
 	b.WriteString("Title")
 	return tableHeaderStyle.Render(b.String())
@@ -4710,6 +4739,10 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	b.WriteString(sep)
 	if m.colVisible(colIDUpdated) {
 		b.WriteString(updatedC.Render(fmt.Sprintf("%-*s", colUpdated, relTime(i.UpdatedAt))))
+		b.WriteString(sep)
+	}
+	if m.colVisible(colIDSession) {
+		b.WriteString(typeC.Render(fmt.Sprintf("%-*s", colSession, sessionShort(i))))
 		b.WriteString(sep)
 	}
 	// Truncate the title to whatever space remains after every
@@ -4882,6 +4915,9 @@ func (m Model) titleBudget() int {
 	used += colPrio + sep // "Pn" is 2 chars
 	if m.colVisible(colIDUpdated) {
 		used += colUpdated + sep
+	}
+	if m.colVisible(colIDSession) {
+		used += colSession + sep
 	}
 	avail := m.width - used
 	if avail < 20 {

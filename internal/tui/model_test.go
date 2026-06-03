@@ -1823,6 +1823,34 @@ func TestTitleTruncation_WideTerminalCapsAtMax(t *testing.T) {
 	}
 }
 
+func TestSessionColumn_RendersShortSessionFromLabel(t *testing.T) {
+	// An issue stamped by `wyk create` carries session:<id>; the column
+	// shows the first colSession runes. An unstamped issue is blank.
+	stamped := beads.Issue{ID: "a-1", Title: "stamped", Status: "open",
+		Labels: []string{"src:agent", "session:abcdef0123456789"}}
+	bare := beads.Issue{ID: "a-2", Title: "bare", Status: "open", Labels: []string{}}
+
+	if got := sessionShort(stamped); got != "abcdef01" {
+		t.Errorf("sessionShort = %q, want first 8 runes %q", got, "abcdef01")
+	}
+	if got := sessionShort(bare); got != "" {
+		t.Errorf("sessionShort on an unstamped issue = %q, want empty", got)
+	}
+
+	src := &stubSource{issues: []beads.Issue{stamped, bare}}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "Session") {
+		t.Errorf("header should include the Session column:\n%s", out)
+	}
+	if !strings.Contains(out, "abcdef01") {
+		t.Errorf("row should show the short session; got:\n%s", out)
+	}
+}
+
 func TestUpdateNudge_RenderedAboveStatusBar(t *testing.T) {
 	// When WithUpdateNudge is set, the model renders the nudge
 	// line above the status bar. Pin both that it appears AND
@@ -5133,7 +5161,8 @@ func TestRenderHeader_DecoratedColumnsStayWithinTheirWidth(t *testing.T) {
 		colType + sep +
 		colStatus + sep +
 		colPrio + sep +
-		colUpdated + sep
+		colUpdated + sep +
+		colSession + sep
 
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {

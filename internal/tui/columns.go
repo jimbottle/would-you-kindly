@@ -11,6 +11,7 @@ const (
 	colIDType    = "type"
 	colIDStatus  = "status"
 	colIDUpdated = "updated"
+	colIDSession = "session"
 )
 
 // toggleableCol describes one column the `o` overlay can hide/show.
@@ -34,6 +35,7 @@ var toggleableColumns = []toggleableCol{
 	{ID: colIDType, Label: "Type"},
 	{ID: colIDStatus, Label: "Status"},
 	{ID: colIDUpdated, Label: "Updated"},
+	{ID: colIDSession, Label: "Session"},
 }
 
 // colVisible reports whether a column should render: not hidden by the
@@ -49,7 +51,7 @@ func (m Model) colVisible(id string) bool {
 // fit a narrow terminal — least valuable first. Owner (the
 // responsibility badge) is last because it's the headline "whose move
 // is it" signal; ID, priority, and title are never dropped.
-var widthDropOrder = []string{colIDBranch, colIDUpdated, colIDType, colIDStatus, colIDRepo, colIDOwner}
+var widthDropOrder = []string{colIDBranch, colIDSession, colIDUpdated, colIDType, colIDStatus, colIDRepo, colIDOwner}
 
 // computeAutoHidden returns the toggleable columns to hide PURELY to
 // keep rows within the terminal width, on top of whatever the user hid
@@ -76,6 +78,7 @@ func (m Model) computeAutoHidden() map[string]bool {
 	colWidth := map[string]int{
 		colIDOwner: colResp, colIDRepo: colRepo, colIDBranch: colBranch,
 		colIDType: colType, colIDStatus: colStatus, colIDUpdated: colUpdated,
+		colIDSession: colSession,
 	}
 	// shown = rendered before any width-driven hiding: not user-hidden,
 	// and repo/branch only count in multi-repo mode.
