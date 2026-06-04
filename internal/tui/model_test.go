@@ -1854,28 +1854,40 @@ func TestTitleTruncation_WideTerminalShowsFullTitle(t *testing.T) {
 	}
 }
 
-func TestTitleTruncation_WideTerminalCapsAtMax(t *testing.T) {
-	// Even on a very wide terminal the title is capped at colTitleMax
-	// so it can't sprawl across the whole row (the "titles go off the
-	// page and become unreadable" complaint). A title longer than the
-	// cap must be ellipsized, not shown in full.
-	long := strings.Repeat("x", colTitleMax+40)
+func TestTitleBudget_WideTerminalFillsAvailableWidth(t *testing.T) {
+	// Title is a flex column: on a wide terminal it consumes all the
+	// width left after the fixed columns, rather than capping at a fixed
+	// ceiling and leaving dead space to the right (user request — fill
+	// the gap). A long title therefore shows far more than the old
+	// 50-col cap would have allowed.
+	const width = 400
 	src := &stubSource{issues: []beads.Issue{
-		{ID: "a-1", Title: long, Status: "open", Labels: []string{}},
+		{ID: "a-1", Title: "short", Status: "open", Labels: []string{}},
 	}}
 	m := New(src)
-	model, _ := m.Update(tea.WindowSizeMsg{Width: 400, Height: 40})
+	model, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 40})
 	m = model.(Model)
 	m = applyFetched(m, src)
-	if got := m.titleBudget(); got != colTitleMax {
-		t.Errorf("titleBudget on a 400-col terminal = %d, want the cap %d", got, colTitleMax)
+	avail := m.titleBudget()
+	// The budget is whatever's left of the terminal after the fixed
+	// columns — comfortably more than the old 50-col cap on a 400-col
+	// pane, and never wider than the terminal itself.
+	if avail <= 50 {
+		t.Errorf("titleBudget on a %d-col terminal = %d, want it to flex well past the old 50-col cap", width, avail)
 	}
-	out := m.View()
-	if strings.Contains(out, long) {
-		t.Errorf("title should be capped at %d cols, not shown in full; got:\n%s", colTitleMax, out)
+	if avail >= width {
+		t.Errorf("titleBudget = %d should be less than terminal width %d (fixed columns consume some)", avail, width)
 	}
-	if !strings.Contains(out, "…") {
-		t.Errorf("a title past the cap should be ellipsized; got:\n%s", out)
+	// A title comfortably past the old 50-col cap but within the flexed
+	// budget renders in full (no ellipsis) — proving the cap is gone.
+	long := strings.Repeat("x", 80)
+	if 80 >= avail {
+		t.Fatalf("test precondition: 80-char title must fit the %d-col budget", avail)
+	}
+	src.issues = []beads.Issue{{ID: "a-1", Title: long, Status: "open", Labels: []string{}}}
+	m = applyFetched(m, src)
+	if out := m.View(); !strings.Contains(out, long) {
+		t.Errorf("an 80-char title (past the old 50-col cap) should render in full; got:\n%s", out)
 	}
 }
 

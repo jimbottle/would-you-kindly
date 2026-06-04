@@ -3692,13 +3692,6 @@ const (
 	colPrio    = 9 // wide enough for the "Priority" header plus its sort-arrow ("Priority↑" = 9), like colUpdated holds "Updated↓". Values ("P0".."P4") are 2 chars and left-align in the slack.
 	colUpdated = 8 // 8 chars so the "Updated↓" sort-arrow decoration fits without overflowing into the Title column. relTime values ("4h ago", "2 weeks", etc.) are all ≤ 7 chars so the extra slack is harmless when no sort is active.
 	colSession = 8 // first 8 chars of the Claude session UUID that filed the issue (via `wyk create`); enough to recognise/disambiguate sessions at a glance. Header "Session" is 7.
-	// colTitleMax caps the title cell so a wide terminal doesn't drag a
-	// single title across the entire row (the complaint that titles "go
-	// off the page and become unreadable"). 50 visual columns keeps the
-	// row scannable; beyond it the eye can't track the line. titleBudget()
-	// still shrinks BELOW this to fit a narrow pane — this is only the
-	// ceiling. The detail view (enter) shows the full text.
-	colTitleMax = 50
 )
 
 // colWidths holds the per-paint display width of each fixed column,
@@ -4228,14 +4221,12 @@ func (m Model) titleBudget() int {
 	if avail < 20 {
 		avail = 20 // floor so we don't render an empty title cell
 	}
-	// Cap the title at a readable maximum so a wide terminal doesn't
-	// stretch one title across the whole row — past ~colTitleMax the eye
-	// can't track the line and the freed width is better spent on the
-	// other columns (or just left as quiet margin). The detail view
-	// (enter) always shows the untruncated text, so nothing is lost.
-	if avail > colTitleMax {
-		avail = colTitleMax
-	}
+	// Title is a true flex column: it consumes all remaining width so a
+	// wide terminal shows as much of the title as fits instead of
+	// leaving dead space to the right (user request — fill the gap). An
+	// earlier build capped this at 50 cols to stop titles sprawling
+	// across the row, but the empty-margin cost outweighed the sprawl
+	// concern; the detail view (enter) still shows the untruncated text.
 	return avail
 }
 
