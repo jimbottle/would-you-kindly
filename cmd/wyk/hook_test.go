@@ -23,6 +23,11 @@ func TestBDCreateGuard(t *testing.T) {
 		{"bd list allowed", `{"tool_name":"Bash","tool_input":{"command":"bd list --json"}}`, 0},
 		{"bd create as arg allowed", `{"tool_name":"Bash","tool_input":{"command":"echo bd create"}}`, 0},
 		{"bd createX not matched", `{"tool_name":"Bash","tool_input":{"command":"bd createfoo"}}`, 0},
+		{"double-quoted bd create allowed", `{"tool_name":"Bash","tool_input":{"command":"echo \"bd create\""}}`, 0},
+		{"single-quoted bd create allowed", `{"tool_name":"Bash","tool_input":{"command":"echo 'bd create'"}}`, 0},
+		{"bd create in single-line commit message allowed", `{"tool_name":"Bash","tool_input":{"command":"git commit -m \"docs: prefer wyk create over bd create\""}}`, 0},
+		{"bd create at start of wrapped commit body line allowed", `{"tool_name":"Bash","tool_input":{"command":"git commit -m \"chore: integrate wyk\n\n- routes raw\n  bd create through wyk\""}}`, 0},
+		{"real bd create with quoted title mentioning bd create blocks", `{"tool_name":"Bash","tool_input":{"command":"bd create --title \"mentions bd create inside\""}}`, 2},
 		{"non-Bash tool allowed", `{"tool_name":"Edit","tool_input":{"command":"bd create x"}}`, 0},
 		{"malformed payload allowed", `not json`, 0},
 	}
