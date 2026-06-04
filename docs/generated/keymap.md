@@ -49,7 +49,7 @@ internal/tui/keymap.go (`DocsKeymap`).
 | `-` | ↓prio |
 | `T` | cycle type |
 | `v` | mark |
-| `u` | undo close (or ctrl+z) |
+| `u/^z` | undo close |
 | `.` | repeat last |
 
 ## Clipboard / command
