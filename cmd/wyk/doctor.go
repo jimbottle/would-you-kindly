@@ -494,14 +494,15 @@ func classifyBDVersion(versionOutput string) (checkStatus, string) {
 		return statusWarn, "couldn't parse a version from: " + strings.TrimSpace(versionOutput)
 	}
 	ver := "v" + raw
-	min := strings.TrimPrefix(minBDVersion, "v")
+	minStr := strings.TrimPrefix(minBDVersion, "v")
+	majorStr := strings.TrimPrefix(testedBDMajor, "v")
 	switch {
 	case semver.Compare(ver, minBDVersion) < 0:
-		return statusFail, fmt.Sprintf("bd %s is older than the minimum wyk supports (%s) — upgrade bd: https://github.com/gastownhall/beads", raw, min)
+		return statusFail, fmt.Sprintf("bd %s is older than the minimum wyk supports (%s) — upgrade bd: https://github.com/gastownhall/beads", raw, minStr)
 	case semver.Compare(semver.Major(ver), testedBDMajor) > 0:
-		return statusWarn, fmt.Sprintf("bd %s is newer than the latest tested major (%s.x) — wyk may still work, but the bd JSON/flags it parses are unverified at this version", raw, strings.TrimPrefix(testedBDMajor, "v"))
+		return statusWarn, fmt.Sprintf("bd %s is newer than the latest tested major (%s.x) — wyk may still work, but the bd JSON/flags it parses are unverified at this version", raw, majorStr)
 	default:
-		return statusPass, fmt.Sprintf("bd %s is within the supported range (%s – %s.x)", raw, min, strings.TrimPrefix(testedBDMajor, "v"))
+		return statusPass, fmt.Sprintf("bd %s is within the supported range (%s – %s.x)", raw, minStr, majorStr)
 	}
 }
 
