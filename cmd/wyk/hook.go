@@ -98,13 +98,30 @@ var bdCreateRE = regexp.MustCompile("(?:^|[\\n;&|(`])\\s*bd\\s+create(?:\\s|$|[;
 // double quotes; single quotes are literal (POSIX). An unterminated
 // quote redacts to end-of-input — fail open, never block on malformed
 // input, consistent with the rest of the guard.
+//
+// Known fail-open gap: command substitution ($(…) or a backtick span)
+// nested INSIDE double quotes still executes in the shell, but it
+// collapses to the sentinel with the rest of the span — so
+// `echo "$(bd create)"` is intentionally NOT caught. (The same form at
+// top level, e.g. `id=$(bd create)`, IS caught, since the `(`/backtick
+// then anchors bdCreateRE directly.) Scanning into double-quoted
+// substitutions would mean parsing nested shell, which is disproportionate
+// for a fail-open nudge that no agent's own `bd create` would ever take
+// this shape; see the "command substitution inside double quotes" cases in
+// TestBDCreateGuard that pin this as deliberate.
 func redactQuotes(s string) string {
 	var b strings.Builder
 	r := []rune(s)
 	for i := 0; i < len(r); i++ {
 		switch r[i] {
-		case '\\': // top-level escape: keep both runes so the escaped
-			b.WriteRune(r[i]) // char can't open a quote or act as a separator
+		case '\\':
+			// Top-level escape: keep both runes so an escaped quote (\" or
+			// \') can't open a quoted span. The escaped char itself is
+			// written literally — harmless, because the regex only treats
+			// UNescaped separators as command positions. (An escaped
+			// separator like \; therefore stays a literal that bdCreateRE
+			// may still match: a benign false-positive block, never a bypass.)
+			b.WriteRune(r[i])
 			if i+1 < len(r) {
 				i++
 				b.WriteRune(r[i])
