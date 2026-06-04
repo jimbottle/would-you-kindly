@@ -217,7 +217,7 @@ func defaultKeyMap() keyMap {
 		YankAll:         key.NewBinding(key.WithKeys("*"), key.WithHelp("*", "yank all visible IDs")),
 		YankMarkdown:    key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "yank as markdown task")),
 		YankAllMarkdown: key.NewBinding(key.WithKeys("_"), key.WithHelp("_", "yank all as markdown")),
-		Undo:            key.NewBinding(key.WithKeys("u", "ctrl+z"), key.WithHelp("u", "undo close (or ctrl+z)")),
+		Undo:            key.NewBinding(key.WithKeys("u", "ctrl+z"), key.WithHelp("u/^z", "undo close")),
 		Defer:           key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
 		Mark:            key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
 		SortReverse:     key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse sort")),
@@ -241,7 +241,7 @@ func defaultKeyMap() keyMap {
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
 		k.Down, k.Open, k.Filter, k.Human, k.Cycle, k.Refresh,
-		k.Close, k.ToggleHuman, k.AddNote, k.Help, k.Quit,
+		k.Close, k.ToggleHuman, k.AddNote, k.Undo, k.Help, k.Quit,
 	}
 }
 
