@@ -1806,6 +1806,14 @@ func (m Model) handleBulkWriteResult(msg bulkWriteMsg) (tea.Model, tea.Cmd) {
 			m.patchDepCacheStatus(t.ID, st)
 		}
 	}
+	// Optimistically drop the just-closed rows so a multi-select close
+	// updates the list immediately, mirroring the single-target path.
+	// (Only close is handled; optimisticListUpdate no-ops other actions.)
+	if msg.action == "close" {
+		for _, t := range msg.succeeded {
+			m.optimisticListUpdate("close", t)
+		}
+	}
 	return m, tea.Batch(m.fetchCmd(), flashClearCmd(m.statusGen))
 }
 
@@ -1964,6 +1972,64 @@ var bulkVerbs = map[string]string{
 	"label":    "labeled",
 }
 
+// rowIndexByKey returns the index of the issue in m.all matching key
+// (issueKey — repo-qualified so cross-repo ID collisions don't alias),
+// or -1 if absent.
+func (m *Model) rowIndexByKey(key string) int {
+	for i := range m.all {
+		if issueKey(m.all[i]) == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// optimisticListUpdate applies a just-succeeded close/reopen to m.all
+// immediately so the list reflects it without waiting for the
+// post-write refetch (which on a multi-repo workspace can take several
+// seconds). The refetch still runs and remains the source of truth —
+// this only closes the latency gap (would-you-kindly-6dis).
+//
+// issue is the snapshot the write carried. For reopen it is m.lastClosed,
+// captured BEFORE the close, so it holds the row's real pre-close status
+// (which bd reopen doesn't guarantee is "open" — it can land in
+// in_progress); restoring it needs no guess. Only close/reopen are
+// handled: the two flips whose effect on an open/ready view's membership
+// is unambiguous. Anything the refetch disagrees with self-corrects.
+func (m *Model) optimisticListUpdate(action string, issue beads.Issue) {
+	if issue.ID == "" {
+		return
+	}
+	idx := m.rowIndexByKey(issueKey(issue))
+	switch action {
+	case "close":
+		switch {
+		case idx < 0:
+			return // not in the current view — nothing to do locally
+		case m.showClosed:
+			// Closed rows stay on screen when closed are shown; flip the
+			// status so the closed styling (strikethrough) appears now.
+			m.all[idx].Status = "closed"
+		default:
+			m.all = append(m.all[:idx], m.all[idx+1:]...)
+		}
+	case "reopen":
+		if idx >= 0 {
+			// Still in view (reopened from a closed/showClosed view):
+			// restore the pre-close status from the snapshot.
+			m.all[idx].Status = issue.Status
+		} else {
+			// Dropped from view when it was closed (the common undo
+			// case) — re-add the snapshot so it reappears at once. It
+			// already carries the correct pre-close status.
+			m.all = append(m.all, issue)
+		}
+	default:
+		return
+	}
+	m.recomputeVisible()
+}
+
 // handleWriteResult sets the status banner and triggers a refetch so
 // the list reflects the new state. On error, the banner shows the
 // failure message; the existing data stays so the user can retry.
@@ -2034,6 +2100,9 @@ func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 	if st, ok := statusForAction(msg.action); ok && msg.id != "" {
 		m.patchDepCacheStatus(msg.id, st)
 	}
+	// Reflect close/reopen in the list right away so the row updates
+	// near-instantly instead of after the multi-second refetch.
+	m.optimisticListUpdate(msg.action, msg.issue)
 	// Refetch so the list reflects the write. Loading flag isn't set
 	// here because the existing data is still valid until the new
 	// fetch arrives — flashing "loading…" would just be noise.
