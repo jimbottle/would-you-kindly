@@ -28,6 +28,13 @@ func TestBDCreateGuard(t *testing.T) {
 		{"bd create in single-line commit message allowed", `{"tool_name":"Bash","tool_input":{"command":"git commit -m \"docs: prefer wyk create over bd create\""}}`, 0},
 		{"bd create at start of wrapped commit body line allowed", `{"tool_name":"Bash","tool_input":{"command":"git commit -m \"chore: integrate wyk\n\n- routes raw\n  bd create through wyk\""}}`, 0},
 		{"real bd create with quoted title mentioning bd create blocks", `{"tool_name":"Bash","tool_input":{"command":"bd create --title \"mentions bd create inside\""}}`, 2},
+		// Command substitution nested INSIDE double quotes is an intentional
+		// fail-open gap: the shell would execute it, but redactQuotes
+		// collapses the whole double-quoted span, so the guard does NOT fire.
+		// (The same forms at top level — see the $(...)/backtick cases above —
+		// DO block.) Pinned so the trade-off is deliberate, not accidental.
+		{"$() bd create inside double quotes intentionally allowed", `{"tool_name":"Bash","tool_input":{"command":"echo \"$(bd create -t y)\""}}`, 0},
+		{"backtick bd create inside double quotes intentionally allowed", "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo \\\"`bd create -t y`\\\"\"}}", 0},
 		{"non-Bash tool allowed", `{"tool_name":"Edit","tool_input":{"command":"bd create x"}}`, 0},
 		{"malformed payload allowed", `not json`, 0},
 	}
