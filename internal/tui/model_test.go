@@ -3717,6 +3717,43 @@ func TestUndo_ReopensLastClosed(t *testing.T) {
 	}
 }
 
+func TestUndo_CtrlZReopensLastClosed(t *testing.T) {
+	// ctrl+z is the standard-undo alias on the same binding as `u`.
+	// It must reopen the most-recently-closed issue exactly like `u`.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+
+	// Close issue 0 (a → confirm y) and settle the write so lastClosed populates.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatalf("y should dispatch a close write")
+	}
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+	closedID := m.lastClosed.ID
+	if closedID == "" {
+		t.Fatalf("lastClosed should be populated after a successful close; status=%q", m.status)
+	}
+
+	// Press ctrl+z → dispatch reopen; drive the cmd; assert it landed.
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlZ})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+z should dispatch a reopen write")
+	}
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+	if len(s.reopened) != 1 || s.reopened[0] != closedID {
+		t.Errorf("Reopen(%q) not dispatched by ctrl+z; got %v", closedID, s.reopened)
+	}
+	if m.lastClosed.ID != "" {
+		t.Errorf("lastClosed should be cleared after reopen; got %q", m.lastClosed.ID)
+	}
+}
+
 func TestUndo_NoLastClosedShowsStatus(t *testing.T) {
 	restoreFlash := withFlashClearDelay(t, time.Millisecond)
 	defer restoreFlash()
