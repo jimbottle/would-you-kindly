@@ -3771,6 +3771,82 @@ func TestUndo_NoLastClosedShowsStatus(t *testing.T) {
 	}
 }
 
+func TestClose_OptimisticallyRemovesRowBeforeRefetch(t *testing.T) {
+	// Closing a row must drop it from the visible list IMMEDIATELY —
+	// without any fetchedMsg being delivered — so the UI doesn't wait
+	// on the multi-second post-write refetch (would-you-kindly-6dis).
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	before := len(m.visible)
+	if before == 0 {
+		t.Fatal("precondition: need at least one visible row")
+	}
+	target := m.visible[0]
+
+	// Close (a → y) and settle the write msg; deliberately drop the
+	// returned fetch cmd so no refetch runs.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("y should dispatch a close write")
+	}
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+
+	if len(m.visible) != before-1 {
+		t.Fatalf("visible should shrink by 1 immediately after close; got %d, want %d", len(m.visible), before-1)
+	}
+	for _, i := range m.visible {
+		if issueKey(i) == issueKey(target) {
+			t.Errorf("closed row %s still visible before any refetch", target.ID)
+		}
+	}
+}
+
+func TestUndo_OptimisticallyRestoresRowBeforeRefetch(t *testing.T) {
+	// ctrl+z must restore the just-closed row to the visible list
+	// immediately, again without a refetch.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	before := len(m.visible)
+	target := m.visible[0]
+
+	// Close and settle.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+	if len(m.visible) != before-1 {
+		t.Fatalf("precondition: close should have removed the row; got %d", len(m.visible))
+	}
+
+	// Undo (ctrl+z) and settle — row back without a refetch.
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlZ})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+z should dispatch a reopen write")
+	}
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+
+	if len(m.visible) != before {
+		t.Fatalf("undo should restore the row immediately; got %d, want %d", len(m.visible), before)
+	}
+	found := false
+	for _, i := range m.visible {
+		if issueKey(i) == issueKey(target) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("reopened row %s not restored to the visible list", target.ID)
+	}
+}
+
 func TestYankRich_CopiesIDDashTitle(t *testing.T) {
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "a-1", Title: "rotate password"},
