@@ -104,8 +104,10 @@ type keyMap struct {
 	// Undo reopens the most-recently-closed issue from this
 	// session. One-deep only — vim-style single-step undo, not a
 	// stack. Cleared once the reopen lands so a second press is a
-	// no-op rather than reopening some older row.
-	Undo key.Binding // u — undo last close
+	// no-op rather than reopening some older row. Bound to both `u`
+	// (vim) and `ctrl+z` (the standard undo shortcut); ctrl+z is safe
+	// because bubbletea in raw mode delivers it as a key, not SIGTSTP.
+	Undo key.Binding // u / ctrl+z — undo last close
 
 	// Defer hides the cursor issue from bd ready until a date.
 	// Opens a textinput prompt for the offset (+1d, +1w, tomorrow,
@@ -215,7 +217,7 @@ func defaultKeyMap() keyMap {
 		YankAll:         key.NewBinding(key.WithKeys("*"), key.WithHelp("*", "yank all visible IDs")),
 		YankMarkdown:    key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "yank as markdown task")),
 		YankAllMarkdown: key.NewBinding(key.WithKeys("_"), key.WithHelp("_", "yank all as markdown")),
-		Undo:            key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo close")),
+		Undo:            key.NewBinding(key.WithKeys("u", "ctrl+z"), key.WithHelp("u", "undo close (or ctrl+z)")),
 		Defer:           key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
 		Mark:            key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
 		SortReverse:     key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse sort")),
