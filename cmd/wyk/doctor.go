@@ -10,8 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filters"
@@ -304,6 +307,7 @@ var installHookIn = func(dir string, extraArgs ...string) int {
 func collectDoctorChecks() []check {
 	var checks []check
 	checks = append(checks, checkBDOnPath())
+	checks = append(checks, checkBDVersion())
 	checks = append(checks, checkWykOnPath())
 	checks = append(checks, checkEditor())
 	checks = append(checks, checkActor())
@@ -436,6 +440,68 @@ func checkBDOnPath() check {
 		name:   "bd binary on PATH",
 		status: statusPass,
 		detail: path + " — " + version,
+	}
+}
+
+// bd version compatibility bounds. wyk shells out to `bd` for every
+// read and write (internal/beads), so its JSON shapes, query syntax,
+// and flags (e.g. --dolt-auto-commit) are an unversioned contract
+// between the two binaries. A bd that's too old can lack flags wyk
+// passes; a much newer major could change the JSON wyk parses. These
+// bounds turn that skew into an explicit doctor signal instead of a
+// silent empty list or opaque parse error downstream.
+const (
+	// minBDVersion is the oldest bd wyk is known to work against;
+	// below it doctor FAILs. Bump together with any wyk change that
+	// depends on a newer bd flag/shape.
+	minBDVersion = "v1.0.0"
+	// testedBDMajor is the highest bd major wyk has been tested
+	// against; a newer major WARNs (likely fine, but unverified).
+	testedBDMajor = "v1"
+)
+
+// bdVersionRE pulls the first X.Y.Z token out of `bd --version` output
+// ("bd version 1.0.4 (sha…)").
+var bdVersionRE = regexp.MustCompile(`\d+\.\d+\.\d+`)
+
+// checkBDVersion verifies the bd on PATH is a version wyk knows how to
+// talk to. FAIL only below the known-good minimum (genuinely
+// incompatible); WARN for an unparseable version or a newer-than-tested
+// major (probably works, but the bd JSON/flags wyk parses are
+// unverified there); PASS in range. Kept distinct from checkBDOnPath so
+// "bd present" and "bd compatible" read as separate signals.
+func checkBDVersion() check {
+	const name = "bd version compatible"
+	if _, err := exec.LookPath("bd"); err != nil {
+		// checkBDOnPath already FAILs with install instructions; don't
+		// double up a hard failure — just note why we can't check.
+		return check{name: name, status: statusWarn, detail: "bd not on PATH — can't check version (see the bd-on-PATH check above)"}
+	}
+	out, err := exec.Command("bd", "--version").Output()
+	if err != nil {
+		return check{name: name, status: statusWarn, detail: "couldn't run `bd --version`: " + err.Error()}
+	}
+	st, detail := classifyBDVersion(string(out))
+	return check{name: name, status: st, detail: detail}
+}
+
+// classifyBDVersion is the pure decision half of checkBDVersion: it
+// turns raw `bd --version` output into a (status, detail) verdict so
+// the version-comparison logic is unit-testable without a real bd.
+func classifyBDVersion(versionOutput string) (checkStatus, string) {
+	raw := bdVersionRE.FindString(versionOutput)
+	if raw == "" {
+		return statusWarn, "couldn't parse a version from: " + strings.TrimSpace(versionOutput)
+	}
+	ver := "v" + raw
+	min := strings.TrimPrefix(minBDVersion, "v")
+	switch {
+	case semver.Compare(ver, minBDVersion) < 0:
+		return statusFail, fmt.Sprintf("bd %s is older than the minimum wyk supports (%s) — upgrade bd: https://github.com/gastownhall/beads", raw, min)
+	case semver.Compare(semver.Major(ver), testedBDMajor) > 0:
+		return statusWarn, fmt.Sprintf("bd %s is newer than the latest tested major (%s.x) — wyk may still work, but the bd JSON/flags it parses are unverified at this version", raw, strings.TrimPrefix(testedBDMajor, "v"))
+	default:
+		return statusPass, fmt.Sprintf("bd %s is within the supported range (%s – %s.x)", raw, min, strings.TrimPrefix(testedBDMajor, "v"))
 	}
 }
 
