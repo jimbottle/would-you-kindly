@@ -3847,6 +3847,87 @@ func TestUndo_OptimisticallyRestoresRowBeforeRefetch(t *testing.T) {
 	}
 }
 
+func TestClose_ShowClosedFlipsStatusInPlaceThenUndoRestores(t *testing.T) {
+	// Under showClosed, a closed row STAYS visible — the optimistic
+	// update flips its Status to "closed" in place rather than dropping
+	// it, and undo restores the original pre-close status in place.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	m.showClosed = true // closed rows remain on screen in this mode
+	before := len(m.visible)
+	target := m.visible[0]
+	origStatus := target.Status
+
+	find := func(m Model) (int, bool) {
+		for i := range m.visible {
+			if issueKey(m.visible[i]) == issueKey(target) {
+				return i, true
+			}
+		}
+		return -1, false
+	}
+
+	// Close (a → y) and settle the write; no refetch delivered.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+
+	if len(m.visible) != before {
+		t.Fatalf("showClosed: row should stay visible after close; got %d want %d", len(m.visible), before)
+	}
+	idx, ok := find(m)
+	if !ok {
+		t.Fatalf("closed row %s should remain visible under showClosed", target.ID)
+	}
+	if m.visible[idx].Status != "closed" {
+		t.Errorf("status should flip to closed in place; got %q", m.visible[idx].Status)
+	}
+
+	// Undo (ctrl+z) and settle — original status restored in place.
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlZ})
+	m = model.(Model)
+	model, _ = m.Update(cmd())
+	m = model.(Model)
+	idx, ok = find(m)
+	if !ok {
+		t.Fatalf("row %s should still be visible after undo under showClosed", target.ID)
+	}
+	if m.visible[idx].Status != origStatus {
+		t.Errorf("undo should restore original status in place; got %q want %q", m.visible[idx].Status, origStatus)
+	}
+}
+
+func TestBulkClose_OptimisticallyDropsRowsBeforeRefetch(t *testing.T) {
+	// A multi-select close drops every succeeded row from the visible
+	// list immediately, mirroring the single-target path.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	before := len(m.visible)
+	if before < 2 {
+		t.Fatalf("need >=2 visible rows; got %d", before)
+	}
+	r0, r1 := m.visible[0], m.visible[1]
+
+	model, _ := m.handleBulkWriteResult(bulkWriteMsg{
+		action:    "close",
+		total:     2,
+		succeeded: []beads.Issue{r0, r1},
+	})
+	m = model.(Model)
+
+	if len(m.visible) != before-2 {
+		t.Fatalf("bulk close should drop 2 rows immediately; got %d want %d", len(m.visible), before-2)
+	}
+	for _, i := range m.visible {
+		if issueKey(i) == issueKey(r0) || issueKey(i) == issueKey(r1) {
+			t.Errorf("bulk-closed row %s still visible before any refetch", i.ID)
+		}
+	}
+}
+
 func TestYankRich_CopiesIDDashTitle(t *testing.T) {
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "a-1", Title: "rotate password"},
