@@ -85,6 +85,48 @@ func runHook(args []string) int {
 // not a quoted arg to `create`) are not.
 var bdCreateRE = regexp.MustCompile("(?:^|[\\n;&|(`])\\s*bd\\s+create(?:\\s|$|[;&|)`<>])")
 
+// redactQuotes replaces every single- or double-quoted span in a shell
+// command (the surrounding quote characters included) with a single NUL
+// sentinel, so bdCreateRE never reads quoted TEXT as a command-position
+// invocation. The motivating false positive: a multi-line
+// `git commit -m "…\nbd create…\n…"` message, where a newline inside the
+// quoted body looked like a shell separator. NUL is neither whitespace
+// nor a separator nor a token boundary, so `bd create"x"` (shell token
+// concatenation `createx`, a different subcommand) collapses to
+// `bd create\x00` and stays allowed — matching the pre-existing
+// behaviour. Backslash escapes are honoured at top level and inside
+// double quotes; single quotes are literal (POSIX). An unterminated
+// quote redacts to end-of-input — fail open, never block on malformed
+// input, consistent with the rest of the guard.
+func redactQuotes(s string) string {
+	var b strings.Builder
+	r := []rune(s)
+	for i := 0; i < len(r); i++ {
+		switch r[i] {
+		case '\\': // top-level escape: keep both runes so the escaped
+			b.WriteRune(r[i]) // char can't open a quote or act as a separator
+			if i+1 < len(r) {
+				i++
+				b.WriteRune(r[i])
+			}
+		case '\'': // single-quoted: literal until the next single quote
+			b.WriteRune('\x00')
+			for i++; i < len(r) && r[i] != '\''; i++ {
+			}
+		case '"': // double-quoted: backslash escapes the next rune
+			b.WriteRune('\x00')
+			for i++; i < len(r) && r[i] != '"'; i++ {
+				if r[i] == '\\' && i+1 < len(r) {
+					i++
+				}
+			}
+		default:
+			b.WriteRune(r[i])
+		}
+	}
+	return b.String()
+}
+
 // runHookBDCreateGuard is the Claude Code PreToolUse hook `wyk init`
 // installs. It reads the tool-call JSON from stdin and, when an agent is
 // about to run `bd create` in a Bash tool call, blocks it (exit 2) with a
@@ -111,7 +153,7 @@ func runHookBDCreateGuard(stdin io.Reader) int {
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
 		return 0
 	}
-	if in.ToolName != "Bash" || !bdCreateRE.MatchString(in.ToolInput.Command) {
+	if in.ToolName != "Bash" || !bdCreateRE.MatchString(redactQuotes(in.ToolInput.Command)) {
 		return 0
 	}
 	fmt.Fprintln(os.Stderr,
