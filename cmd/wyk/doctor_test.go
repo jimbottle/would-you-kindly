@@ -12,6 +12,33 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
 
+func TestClassifyBDVersion(t *testing.T) {
+	cases := []struct {
+		name         string
+		out          string
+		wantStatus   checkStatus
+		wantInDetail string
+	}{
+		{"current passes", "bd version 1.0.4 (ce242a879: main@ce242a879678)", statusPass, "within the supported range"},
+		{"exact minimum passes", "bd version 1.0.0", statusPass, "supported range"},
+		{"too old fails", "bd version 0.9.9 (abc)", statusFail, "older than the minimum"},
+		{"newer major warns", "bd version 2.0.0 (xyz)", statusWarn, "newer than the latest tested major"},
+		{"unparseable warns", "bd: command not found", statusWarn, "couldn't parse a version"},
+		{"empty warns", "", statusWarn, "couldn't parse a version"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, detail := classifyBDVersion(tc.out)
+			if st != tc.wantStatus {
+				t.Errorf("status = %v, want %v (detail: %q)", st, tc.wantStatus, detail)
+			}
+			if !strings.Contains(detail, tc.wantInDetail) {
+				t.Errorf("detail %q does not contain %q", detail, tc.wantInDetail)
+			}
+		})
+	}
+}
+
 func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {
 	// Three registered repos in a tempdir-rooted registry: one with
 	// no hook (the fix target), one with wyk's hook (skip), one
