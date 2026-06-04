@@ -541,10 +541,28 @@ func handoffErrExit(err error, prefix string) int {
 }
 
 // runProbe fetches the human preset and prints a one-line summary
-// per issue. Returns the process exit code: 0 on success (any count),
-// 2 if bd is missing or there's no workspace, 1 on other errors.
+// per issue. Returns the process exit code: 0 on success (any count,
+// including a partial multi-repo result), 2 if bd is missing or there's
+// no workspace, 1 on other errors.
+//
+// In multi-repo mode it prefers MultiSource.FetchWithSubErrors over the
+// plain Source.Fetch (which discards per-sub errors) so a repo that's
+// down is named on stderr instead of silently dropping out — otherwise
+// a short or empty list reads as "no work" when the real cause is "a
+// repo failed." This matches the partial-failure handling in `wyk
+// inbox` and `wyk stats`.
 func runProbe(src tui.Source) int {
-	issues, err := src.Fetch(context.Background(), filter.PresetHuman)
+	ctx := context.Background()
+	var (
+		issues    []beads.Issue
+		fetchErrs []tui.FetchError
+		err       error
+	)
+	if ms, ok := src.(tui.MultiSource); ok {
+		issues, fetchErrs, err = ms.FetchWithSubErrors(ctx, filter.PresetHuman)
+	} else {
+		issues, err = src.Fetch(ctx, filter.PresetHuman)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, beads.ErrBDNotFound):
@@ -561,6 +579,20 @@ func runProbe(src tui.Source) int {
 	fmt.Printf("%d issue(s) flagged for human:\n", len(issues))
 	for _, i := range issues {
 		fmt.Printf("  %-24s P%d  %s\n", i.ID, i.Priority, i.Title)
+	}
+	// Partial multi-repo failure: at least one repo responded (we're
+	// past the total-failure err path above), but others didn't. Name
+	// them on stderr so the count above isn't mistaken for the whole
+	// registry. stdout stays clean for scripts that pipe the list.
+	if len(fetchErrs) > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d repo(s) failed (list may be incomplete):\n", len(fetchErrs))
+		for _, fe := range fetchErrs {
+			repo := fe.Repo
+			if repo == "" {
+				repo = "(unknown)"
+			}
+			fmt.Fprintf(os.Stderr, "  %s: %v\n", repo, fe.Err)
+		}
 	}
 	return 0
 }

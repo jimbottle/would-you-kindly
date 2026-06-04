@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`wyk doctor` bd version-compatibility check** — a new check
+  alongside "bd binary on PATH" that parses `bd --version` and verifies
+  it's within the range wyk is known to work against. FAILs only on a bd
+  older than the supported minimum (genuinely incompatible), WARNs on an
+  unparseable version or a newer-than-tested major, and PASSes in range.
+  Since wyk shells out to bd for every read and write, this turns a
+  silent version skew into an explicit, actionable signal.
+
 - **`bd-create-guard` PreToolUse hook** — `wyk init` now registers a
   Claude Code hook in `.claude/settings.json` that blocks an agent's raw
   `bd create` and tells it to use `wyk create` instead (same flags, plus
@@ -60,6 +68,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (version-agnostic marker), opt out with `-skip-claude-md`.
 
 ### Changed
+
+- **`go.mod` go directive relaxed from `go 1.26.3` to `go 1.26`** — the
+  patch-level pin forced a toolchain download (or an outright build
+  failure under `GOTOOLCHAIN=local`) for anyone on go 1.26.0–1.26.2,
+  which is stricter than intended and contradicted the README/CONTRIBUTING
+  "Go 1.26+". Nothing in the tree requires a 1.26.3-specific fix, so the
+  directive now states the true minimum.
 
 - **The status-bar footer wraps into a column-aligned key grid** — the
   status info sits on its own line and the key bindings flow into a
@@ -106,6 +121,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-run-init nudge. Surfaces repos init'd before the seed existed.
 
 ### Fixed
+
+- **`wyk --probe` surfaces partial multi-repo failures on stderr** — in
+  multi-repo mode probe now uses `MultiSource.FetchWithSubErrors` (rather
+  than the plain `Fetch`, which discarded per-sub errors), so a repo
+  that's down is named on stderr instead of silently dropping out. A
+  short or empty human-flagged list is no longer mistaken for "no work"
+  when the real cause is "a repo failed." The issue list still goes to
+  stdout unchanged; the warning is stderr-only, matching the partial-
+  failure handling already in `wyk inbox` and `wyk stats`.
 
 - **The `/` filter now matches repo / branch / ID, and no longer floods
   on common words** — it previously searched only the title (fuzzy) and

@@ -130,7 +130,11 @@ wyk --probe
 ```
 
 Exits 0 on success, 2 if bd is missing or there's no workspace, 1 on
-other errors.
+other errors. In multi-repo mode, a repo that fails to respond (while
+others succeed) is named on **stderr** (`N repo(s) failed …`) so a
+short or empty list isn't mistaken for "no work" when a repo is down;
+stdout stays clean for piping. Same partial-failure honesty as `wyk
+inbox` / `wyk stats`.
 
 ### Handing a task to a human (agent side)
 
