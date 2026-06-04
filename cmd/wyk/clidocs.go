@@ -34,7 +34,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "handoff",
 		Summary: "Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file.",
-		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-file <path>] [-dry-run]",
+		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "run as if bd had been started in this directory"},
 			{Name: "-file", Default: "", Description: "read the runbook from this file (default: stdin)"},
@@ -43,6 +43,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-priority", Default: "1", Description: "priority for the newly-created issue (only used with -create; 0-4 or P0-P4)"},
 			{Name: "-type", Default: "task", Description: "issue type for the newly-created issue (only used with -create)"},
 			{Name: "-note", Default: "", Description: "after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook"},
+			{Name: "-identity", Default: "", Description: "route this handoff to a named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY"},
 			{Name: "-dry-run", Default: "false", Description: "print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it"},
 		},
 	},
@@ -72,7 +73,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "inbox",
 		Summary: "Agent inbox: issues filed with `src:agent` that a human has bounced back.",
-		Usage:   "wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N]",
+		Usage:   "wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
 			{Name: "-json", Default: "false", Description: "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated)"},
@@ -81,6 +82,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-priority", Default: "-1", Description: "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)"},
 			{Name: "-repo", Default: "", Description: "restrict the inbox to the registered repo with this name (mutually exclusive with -C)"},
 			{Name: "-limit", Default: "-1", Description: "cap the inbox at N rows (after priority/repo filtering; -1 disables)"},
+			{Name: "-identity", Default: "", Description: "scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset"},
 		},
 	},
 	{

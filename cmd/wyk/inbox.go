@@ -23,6 +23,23 @@ import (
 // docs/CONTRACT.md.
 const inboxQuery = `label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed`
 
+// inboxQueryFor builds the agent-inbox query for an optional identity.
+// With no identity it returns the collective umbrella query above
+// (pre-v3 behavior, unchanged). With an identity it scopes strictly to
+// that identity's routing label — phase-1 strict scoping
+// (wyk-contract/v3); the phase-2 client-side unclaimed sweep
+// (would-you-kindly-r4h7) layers on top later. The `NOT label=human`
+// and `NOT label=agent-handoff` / `status!=closed` clauses are
+// preserved verbatim so an identity inbox excludes the same rows the
+// collective one does.
+func inboxQueryFor(identity string) string {
+	if identity == "" {
+		return inboxQuery
+	}
+	return `label=` + identityLabel(identity) +
+		` AND NOT label=human AND NOT label=agent-handoff AND status!=closed`
+}
+
 // runInbox implements `wyk inbox`: the agent-side view of the
 // handoff loop. Prints issues across every registered workspace
 // that have been bounced back by a human. Defaults to a tabular
@@ -52,6 +69,7 @@ func runInbox(args []string) int {
 	maxPriority := fs.Int("priority", -1, "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)")
 	repoName := fs.String("repo", "", "restrict the inbox to the registered repo with this name (mutually exclusive with -C)")
 	limit := fs.Int("limit", -1, "cap the inbox at N rows (after priority/repo filtering; -1 disables)")
+	identity := fs.String("identity", "", "scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -60,11 +78,20 @@ func runInbox(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N]")
+		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N] [-identity name]")
 		return 64
 	}
 	if *dir != "" && *repoName != "" {
 		fmt.Fprintln(os.Stderr, "wyk inbox: -C and -repo are mutually exclusive")
+		return 64
+	}
+
+	// Resolve the agent identity (flag > $WYK_AGENT_IDENTITY > collective).
+	// A set-but-malformed identity is a usage error rather than a silent
+	// fall back to the collective inbox.
+	ident, err := resolveIdentity(*identity)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk inbox:", err)
 		return 64
 	}
 
@@ -73,7 +100,7 @@ func runInbox(args []string) int {
 		return code
 	}
 
-	all, subErrs := fetchInbox(subs)
+	all, subErrs := fetchInbox(subs, inboxQueryFor(ident))
 	if len(subErrs) > 0 && len(subErrs) == len(subs) {
 		// Total failure = EVERY queried repo errored. Keyed off the
 		// error count (not len(all)==0) so a healthy-but-empty repo
@@ -231,7 +258,7 @@ type inboxResult struct {
 	Errors []repoError   `json:"errors,omitempty"`
 }
 
-func fetchInbox(subs []inboxSub) ([]beads.Issue, []subError) {
+func fetchInbox(subs []inboxSub, query string) ([]beads.Issue, []subError) {
 	issues := make([][]beads.Issue, len(subs))
 	errs := make([]error, len(subs))
 	var wg sync.WaitGroup
@@ -239,7 +266,7 @@ func fetchInbox(subs []inboxSub) ([]beads.Issue, []subError) {
 		wg.Add(1)
 		go func(i int, s inboxSub) {
 			defer wg.Done()
-			issues[i], errs[i] = s.client.Query(context.Background(), inboxQuery)
+			issues[i], errs[i] = s.client.Query(context.Background(), query)
 		}(i, s)
 	}
 	wg.Wait()

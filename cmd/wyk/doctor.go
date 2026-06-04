@@ -328,6 +328,7 @@ func collectDoctorChecks() []check {
 		status: statusPass,
 		detail: "human-flagged tasks carry: label=human + label=src:agent\n" +
 			"agent inbox: label=src:agent AND NOT label=human AND status!=closed\n" +
+			"multi-agent: route with `wyk handoff --identity <name>` (label src:agent:<name>); read with `wyk inbox --identity <name>` / $WYK_AGENT_IDENTITY\n" +
 			"prefer `wyk handoff <id>` over hand-rolling labels; full text in `wyk conventions`",
 		leadingBlank: true,
 	})

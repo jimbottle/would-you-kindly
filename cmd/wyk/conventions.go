@@ -40,6 +40,18 @@ done. The agent's inbox is then anything matching:
 
 …surfaced by 'wyk inbox' (-json for structured ingest).
 
+Per-identity routing (multi-agent workspaces, wyk-contract/v3)
+--------------------------------------------------------------
+
+When several agents share a workspace, the collective 'src:agent' inbox
+would hand the same items to all of them. Route work to ONE agent by
+ALSO applying 'src:agent:<name>' (layered on 'src:agent', which is never
+removed): 'wyk handoff --identity <name>' (or '-identity' with -create),
+or 'bd label add <id> src:agent:<name>'. That agent then scopes its
+inbox with 'wyk inbox --identity <name>' (or the WYK_AGENT_IDENTITY env).
+With no identity, everything behaves exactly as the collective inbox
+above — single-agent workflows are unchanged.
+
 Prefer 'wyk handoff <id>' over hand-rolling these labels — it applies the
 right labels AND lets you attach a runbook from stdin in one shot.
 'wyk handoff -create "<title>"' files a new bd issue and hands it off
@@ -153,7 +165,16 @@ type conventionsJSON struct {
 	Queries struct {
 		HumanTasks string `json:"human_tasks"`
 		AgentInbox string `json:"agent_inbox"`
+		// AgentInboxIdentity is the strict per-identity inbox query
+		// (wyk-contract/v3): substitute <name> for the identity. It is
+		// layered on the collective src:agent umbrella, so collective
+		// consumers are unaffected.
+		AgentInboxIdentity string `json:"agent_inbox_identity"`
 	} `json:"queries"`
+	// IdentityEnvVar names the env var that sets the ambient agent
+	// identity for `wyk inbox` / `wyk handoff` when no -identity flag is
+	// given (wyk-contract/v3).
+	IdentityEnvVar   string           `json:"identity_env_var"`
 	Statuses         []statusGuidance `json:"statuses"`
 	InboxRule        string           `json:"inbox_rule"`
 	PreferredCommand string           `json:"preferred_command"`
@@ -187,6 +208,8 @@ func conventionsStructured() conventionsJSON {
 	c.Labels.AgentHandoff = "another agent is working this task; THIS agent must not interfere (badge AGENT-HANDOFF). A human orchestrates the coordination; excluded from the agent inbox query"
 	c.Queries.HumanTasks = humanTasksQuery
 	c.Queries.AgentInbox = agentInboxQuery
+	c.Queries.AgentInboxIdentity = inboxQueryFor("<name>")
+	c.IdentityEnvVar = identityEnvVar
 	c.InboxRule = "If `wyk inbox` returns items, work them now rather than acknowledging and moving on. The inbox holds tasks where the human is no longer blocking; treating them as 'handle later' defeats the round-trip. Exception: the user is mid-conversation about something explicitly urgent, or the expected unblocker artifact is missing (re-flag `human` and note, don't sit)."
 	c.Statuses = []statusGuidance{
 		{Status: "open", When: "actionable now; default for newly-filed issues"},
