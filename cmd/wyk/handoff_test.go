@@ -93,10 +93,15 @@ func TestHandoff_DryRunCreateWithIdentityAddsRoutingLabel(t *testing.T) {
 			t.Errorf("dry-run -create -identity exit %d, want 0", code)
 		}
 	})
-	// The routing label is layered on the collective src:agent umbrella.
-	want := `labels=[src:agent src:agent:alice]`
-	if !strings.Contains(out, want) {
-		t.Errorf("dry-run -create -identity output missing %q; got:\n%s", want, out)
+	for _, want := range []string{
+		// The routing label is layered on the collective src:agent umbrella…
+		`labels=[src:agent src:agent:alice]`,
+		// …and -create confirms routing the same way the bare-id path does.
+		`would route the new issue to identity "alice"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run -create -identity output missing %q; got:\n%s", want, out)
+		}
 	}
 }
 

@@ -471,6 +471,9 @@ func runHandoff(args []string) int {
 			fmt.Printf("would create: title=%q priority=%s type=%s labels=%v\n",
 				*createTitle, *priority, *issueType, createLabels)
 			fmt.Println("would hand off the new issue to human (label=human added, description replaced)")
+			if ident != "" {
+				fmt.Printf("would route the new issue to identity %q (label=%s)\n", ident, identityLabel(ident))
+			}
 		} else {
 			fmt.Printf("would hand off %s to human (label=human added, description replaced)\n", fs.Arg(0))
 			if ident != "" {
@@ -528,17 +531,17 @@ func runHandoff(args []string) int {
 	}
 	fmt.Printf("handed %s to human (%d-byte runbook)\n", id, len(runbook))
 
-	// Route to a named agent identity. For -create the label was set at
-	// creation time (in createLabels); a bare-id handoff of a pre-existing
-	// issue needs it added now, after the handoff landed. Failure is
-	// reported but non-fatal — the handoff itself succeeded, so the human
-	// still sees the task; only the bounce-back routing is missing.
-	if ident != "" && !createdViaFlag {
-		if err := client.AddLabel(context.Background(), id, identityLabel(ident)); err != nil {
-			fmt.Fprintf(os.Stderr, "wyk handoff: identity routing failed (handoff itself succeeded): %v\n", err)
-		} else {
-			fmt.Printf("routed %s to identity %q\n", id, ident)
-		}
+	// Confirm identity routing the same way in both modes. For -create the
+	// label was set at creation time (in createLabels), so it's already
+	// applied — just confirm it. A bare-id handoff of a pre-existing issue
+	// needs the label added now, after the handoff landed.
+	switch {
+	case ident == "":
+		// no routing requested
+	case createdViaFlag:
+		fmt.Printf("routed %s to identity %q\n", id, ident)
+	default:
+		applyIdentityRouting(context.Background(), client, id, ident)
 	}
 
 	// -note posts a bd note AFTER the handoff lands so the timeline

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -35,6 +36,27 @@ func validateIdentity(name string) error {
 // wyk-contract/v3.
 func identityLabel(name string) string {
 	return "src:agent:" + name
+}
+
+// labelAdder is the slice of the bd client `applyIdentityRouting`
+// needs — just adding a label. *beads.Client satisfies it; a test can
+// substitute a stub so the bare-id routing path is exercised without a
+// real bd binary.
+type labelAdder interface {
+	AddLabel(ctx context.Context, id, label string) error
+}
+
+// applyIdentityRouting tags an already-handed-off issue with its
+// identity routing label (the bare-id path; -create sets the label at
+// creation time instead). Caller guarantees ident != "". A failure is
+// reported but non-fatal — the handoff itself already succeeded, so the
+// human still sees the task; only the bounce-back routing is missing.
+func applyIdentityRouting(ctx context.Context, c labelAdder, id, ident string) {
+	if err := c.AddLabel(ctx, id, identityLabel(ident)); err != nil {
+		fmt.Fprintf(os.Stderr, "wyk handoff: identity routing failed (handoff itself succeeded): %v\n", err)
+		return
+	}
+	fmt.Printf("routed %s to identity %q\n", id, ident)
 }
 
 // resolveIdentity picks the agent identity from the -identity flag

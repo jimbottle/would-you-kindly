@@ -1,6 +1,77 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"strings"
+	"testing"
+)
+
+// stubLabelAdder records AddLabel calls and can be primed to fail, so
+// applyIdentityRouting's real-write path is exercised without bd.
+type stubLabelAdder struct {
+	calls [][2]string // {id, label}
+	err   error
+}
+
+func (s *stubLabelAdder) AddLabel(_ context.Context, id, label string) error {
+	s.calls = append(s.calls, [2]string{id, label})
+	return s.err
+}
+
+// captureStdouterr runs fn with both os.Stdout and os.Stderr redirected
+// and returns (stdout, stderr).
+func captureStdouterr(t *testing.T, fn func()) (string, string) {
+	t.Helper()
+	oldOut, oldErr := os.Stdout, os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout, os.Stderr = wOut, wErr
+	defer func() { os.Stdout, os.Stderr = oldOut, oldErr }()
+	outCh, errCh := make(chan string), make(chan string)
+	go func() { b, _ := io.ReadAll(rOut); outCh <- string(b) }()
+	go func() { b, _ := io.ReadAll(rErr); errCh <- string(b) }()
+	fn()
+	_ = wOut.Close()
+	_ = wErr.Close()
+	return <-outCh, <-errCh
+}
+
+func TestApplyIdentityRouting_AddsLabelAndConfirms(t *testing.T) {
+	s := &stubLabelAdder{}
+	out, errOut := captureStdouterr(t, func() {
+		applyIdentityRouting(context.Background(), s, "wyk-9", "claude")
+	})
+	if len(s.calls) != 1 || s.calls[0] != [2]string{"wyk-9", "src:agent:claude"} {
+		t.Fatalf("AddLabel calls = %v, want one {wyk-9, src:agent:claude}", s.calls)
+	}
+	if !strings.Contains(out, `routed wyk-9 to identity "claude"`) {
+		t.Errorf("stdout should confirm routing; got %q", out)
+	}
+	if errOut != "" {
+		t.Errorf("no stderr expected on success; got %q", errOut)
+	}
+}
+
+func TestApplyIdentityRouting_FailureIsNonFatalWarning(t *testing.T) {
+	s := &stubLabelAdder{err: errors.New("bd boom")}
+	out, errOut := captureStdouterr(t, func() {
+		applyIdentityRouting(context.Background(), s, "wyk-9", "claude")
+	})
+	// Still attempts the label, but reports the failure on stderr and
+	// emits NO "routed" confirmation (the handoff itself already landed).
+	if len(s.calls) != 1 {
+		t.Fatalf("AddLabel should be attempted once; got %d calls", len(s.calls))
+	}
+	if strings.Contains(out, "routed") {
+		t.Errorf("no routing confirmation expected on failure; got stdout %q", out)
+	}
+	if !strings.Contains(errOut, "identity routing failed") || !strings.Contains(errOut, "bd boom") {
+		t.Errorf("stderr should warn non-fatally with the bd error; got %q", errOut)
+	}
+}
 
 func TestValidateIdentity(t *testing.T) {
 	valid := []string{"alice", "claude", "agent-2", "a", "x9", "team-blue-1"}
