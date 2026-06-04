@@ -8,8 +8,8 @@ Source: `cmd/wyk/clidocs.go`.
 Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file.
 
 ```
-wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <issue-id>
-   or: wyk handoff -create "<title>" [-priority N] [-type task] [-file <path>] [-dry-run]
+wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>
+   or: wyk handoff -create "<title>" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]
 ```
 
 | Flag | Default | Description |
@@ -21,6 +21,7 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <
 | `-priority` | `1` | priority for the newly-created issue (only used with -create; 0-4 or P0-P4) |
 | `-type` | `task` | issue type for the newly-created issue (only used with -create) |
 | `-note` | `_(empty)_` | after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook |
+| `-identity` | `_(empty)_` | route this handoff to a named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY |
 | `-dry-run` | `false` | print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it |
 
 ## `wyk create`
@@ -59,7 +60,7 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-cl
 Agent inbox: issues filed with `src:agent` that a human has bounced back.
 
 ```
-wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N]
+wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name]
 ```
 
 | Flag | Default | Description |
@@ -71,6 +72,7 @@ wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-lim
 | `-priority` | `-1` | cap the inbox at priority N or higher (lower number = higher priority; -1 disables) |
 | `-repo` | `_(empty)_` | restrict the inbox to the registered repo with this name (mutually exclusive with -C) |
 | `-limit` | `-1` | cap the inbox at N rows (after priority/repo filtering; -1 disables) |
+| `-identity` | `_(empty)_` | scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset |
 
 ## `wyk stats`
 

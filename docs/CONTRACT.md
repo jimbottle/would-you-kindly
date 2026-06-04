@@ -67,10 +67,45 @@ and may both act on — the same inbox items. `wyk-contract/v2` adds the
 `agent-handoff` label as a partial mechanism: an agent can fence off a
 task another agent owns (it renders **AGENT-HANDOFF** and is excluded
 from the inbox query), with a human expected to orchestrate the overall
-coordination. The label does NOT assign work per-identity — a future
-revision could introduce a `src:agent:<name>` convention for that. Until
-then, prefer scoping heavy multi-agent collaboration to separate
-workspaces (one bd workspace per agent identity).
+coordination. `wyk-contract/v3` adds the per-identity routing described
+in the next section for the assignment the `agent-handoff` fence can't
+express; `agent-handoff` remains the orthogonal "no agent auto-works
+this" signal.
+
+### Per-identity routing (`src:agent:<name>`, wyk-contract/v3)
+
+When multiple agents share a workspace, route an inbox item to ONE of
+them by applying **`src:agent:<name>`** *in addition to* the collective
+`src:agent` (which is never removed — so identity-routed work still
+matches the collective query and every consumer that keys off exactly
+`src:agent`). `<name>` is a label-safe slug: `[a-z0-9][a-z0-9-]*` (no
+colon — labels are colon-namespaced — no space, no uppercase).
+
+- **Route** with `wyk handoff --identity <name>` (also valid with
+  `-create`), or `bd label add <id> src:agent:<name>` directly.
+- **Read** with `wyk inbox --identity <name>`. The identity inbox query
+  is the collective query with the umbrella label swapped for the
+  identity label:
+
+  ```
+  label=src:agent:<name> AND NOT label=human AND NOT label=agent-handoff AND status!=closed
+  ```
+
+- **Resolve** the identity from `--identity` (highest precedence), then
+  the `WYK_AGENT_IDENTITY` env var, then unset. **Unset is exactly the
+  collective, pre-v3 behavior**, so single-agent workflows are unchanged.
+  A set-but-malformed identity is a usage error, not a silent fall back
+  to the collective inbox.
+
+This is *strict* scoping: a named inbox shows only that identity's
+routed work. Surfacing un-routed collective `src:agent` work inside a
+named inbox (the "unclaimed sweep") is a separate, additive step
+tracked as `would-you-kindly-r4h7`. Until then, run `wyk inbox` with no
+identity to sweep un-routed work.
+
+Prefer scoping heavy multi-agent collaboration to separate workspaces
+(one bd workspace per agent identity) only when even per-identity
+routing within one workspace proves insufficient.
 
 **Partial-failure visibility for `wyk inbox -json`.** When one
 registered repo's bd is broken (moved, deleted, daemon unreachable),
@@ -319,9 +354,15 @@ means there's nothing to rewrite. If a future version ever makes a
 *breaking* change (renaming or repurposing a label), it will ship a
 one-shot relabel command and call it out here explicitly.
 
-**Schema:** `wyk-contract/v2`
+**Schema:** `wyk-contract/v3`
 
 Changelog:
+- **v3** — adds optional per-identity routing: the `src:agent:<name>`
+  label (layered on the collective `src:agent`), `wyk inbox --identity`
+  / `wyk handoff --identity`, and the `WYK_AGENT_IDENTITY` env var.
+  Fully backward-compatible — with no identity, behavior is identical to
+  v2. Phase 1 is strict scoping; the unclaimed sweep is deferred
+  (`would-you-kindly-r4h7`).
 - **v2** — adds the `agent-handoff` label (badge AGENT-HANDOFF) and
   excludes it from the agent inbox query.
 - **v1** — initial contract: `human` / `src:agent` / `src:human` labels

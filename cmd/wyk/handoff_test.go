@@ -82,6 +82,50 @@ func TestHandoff_DryRunBareIDPrintsPlanWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestHandoff_DryRunCreateWithIdentityAddsRoutingLabel(t *testing.T) {
+	t.Setenv(sessionEnvVar, "")  // deterministic labels (no session stamp)
+	t.Setenv(identityEnvVar, "") // no ambient identity; -identity drives it
+	path := writeRunbook(t, "do the thing")
+	out := captureHandoffStdout(t, func() {
+		if code := runHandoff([]string{
+			"-dry-run", "-create", "Rotate creds", "-identity", "alice", "-file", path,
+		}); code != 0 {
+			t.Errorf("dry-run -create -identity exit %d, want 0", code)
+		}
+	})
+	// The routing label is layered on the collective src:agent umbrella.
+	want := `labels=[src:agent src:agent:alice]`
+	if !strings.Contains(out, want) {
+		t.Errorf("dry-run -create -identity output missing %q; got:\n%s", want, out)
+	}
+}
+
+func TestHandoff_DryRunBareIDWithIdentityShowsRouting(t *testing.T) {
+	t.Setenv(identityEnvVar, "")
+	path := writeRunbook(t, "1. step")
+	out := captureHandoffStdout(t, func() {
+		if code := runHandoff([]string{"-dry-run", "-identity", "claude", "-file", path, "wyk-9"}); code != 0 {
+			t.Errorf("dry-run bare-id -identity exit %d, want 0", code)
+		}
+	})
+	for _, want := range []string{
+		"would hand off wyk-9 to human",
+		`would route to identity "claude" (label=src:agent:claude added)`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestHandoff_MalformedIdentityIsUsageError(t *testing.T) {
+	t.Setenv(identityEnvVar, "")
+	path := writeRunbook(t, "1. step")
+	if code := runHandoff([]string{"-identity", "Bad Name", "-file", path, "wyk-1"}); code != 64 {
+		t.Errorf("handoff -identity 'Bad Name' = %d, want 64 (usage error)", code)
+	}
+}
+
 func TestHandoff_DryRunCreatePrintsCreatePlanWithoutWriting(t *testing.T) {
 	t.Setenv(sessionEnvVar, "") // deterministic labels (no session stamp)
 	path := writeRunbook(t, "do the thing")

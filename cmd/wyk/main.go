@@ -379,6 +379,8 @@ func runHandoff(args []string) int {
 		"issue type for the newly-created issue (only used with -create)")
 	note := fs.String("note", "",
 		"after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook")
+	identity := fs.String("identity", "",
+		"route this handoff to a named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY")
 	dryRun := fs.Bool("dry-run", false,
 		"print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it")
 	fs.SetOutput(os.Stderr)
@@ -390,6 +392,15 @@ func runHandoff(args []string) int {
 		return 64
 	}
 
+	// Resolve the routing identity (flag > $WYK_AGENT_IDENTITY > none).
+	// A set-but-malformed identity is a usage error; routing to a bad
+	// label would silently never reach the intended inbox.
+	ident, identErr := resolveIdentity(*identity)
+	if identErr != nil {
+		fmt.Fprintln(os.Stderr, "wyk handoff:", identErr)
+		return 64
+	}
+
 	// Validate the two modes.
 	switch {
 	case *createTitle != "" && fs.NArg() > 0:
@@ -397,8 +408,8 @@ func runHandoff(args []string) int {
 		return 64
 	case *createTitle == "" && fs.NArg() != 1:
 		fmt.Fprintln(os.Stderr,
-			"usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-dry-run] <issue-id>\n"+
-				"   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-file <path>] [-dry-run]")
+			"usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n"+
+				"   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]")
 		return 64
 	}
 
@@ -441,6 +452,11 @@ func runHandoff(args []string) int {
 	// Session column is populated for handoff-filed issues too. Empty
 	// session (outside Claude Code) records nothing.
 	createLabels := []string{"src:agent"}
+	if ident != "" {
+		// Identity routing layers on top of the collective src:agent
+		// umbrella (never replaces it). wyk-contract/v3.
+		createLabels = append(createLabels, identityLabel(ident))
+	}
 	if sl := sessionLabelFromEnv(); sl != "" {
 		createLabels = append(createLabels, sl)
 	}
@@ -457,6 +473,9 @@ func runHandoff(args []string) int {
 			fmt.Println("would hand off the new issue to human (label=human added, description replaced)")
 		} else {
 			fmt.Printf("would hand off %s to human (label=human added, description replaced)\n", fs.Arg(0))
+			if ident != "" {
+				fmt.Printf("would route to identity %q (label=%s added)\n", ident, identityLabel(ident))
+			}
 		}
 		fmt.Printf("runbook (%d bytes):\n", len(runbook))
 		fmt.Println("---")
@@ -508,6 +527,19 @@ func runHandoff(args []string) int {
 		return handoffErrExit(err, "wyk handoff:")
 	}
 	fmt.Printf("handed %s to human (%d-byte runbook)\n", id, len(runbook))
+
+	// Route to a named agent identity. For -create the label was set at
+	// creation time (in createLabels); a bare-id handoff of a pre-existing
+	// issue needs it added now, after the handoff landed. Failure is
+	// reported but non-fatal — the handoff itself succeeded, so the human
+	// still sees the task; only the bounce-back routing is missing.
+	if ident != "" && !createdViaFlag {
+		if err := client.AddLabel(context.Background(), id, identityLabel(ident)); err != nil {
+			fmt.Fprintf(os.Stderr, "wyk handoff: identity routing failed (handoff itself succeeded): %v\n", err)
+		} else {
+			fmt.Printf("routed %s to identity %q\n", id, ident)
+		}
+	}
 
 	// -note posts a bd note AFTER the handoff lands so the timeline
 	// reads chronologically: runbook set → handed off → annotation.
