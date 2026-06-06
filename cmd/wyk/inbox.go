@@ -70,6 +70,7 @@ func runInbox(args []string) int {
 	repoName := fs.String("repo", "", "restrict the inbox to the registered repo with this name (mutually exclusive with -C)")
 	limit := fs.Int("limit", -1, "cap the inbox at N rows (after priority/repo filtering; -1 disables)")
 	identity := fs.String("identity", "", "scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset")
+	strict := fs.Bool("strict", false, "with -identity, show ONLY work routed to that identity; default also includes un-routed collective work so it isn't stranded")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -78,7 +79,7 @@ func runInbox(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N] [-identity name]")
+		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]")
 		return 64
 	}
 	if *dir != "" && *repoName != "" {
@@ -100,7 +101,19 @@ func runInbox(args []string) int {
 		return code
 	}
 
-	all, subErrs := fetchInbox(subs, inboxQueryFor(ident))
+	// Query selection:
+	//   - no identity → collective query.
+	//   - identity + -strict → bd scopes to the routing label directly
+	//     (phase-1 strict scoping; cheapest, no client filter needed).
+	//   - identity (default) → fetch the COLLECTIVE set and filter in Go
+	//     to {routed-to-me} ∪ {un-routed}, the phase-2 unclaimed sweep.
+	//     bd 1.0.4 can't express `NOT label=src:agent:*`, so the union
+	//     is done client-side (would-you-kindly-r4h7).
+	query := inboxQuery
+	if ident != "" && *strict {
+		query = inboxQueryFor(ident)
+	}
+	all, subErrs := fetchInbox(subs, query)
 	if len(subErrs) > 0 && len(subErrs) == len(subs) {
 		// Total failure = EVERY queried repo errored. Keyed off the
 		// error count (not len(all)==0) so a healthy-but-empty repo
@@ -129,6 +142,12 @@ func runInbox(args []string) int {
 		return 1
 	}
 
+	// Phase-2 unclaimed sweep: when scoped to an identity without -strict,
+	// the bd query above returned the whole collective set; keep only this
+	// identity's routed work plus un-routed collective work.
+	if ident != "" && !*strict {
+		all = filterToIdentity(all, ident)
+	}
 	if *maxPriority >= 0 {
 		all = filterByMaxPriority(all, *maxPriority)
 	}

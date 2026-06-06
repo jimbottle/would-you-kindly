@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
+
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
 // identityEnvVar is the ambient agent-identity source used by
@@ -36,6 +39,50 @@ func validateIdentity(name string) error {
 // wyk-contract/v3.
 func identityLabel(name string) string {
 	return "src:agent:" + name
+}
+
+// identitySublabelPrefix is the prefix of a per-identity routing label.
+// Note it ends in a colon, so the collective umbrella `src:agent` (no
+// trailing colon) is deliberately NOT a sublabel.
+const identitySublabelPrefix = "src:agent:"
+
+// hasIdentitySublabel reports whether the issue carries ANY per-identity
+// routing label (src:agent:<something>) — i.e. it has been routed to
+// some specific agent. The bare `src:agent` umbrella does not count.
+func hasIdentitySublabel(i beads.Issue) bool {
+	for _, l := range i.Labels {
+		if strings.HasPrefix(l, identitySublabelPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// issueBelongsToIdentity is the phase-2 "unclaimed sweep" predicate: an
+// issue belongs in identity `name`'s inbox when it is EITHER routed to
+// that identity (carries src:agent:<name>) OR un-routed entirely (carries
+// no src:agent:<other> sublabel, so it's collective work nobody has
+// claimed). Only rows routed to a DIFFERENT identity are excluded.
+//
+// bd 1.0.4 can't express `NOT label=src:agent:*`, so the caller fetches
+// the collective set and applies this filter in Go (would-you-kindly-r4h7).
+func issueBelongsToIdentity(i beads.Issue, name string) bool {
+	if i.HasLabel(identityLabel(name)) {
+		return true
+	}
+	return !hasIdentitySublabel(i)
+}
+
+// filterToIdentity keeps only the issues that belong in identity `name`'s
+// swept inbox (routed-to-name OR un-routed), preserving order.
+func filterToIdentity(issues []beads.Issue, name string) []beads.Issue {
+	out := issues[:0]
+	for _, i := range issues {
+		if issueBelongsToIdentity(i, name) {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // labelAdder is the slice of the bd client `applyIdentityRouting`

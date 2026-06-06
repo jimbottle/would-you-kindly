@@ -73,7 +73,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "inbox",
 		Summary: "Agent inbox: issues filed with `src:agent` that a human has bounced back.",
-		Usage:   "wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name]",
+		Usage:   "wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
 			{Name: "-json", Default: "false", Description: "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated)"},
@@ -83,6 +83,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-repo", Default: "", Description: "restrict the inbox to the registered repo with this name (mutually exclusive with -C)"},
 			{Name: "-limit", Default: "-1", Description: "cap the inbox at N rows (after priority/repo filtering; -1 disables)"},
 			{Name: "-identity", Default: "", Description: "scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset"},
+			{Name: "-strict", Default: "false", Description: "with -identity, show ONLY work routed to that identity; default also includes un-routed collective work so it isn't stranded"},
 		},
 	},
 	{
