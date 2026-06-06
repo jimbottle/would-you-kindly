@@ -49,8 +49,10 @@ ALSO applying 'src:agent:<name>' (layered on 'src:agent', which is never
 removed): 'wyk handoff --identity <name>' (or '-identity' with -create),
 or 'bd label add <id> src:agent:<name>'. That agent then scopes its
 inbox with 'wyk inbox --identity <name>' (or the WYK_AGENT_IDENTITY env).
-With no identity, everything behaves exactly as the collective inbox
-above — single-agent workflows are unchanged.
+A named inbox shows that identity's routed work PLUS un-routed collective
+work (so nothing filed without routing is stranded); add '-strict' for
+routed-only. With no identity, everything behaves exactly as the
+collective inbox above — single-agent workflows are unchanged.
 
 Prefer 'wyk handoff <id>' over hand-rolling these labels — it applies the
 right labels AND lets you attach a runbook from stdin in one shot.
@@ -165,10 +167,13 @@ type conventionsJSON struct {
 	Queries struct {
 		HumanTasks string `json:"human_tasks"`
 		AgentInbox string `json:"agent_inbox"`
-		// AgentInboxIdentity is the strict per-identity inbox query
+		// AgentInboxIdentity is the `-strict` per-identity inbox query
 		// (wyk-contract/v3): substitute <name> for the identity. It is
 		// layered on the collective src:agent umbrella, so collective
-		// consumers are unaffected.
+		// consumers are unaffected. NOTE: the DEFAULT `wyk inbox
+		// --identity <name>` (without -strict) ALSO includes un-routed
+		// collective work (the unclaimed sweep), which bd can't express as
+		// a single query — wyk filters the collective set in Go.
 		AgentInboxIdentity string `json:"agent_inbox_identity"`
 	} `json:"queries"`
 	// IdentityEnvVar names the env var that sets the ambient agent

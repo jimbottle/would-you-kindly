@@ -83,12 +83,21 @@ colon — labels are colon-namespaced — no space, no uppercase).
 
 - **Route** with `wyk handoff --identity <name>` (also valid with
   `-create`), or `bd label add <id> src:agent:<name>` directly.
-- **Read** with `wyk inbox --identity <name>`. The identity inbox query
-  is the collective query with the umbrella label swapped for the
-  identity label:
+- **Read** with `wyk inbox --identity <name>`. By default a named inbox
+  shows **that identity's routed work PLUS un-routed collective work**
+  (`src:agent` with no `src:agent:<other>` sublabel), so a task filed
+  without routing isn't stranded where no named agent sees it. Only work
+  routed to a *different* identity is hidden. Pass `-strict` to show
+  *only* `<name>`'s routed work:
 
   ```
+  # -strict — bd-expressible, routed work only:
   label=src:agent:<name> AND NOT label=human AND NOT label=agent-handoff AND status!=closed
+
+  # default — the routed set above UNION the un-routed collective set.
+  # bd 1.0.4 can't express `NOT label=src:agent:*`, so wyk fetches the
+  # collective inbox and filters to {routed-to-name} ∪ {no sublabel} in
+  # Go (would-you-kindly-r4h7).
   ```
 
 - **Resolve** the identity from `--identity` (highest precedence), then
@@ -97,11 +106,10 @@ colon — labels are colon-namespaced — no space, no uppercase).
   A set-but-malformed identity is a usage error, not a silent fall back
   to the collective inbox.
 
-This is *strict* scoping: a named inbox shows only that identity's
-routed work. Surfacing un-routed collective `src:agent` work inside a
-named inbox (the "unclaimed sweep") is a separate, additive step
-tracked as `would-you-kindly-r4h7`. Until then, run `wyk inbox` with no
-identity to sweep un-routed work.
+Routed work is private to its identity; un-routed `src:agent` work is
+shared (any named agent's default inbox surfaces it, first-come). That's
+the intended split — explicit assignment isolates, un-assigned work
+stays claimable.
 
 Prefer scoping heavy multi-agent collaboration to separate workspaces
 (one bd workspace per agent identity) only when even per-identity
@@ -361,8 +369,8 @@ Changelog:
   label (layered on the collective `src:agent`), `wyk inbox --identity`
   / `wyk handoff --identity`, and the `WYK_AGENT_IDENTITY` env var.
   Fully backward-compatible — with no identity, behavior is identical to
-  v2. Phase 1 is strict scoping; the unclaimed sweep is deferred
-  (`would-you-kindly-r4h7`).
+  v2. A named inbox defaults to routed + un-routed work (the unclaimed
+  sweep); `wyk inbox --identity <name> -strict` narrows to routed-only.
 - **v2** — adds the `agent-handoff` label (badge AGENT-HANDOFF) and
   excludes it from the agent inbox query.
 - **v1** — initial contract: `human` / `src:agent` / `src:human` labels

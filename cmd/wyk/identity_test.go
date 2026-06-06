@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
 // stubLabelAdder records AddLabel calls and can be primed to fail, so
@@ -37,6 +39,45 @@ func captureStdouterr(t *testing.T, fn func()) (string, string) {
 	_ = wOut.Close()
 	_ = wErr.Close()
 	return <-outCh, <-errCh
+}
+
+func TestIssueBelongsToIdentity_SweepSemantics(t *testing.T) {
+	mk := func(labels ...string) beads.Issue { return beads.Issue{Labels: labels} }
+	cases := []struct {
+		name  string
+		issue beads.Issue
+		want  bool
+	}{
+		{"routed to me", mk("src:agent", "src:agent:alice"), true},
+		{"un-routed collective (no sublabel)", mk("src:agent"), true},
+		{"routed to someone else", mk("src:agent", "src:agent:bob"), false},
+		{"routed to me AND someone else", mk("src:agent", "src:agent:alice", "src:agent:bob"), true},
+		{"bare src:agent only is un-routed", mk("src:agent", "human"), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := issueBelongsToIdentity(c.issue, "alice"); got != c.want {
+				t.Errorf("issueBelongsToIdentity(%v, alice) = %v, want %v", c.issue.Labels, got, c.want)
+			}
+		})
+	}
+}
+
+func TestFilterToIdentity_KeepsRoutedAndUnrouted(t *testing.T) {
+	in := []beads.Issue{
+		{ID: "mine", Labels: []string{"src:agent", "src:agent:alice"}},
+		{ID: "unrouted", Labels: []string{"src:agent"}},
+		{ID: "bobs", Labels: []string{"src:agent", "src:agent:bob"}},
+	}
+	got := filterToIdentity(in, "alice")
+	var ids []string
+	for _, i := range got {
+		ids = append(ids, i.ID)
+	}
+	want := []string{"mine", "unrouted"}
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Errorf("filterToIdentity kept %v, want %v (bob's routed work excluded)", ids, want)
+	}
 }
 
 func TestApplyIdentityRouting_AddsLabelAndConfirms(t *testing.T) {

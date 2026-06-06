@@ -60,7 +60,7 @@ wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-cl
 Agent inbox: issues filed with `src:agent` that a human has bounced back.
 
 ```
-wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name]
+wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]
 ```
 
 | Flag | Default | Description |
@@ -73,6 +73,7 @@ wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-lim
 | `-repo` | `_(empty)_` | restrict the inbox to the registered repo with this name (mutually exclusive with -C) |
 | `-limit` | `-1` | cap the inbox at N rows (after priority/repo filtering; -1 disables) |
 | `-identity` | `_(empty)_` | scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset |
+| `-strict` | `false` | with -identity, show ONLY work routed to that identity; default also includes un-routed collective work so it isn't stranded |
 
 ## `wyk stats`
 
