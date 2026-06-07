@@ -1543,6 +1543,11 @@ func TestTrunc_RuneAware(t *testing.T) {
 	// invalid UTF-8 before the ellipsis. Pin the contract on a few
 	// concrete inputs so a future "performance" refactor back to
 	// byte semantics fails here loudly.
+	// IMPORTANT: trunc measures DISPLAY CELLS via dispWidth (ambWide), and
+	// the ellipsis "…" is itself ambiguous-width = 2 cells under ambWide.
+	// So a cut result is (content cells) + 2, and trunc reserves 2 for the
+	// ellipsis. Every expectation below therefore satisfies
+	// dispWidth(want) <= n (asserted in the loop).
 	cases := []struct {
 		name string
 		in   string
@@ -1550,30 +1555,23 @@ func TestTrunc_RuneAware(t *testing.T) {
 		want string
 	}{
 		{"short-ascii-untouched", "abc", 5, "abc"},
-		{"long-ascii-truncated", "abcdefgh", 5, "abcd…"},
+		// budget 5, ellipsis costs 2 → 3 cells of content: "abc…".
+		{"long-ascii-truncated", "abcdefgh", 5, "abc…"},
 		{"zero-width-empty", "anything", 0, ""},
+		// n=1 < ellipsis width(2): no room for "…", show the leading cell.
 		{"one-width-single-rune", "abc", 1, "a"},
-		// Multi-byte content — café is 5 bytes (é = 2 bytes), 4
-		// runes. Cap at 3: pre-fix, byte-trunc gave "ca" + "…" =
-		// 5 bytes ("ca…") OR worse split inside é. Post-fix:
-		// "ca…" (3 runes, valid UTF-8).
-		{"multibyte-stays-valid", "café", 3, "ca…"},
-		// A name of multi-byte runes; truncation must not split any.
-		// Greek letters are East-Asian *ambiguous* width, which the TUI
-		// (and now trunc) measures as 2 cells via ambWide/dispWidth — so
-		// a 3-cell budget holds ONE Greek rune (2 cells) + the ellipsis,
-		// not two. (The old rune-count expectation "αβ…" was 5 cells and
-		// would have overflowed the column.)
-		{"all-multibyte", "αβγδ", 3, "α…"},
-		// DISPLAY-WIDTH cases (would-you-kindly-qabo): each CJK rune is
-		// 2 cells, so a cell budget of 5 holds 2 runes (4 cells) + the
-		// 1-cell ellipsis — NOT 4 runes. Rune-count trunc would have
-		// returned "世界世" (4 runes incl. ellipsis = 7 cells, overflow).
-		{"cjk-fits-cell-budget", "世界世界世", 5, "世界…"},
-		// Exactly fits: 3 CJK runes = 6 cells, budget 6 → untouched.
+		// café: c/a/f are 1 cell, é is ambiguous = 2. Budget 3, minus the
+		// 2-cell ellipsis leaves 1 cell → "c…".
+		{"multibyte-stays-valid", "café", 3, "c…"},
+		// All Greek (ambiguous, 2 cells each). Budget 3 minus ellipsis(2)
+		// leaves 1 cell — no whole Greek rune fits → just "…".
+		{"all-multibyte", "αβγδ", 3, "…"},
+		// CJK = 2 cells each. Budget 5 minus ellipsis(2) = 3 cells → one
+		// 世 (2) fits, a second would be 4>3 → "世…".
+		{"cjk-fits-cell-budget", "世界世界世", 5, "世…"},
+		// Exactly fits: 3 CJK = 6 cells, budget 6 → untouched.
 		{"cjk-exact-fit-untouched", "世界世", 6, "世界世"},
-		// Odd budget with wide runes: budget 4 leaves 3 cells for content,
-		// one CJK rune (2 cells) fits, a second (→4>3) does not.
+		// Budget 4 minus ellipsis(2) = 2 → one 世 → "世…".
 		{"cjk-odd-budget", "世界世", 4, "世…"},
 	}
 	for _, tc := range cases {
@@ -1581,6 +1579,11 @@ func TestTrunc_RuneAware(t *testing.T) {
 			got := trunc(tc.in, tc.n)
 			if got != tc.want {
 				t.Errorf("trunc(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+			}
+			// The load-bearing invariant: the result never exceeds the
+			// cell budget (the bug qabo's review caught).
+			if w := dispWidth(got); w > tc.n {
+				t.Errorf("trunc(%q, %d) = %q is %d cells, exceeds budget %d", tc.in, tc.n, got, w, tc.n)
 			}
 		})
 	}
