@@ -107,7 +107,7 @@ type Source interface {
 
 // Mutator is the write side of the bd backend. The TUI checks at
 // runtime whether its Source also implements Mutator; if so the
-// c / H / n keystrokes dispatch through it. A read-only Source
+// a / H / n keystrokes dispatch through it. A read-only Source
 // remains valid — the write keys show a "read-only" hint instead.
 //
 // The methods take a full beads.Issue rather than a bare ID so a
@@ -1504,7 +1504,7 @@ func (m Model) mutator() Mutator {
 	return mu
 }
 
-// beginClose enters the confirm-close mode so a stray `c` doesn't
+// beginClose enters the confirm-close mode so a stray `a` doesn't
 // destroy work. Confirmation is just the next keystroke: y proceeds,
 // anything else cancels. The full issue (not just its ID) is captured
 // so a concurrent refetch can't shift the cursor onto a different
@@ -3037,9 +3037,18 @@ func (m Model) beginEdit() (tea.Model, tea.Cmd) {
 	target := m.visible[m.cursor]
 	body := target.Description
 	if d, ok := m.src.(Detailer); ok {
-		if full, err := d.Detail(context.Background(), target); err == nil {
-			body = full.Description
+		// The slim list row usually has no Description (bd list drops it),
+		// so we MUST fetch the full body before editing. If that fetch
+		// fails, ABORT rather than open an empty buffer: the user would
+		// see a blank description, assume the issue had none, and a save
+		// would overwrite the real (now lost) body — recoverable only via
+		// bd history, which wyk doesn't surface. (would-you-kindly-quep)
+		full, err := d.Detail(context.Background(), target)
+		if err != nil {
+			m.setStatus("edit aborted: couldn't load full description (" + err.Error() + ")")
+			return m, flashClearCmd(m.statusGen)
 		}
+		body = full.Description
 	}
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -4977,16 +4986,38 @@ func friendlyError(err error) string {
 // (column widths, banner caps) are visual, not byte, so this is
 // the right unit. n<=0 returns ""; n==1 returns the first rune
 // (no ellipsis, since … would consume the slot).
+// trunc shortens s to fit n DISPLAY CELLS (not runes), appending a
+// 1-cell ellipsis when it cuts. Width is measured with dispWidth so a
+// double-wide rune (CJK/emoji) costs 2 — a rune-count budget let such
+// titles render up to 2× their column and break table alignment
+// (would-you-kindly-qabo).
 func trunc(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
 	if n <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if n == 1 {
-		return string(runes[:1])
+	if dispWidth(s) <= n {
+		return s
 	}
-	return string(runes[:n-1]) + "…"
+	// We must leave 1 cell for the ellipsis, so kept content fits n-1.
+	// At n==1 there's no room for content + ellipsis: show the first rune
+	// if it's narrow (1 cell), else the ellipsis alone — never a wide
+	// rune that would overflow the single cell.
+	if n == 1 {
+		if r, _ := utf8.DecodeRuneInString(s); r != utf8.RuneError && dispWidth(string(r)) == 1 {
+			return string(r)
+		}
+		return "…"
+	}
+	budget := n - 1
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		w := dispWidth(string(r))
+		if used+w > budget {
+			break
+		}
+		b.WriteRune(r)
+		used += w
+	}
+	return b.String() + "…"
 }

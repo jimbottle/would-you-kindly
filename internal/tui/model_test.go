@@ -1558,9 +1558,23 @@ func TestTrunc_RuneAware(t *testing.T) {
 		// 5 bytes ("ca…") OR worse split inside é. Post-fix:
 		// "ca…" (3 runes, valid UTF-8).
 		{"multibyte-stays-valid", "café", 3, "ca…"},
-		// A name made entirely of multi-byte runes; truncation
-		// must not split any of them.
-		{"all-multibyte", "αβγδ", 3, "αβ…"},
+		// A name of multi-byte runes; truncation must not split any.
+		// Greek letters are East-Asian *ambiguous* width, which the TUI
+		// (and now trunc) measures as 2 cells via ambWide/dispWidth — so
+		// a 3-cell budget holds ONE Greek rune (2 cells) + the ellipsis,
+		// not two. (The old rune-count expectation "αβ…" was 5 cells and
+		// would have overflowed the column.)
+		{"all-multibyte", "αβγδ", 3, "α…"},
+		// DISPLAY-WIDTH cases (would-you-kindly-qabo): each CJK rune is
+		// 2 cells, so a cell budget of 5 holds 2 runes (4 cells) + the
+		// 1-cell ellipsis — NOT 4 runes. Rune-count trunc would have
+		// returned "世界世" (4 runes incl. ellipsis = 7 cells, overflow).
+		{"cjk-fits-cell-budget", "世界世界世", 5, "世界…"},
+		// Exactly fits: 3 CJK runes = 6 cells, budget 6 → untouched.
+		{"cjk-exact-fit-untouched", "世界世", 6, "世界世"},
+		// Odd budget with wide runes: budget 4 leaves 3 cells for content,
+		// one CJK rune (2 cells) fits, a second (→4>3) does not.
+		{"cjk-odd-budget", "世界世", 4, "世…"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -6135,13 +6149,55 @@ func TestCycleDetailLink_ScrollsOffScreenLinkIntoView(t *testing.T) {
 // tests can observe the Detail() enrichment dispatch.
 type stubDetailSource struct {
 	stubSource
-	detailed []string
+	detailed  []string
+	detailErr error // when set, Detail returns this error
 }
 
 func (s *stubDetailSource) Detail(_ context.Context, i beads.Issue) (beads.Issue, error) {
 	s.detailed = append(s.detailed, i.ID)
+	if s.detailErr != nil {
+		return beads.Issue{}, s.detailErr
+	}
 	i.Notes = "enriched"
 	return i, nil
+}
+
+// stubMutatorDetailer is both a Mutator and a Detailer, so beginEdit
+// (which requires a Mutator and fetches via Detailer) can be exercised
+// with a Detail() that fails.
+type stubMutatorDetailer struct {
+	stubMutator
+	detailErr error
+}
+
+func (s *stubMutatorDetailer) Detail(_ context.Context, i beads.Issue) (beads.Issue, error) {
+	if s.detailErr != nil {
+		return beads.Issue{}, s.detailErr
+	}
+	return i, nil
+}
+
+func TestBeginEdit_AbortsWhenDetailFails(t *testing.T) {
+	// Regression for would-you-kindly-quep: a failed Detail() must abort
+	// the edit, not open an empty buffer that a save would use to
+	// overwrite the real description.
+	s := &stubMutatorDetailer{
+		stubMutator: stubMutator{stubSource: stubSource{issues: sampleIssues()}},
+		detailErr:   errors.New("bd boom"),
+	}
+	m := New(s)
+	fm, _ := m.Update(fetchedMsg{preset: m.preset, issues: s.issues})
+	m = fm.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = model.(Model)
+	if !strings.Contains(m.status, "edit aborted") {
+		t.Errorf("expected an 'edit aborted' status when Detail fails; got %q", m.status)
+	}
+	// No editor should have been launched (no ExecProcess command beyond
+	// the status flash-clear). We can't easily inspect ExecProcess, but
+	// the status assertion above is the contract; ensure we didn't fall
+	// through to a write either.
+	_ = cmd
 }
 
 func TestDetailBack_ReEnrichesPoppedParent(t *testing.T) {

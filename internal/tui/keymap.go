@@ -28,7 +28,7 @@ type keyMap struct {
 
 	// Write actions (Phase 2). These are only honored when the Source
 	// also implements Mutator; otherwise they print a "read-only" hint.
-	Close       key.Binding // c — close the cursor issue (with confirmation)
+	Close       key.Binding // a — close the cursor issue (with confirmation)
 	ToggleHuman key.Binding // H — add/remove the 'human' label on the cursor issue
 	AddNote     key.Binding // n — append a note to the cursor issue
 	QuickAdd    key.Binding // N — file a new issue inline (title-only prompt)
