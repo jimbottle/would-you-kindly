@@ -291,3 +291,27 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+func TestBDTimeoutFromEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		set  string
+		want time.Duration
+	}{
+		{"unset uses default", "", defaultBDTimeout},
+		{"go duration", "20s", 20 * time.Second},
+		{"bare seconds", "30", 30 * time.Second},
+		{"compound duration", "1m500ms", time.Minute + 500*time.Millisecond},
+		{"garbage falls back", "soon", defaultBDTimeout},
+		{"zero falls back", "0", defaultBDTimeout},
+		{"negative falls back", "-5", defaultBDTimeout},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("WYK_BD_TIMEOUT", c.set)
+			if got := BDTimeoutFromEnv(); got != c.want {
+				t.Errorf("BDTimeoutFromEnv() with %q = %v, want %v", c.set, got, c.want)
+			}
+		})
+	}
+}

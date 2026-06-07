@@ -997,6 +997,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// deps sections (would-you-kindly-1ym).
 			m.refreshDepCachesFromList()
 			m.recomputeVisible()
+			// Drop marks whose row vanished on this refetch (e.g. after a
+			// partial-failure bulk action) so a later bulk op can't target
+			// a gone row (would-you-kindly-g00n).
+			m.pruneStaleMarks()
 			// A refresh that introduces new rows while the deps sort is
 			// active leaves those IDs uncached, so depsFullyResolved
 			// fails and recomputeVisible silently falls back to the
@@ -2933,6 +2937,26 @@ func (m Model) markedIssues() []beads.Issue {
 	return out
 }
 
+// pruneStaleMarks drops marks whose issue is no longer present in m.all
+// — e.g. a row that vanished on a refetch after a partial-failure bulk
+// action. Without this, a dangling mark keyed by a gone ID would have a
+// later bulk op target a row that's no longer visible
+// (would-you-kindly-g00n).
+func (m *Model) pruneStaleMarks() {
+	if len(m.marked) == 0 {
+		return
+	}
+	present := make(map[string]bool, len(m.all))
+	for _, i := range m.all {
+		present[issueKey(i)] = true
+	}
+	for k := range m.marked {
+		if !present[k] {
+			delete(m.marked, k)
+		}
+	}
+}
+
 // bumpPriority nudges the cursor row's (or every marked row's)
 // priority by `delta` steps and dispatches the writes. delta == -1
 // means "more urgent" (priority--), +1 means "less urgent"
@@ -3119,9 +3143,15 @@ func (m Model) beginEdit() (tea.Model, tea.Cmd) {
 		}
 		body = full.Description
 	}
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
+	// Split $EDITOR into a command + args so multi-word editors work
+	// (e.g. EDITOR="code -w" or "emacsclient -nw"); the filename is
+	// appended last. strings.Fields handles the common space-separated
+	// case — a path with embedded spaces still isn't supported, but a
+	// bare or flag-carrying editor is the realistic shape.
+	// (would-you-kindly-tgmk)
+	editorFields := strings.Fields(os.Getenv("EDITOR"))
+	if len(editorFields) == 0 {
+		editorFields = []string{"vi"}
 	}
 	f, err := os.CreateTemp("", "wyk-edit-*.md")
 	if err != nil {
@@ -3139,7 +3169,7 @@ func (m Model) beginEdit() (tea.Model, tea.Cmd) {
 		m.setStatus("edit failed: " + err.Error())
 		return m, flashClearCmd(m.statusGen)
 	}
-	cmd := exec.Command(editor, f.Name())
+	cmd := exec.Command(editorFields[0], append(editorFields[1:], f.Name())...)
 	path := f.Name()
 	originalBody := body
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
@@ -3570,6 +3600,29 @@ func (m Model) viewHelp() string {
 	for _, e := range legend {
 		styled := statusStyleFor(e.raw).Render(fmt.Sprintf("%-9s", e.display))
 		fmt.Fprintf(&b, "  %s  %s\n", styled, helpStyle.Render(e.gloss))
+	}
+	b.WriteString("\n")
+
+	// Owner column legend — the four "whose move is it" badges, rendered
+	// with their real table styles. This is the product's central
+	// concept and was previously only explained in the README, leaving a
+	// HUMAN-BLOCK / AGENT-HANDOFF badge undecodable in-app
+	// (would-you-kindly-5hy8).
+	b.WriteString(detailLabelStyle.Render("Owner column"))
+	b.WriteString("\n")
+	ownerLegend := []struct {
+		styled string
+		plain  string
+		gloss  string
+	}{
+		{humanBadge.Render("HUMAN"), "HUMAN", "your move — a human must act (the `human` label)"},
+		{agentBadge.Render("AGENT"), "AGENT", "the agent's move (the default — no human label)"},
+		{humanBlockBadge.Render("HUMAN-BLOCK"), "HUMAN-BLOCK", "agent task blocked by a human-flagged dependency"},
+		{agentHandoffBadge.Render("AGENT-HANDOFF"), "AGENT-HANDOFF", "another agent owns it; a human coordinates — don't touch"},
+	}
+	for _, e := range ownerLegend {
+		pad := strings.Repeat(" ", max(0, len("AGENT-HANDOFF")-len(e.plain)))
+		fmt.Fprintf(&b, "  %s%s  %s\n", e.styled, pad, helpStyle.Render(e.gloss))
 	}
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("esc / ? / q to close"))

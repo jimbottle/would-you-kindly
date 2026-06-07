@@ -22,8 +22,9 @@ import (
 // registry order.
 func TestFetchWithSubErrors_BoundsConcurrency(t *testing.T) {
 	// More repos than the cap so an unbounded fan-out would visibly
-	// exceed fetchConcurrency.
-	const nRepos = fetchConcurrency * 3
+	// exceed fetchConcurrency. (fetchConcurrency is env-overridable now,
+	// so it's a runtime value, not a const.)
+	nRepos := fetchConcurrency * 3
 
 	// One shared pair of counters across every sub — they measure the
 	// peak concurrent fetch count across the whole fan-out.

@@ -6426,3 +6426,21 @@ func TestDetailBack_ReEnrichesPoppedParent(t *testing.T) {
 		t.Errorf("pop should re-enrich a-1; got id=%q notes=%q", dm.issue.ID, dm.issue.Notes)
 	}
 }
+
+func TestPruneStaleMarks(t *testing.T) {
+	// A mark whose issue vanished on a refetch must be dropped so a later
+	// bulk op can't target a gone row (would-you-kindly-g00n).
+	m := New(&stubSource{})
+	m.all = []beads.Issue{{ID: "a-1"}, {ID: "a-2"}}
+	m.marked = map[string]bool{"a-1": true, "a-2": true, "gone": true}
+	m.pruneStaleMarks()
+	if m.marked["gone"] {
+		t.Error("stale mark 'gone' should be pruned after refetch")
+	}
+	if !m.marked["a-1"] || !m.marked["a-2"] {
+		t.Error("marks for present rows must be kept")
+	}
+	if len(m.marked) != 2 {
+		t.Errorf("want 2 marks after prune, got %d", len(m.marked))
+	}
+}

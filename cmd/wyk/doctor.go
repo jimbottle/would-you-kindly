@@ -520,6 +520,24 @@ func checkWykOnPath() check {
 			detail: "wyk isn't on PATH; the post-commit hook (which execs `wyk hook post-commit`) won't work at commit time. Install wyk via `go install` or move the binary into your PATH.",
 		}
 	}
+	// Compare the PATH wyk's version to the running binary's. A mismatch
+	// is the classic stale-binary footgun: you run ./bin/wyk (or a fresh
+	// build) while the git post-commit hook execs an OLDER `wyk` from
+	// PATH, so the TUI and the commit-time auto-close run different code
+	// (would-you-kindly-na43).
+	running := strings.TrimSpace(versionString())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if out, verr := exec.CommandContext(ctx, path, "version").Output(); verr == nil {
+		pathVer := strings.TrimSpace(string(out))
+		if pathVer != "" && pathVer != running {
+			return check{
+				name:   "wyk binary on PATH",
+				status: statusWarn,
+				detail: fmt.Sprintf("%s is %s, but the running binary is %s — the post-commit hook execs the PATH copy, so commit-time behavior can differ from this session. Reinstall with `go install ./cmd/wyk` (or align your PATH).", path, pathVer, running),
+			}
+		}
+	}
 	return check{name: "wyk binary on PATH", status: statusPass, detail: path}
 }
 
@@ -529,25 +547,29 @@ func checkWykOnPath() check {
 // just maybe not in the user's preferred editor. FAIL only when
 // the chosen binary doesn't resolve.
 func checkEditor() check {
-	editor := os.Getenv("EDITOR")
+	// Match the TUI's parsing: $EDITOR is split into a command + args,
+	// so "code -w" resolves the "code" binary (would-you-kindly-tgmk).
+	editorRaw := os.Getenv("EDITOR")
+	fields := strings.Fields(editorRaw)
 	fallback := false
-	if editor == "" {
-		editor = "vi"
+	if len(fields) == 0 {
+		fields = []string{"vi"}
 		fallback = true
 	}
-	path, err := exec.LookPath(editor)
+	bin := fields[0]
+	path, err := exec.LookPath(bin)
 	if err != nil {
 		return check{
 			name:   "$EDITOR resolves",
 			status: statusFail,
-			detail: fmt.Sprintf("the TUI's `e` key opens %q on the description; not on PATH. Set EDITOR to a binary you have installed (e.g. vim, nvim, nano, code -w).", editor),
+			detail: fmt.Sprintf("the TUI's `e` key opens %q on the description; %q is not on PATH. Set EDITOR to a binary you have installed (e.g. vim, nvim, nano, code -w).", editorRaw, bin),
 		}
 	}
 	st := statusPass
-	detail := fmt.Sprintf("%s — %s", editor, path)
+	detail := fmt.Sprintf("%s — %s", strings.Join(fields, " "), path)
 	if fallback {
 		st = statusWarn
-		detail = fmt.Sprintf("%s — %s (fallback; $EDITOR is unset)", editor, path)
+		detail = fmt.Sprintf("%s — %s (fallback; $EDITOR is unset)", bin, path)
 	}
 	return check{name: "$EDITOR resolves", status: st, detail: detail}
 }

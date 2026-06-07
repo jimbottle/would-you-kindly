@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -165,7 +166,25 @@ const markBlockedByHumanConcurrency = 8
 // `bd dep list` calls against an already-warm engine, whereas these
 // are the expensive cold-start `bd list` calls we actually need to
 // rate-limit.
-const fetchConcurrency = 4
+//
+// Overridable via WYK_FETCH_CONCURRENCY (clamped to >=1) so a user with
+// many repos / a slow filesystem can tune the fan-out without a
+// recompile (would-you-kindly-qhdf). A var, not a const, so the env is
+// read once at package load and every call site below picks it up.
+const defaultFetchConcurrency = 4
+
+var fetchConcurrency = fetchConcurrencyFromEnv()
+
+func fetchConcurrencyFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv("WYK_FETCH_CONCURRENCY"))
+	if raw == "" {
+		return defaultFetchConcurrency
+	}
+	if n, err := strconv.Atoi(raw); err == nil && n >= 1 {
+		return n
+	}
+	return defaultFetchConcurrency
+}
 
 // fetchRetryBaseBackoff is the floor delay before a transient-timeout
 // retry. fetchRetryBackoff staggers per-index on top of it so a wave
