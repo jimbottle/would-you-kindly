@@ -4979,18 +4979,15 @@ func friendlyError(err error) string {
 	}
 }
 
-// trunc caps s at n runes, replacing the trailing rune with `…`
-// when truncation actually happens. Rune-aware (not byte-aware) so
-// non-ASCII content — issue titles, repo names with diacritics —
-// can't be split mid-codepoint. Width semantics throughout the TUI
-// (column widths, banner caps) are visual, not byte, so this is
-// the right unit. n<=0 returns ""; n==1 returns the first rune
-// (no ellipsis, since … would consume the slot).
-// trunc shortens s to fit n DISPLAY CELLS (not runes), appending a
-// 1-cell ellipsis when it cuts. Width is measured with dispWidth so a
-// double-wide rune (CJK/emoji) costs 2 — a rune-count budget let such
-// titles render up to 2× their column and break table alignment
-// (would-you-kindly-qabo).
+// trunc shortens s to fit n DISPLAY CELLS (not runes), appending an
+// ellipsis when it cuts. Width is measured with dispWidth, the same
+// measure the TUI uses to size columns, so a double-wide rune (CJK/emoji,
+// and ambiguous-width glyphs under ambWide) costs 2 — a rune-count budget
+// let such titles render up to ~2x their column and break table alignment
+// (would-you-kindly-qabo). The ellipsis "…" is itself ambiguous-width (2
+// cells under ambWide), so we reserve ITS measured width, not a hardcoded
+// 1 — otherwise the result would be one cell over budget. The result
+// always satisfies dispWidth(trunc(s, n)) <= n.
 func trunc(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -4998,17 +4995,22 @@ func trunc(s string, n int) string {
 	if dispWidth(s) <= n {
 		return s
 	}
-	// We must leave 1 cell for the ellipsis, so kept content fits n-1.
-	// At n==1 there's no room for content + ellipsis: show the first rune
-	// if it's narrow (1 cell), else the ellipsis alone — never a wide
-	// rune that would overflow the single cell.
-	if n == 1 {
-		if r, _ := utf8.DecodeRuneInString(s); r != utf8.RuneError && dispWidth(string(r)) == 1 {
-			return string(r)
-		}
-		return "…"
+	const ell = "…"
+	ew := dispWidth(ell)
+	if n < ew {
+		// No room for the ellipsis at all — return as much leading
+		// content as fits in n cells, unmarked.
+		return fitCells(s, n)
 	}
-	budget := n - 1
+	return fitCells(s, n-ew) + ell
+}
+
+// fitCells returns the longest leading run of s whose display width
+// (dispWidth) is <= budget, never splitting a rune. budget <= 0 -> "".
+func fitCells(s string, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
 	var b strings.Builder
 	used := 0
 	for _, r := range s {
@@ -5019,5 +5021,5 @@ func trunc(s string, n int) string {
 		b.WriteRune(r)
 		used += w
 	}
-	return b.String() + "…"
+	return b.String()
 }
