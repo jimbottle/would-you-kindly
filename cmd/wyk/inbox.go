@@ -177,7 +177,7 @@ func emitInboxJSON(all []beads.Issue, subErrs []subError, compact bool) {
 	if all == nil {
 		all = []beads.Issue{}
 	}
-	res := inboxResult{Issues: all, Errors: subErrorsToRepoErrors(subErrs)}
+	res := inboxResult{Issues: all, Degraded: len(subErrs) > 0, Errors: subErrorsToRepoErrors(subErrs)}
 	if err := emitJSON(os.Stdout, res, compact); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk inbox: encode:", err)
 	}
@@ -275,7 +275,13 @@ type repoError struct {
 // responded.
 type inboxResult struct {
 	Issues []beads.Issue `json:"issues"`
-	Errors []repoError   `json:"errors,omitempty"`
+	// Degraded is true when at least one repo failed, so the issues list
+	// may be INCOMPLETE — critically, an empty list with degraded=true
+	// must NOT be read as "no work" (would-you-kindly-aity). Always
+	// emitted (even false) so a consumer can branch on one boolean
+	// without having to inspect the errors array.
+	Degraded bool        `json:"degraded"`
+	Errors   []repoError `json:"errors,omitempty"`
 }
 
 func fetchInbox(subs []inboxSub, query string) ([]beads.Issue, []subError) {
@@ -360,7 +366,14 @@ func limitByPriority(issues []beads.Issue, limit int) []beads.Issue {
 // list may be incomplete.
 func renderInboxText(all []beads.Issue, subErrs []subError) {
 	if len(all) == 0 {
-		fmt.Println("inbox empty (no agent-filed issues currently bounced back).")
+		if len(subErrs) > 0 {
+			// Don't assert emptiness when some repos failed — the inbox
+			// could be non-empty in a repo we couldn't reach
+			// (would-you-kindly-aity). The footer below names the failures.
+			fmt.Println("inbox empty from the repos that responded — but some failed, so this may be INCOMPLETE.")
+		} else {
+			fmt.Println("inbox empty (no agent-filed issues currently bounced back).")
+		}
 	} else {
 		multiRepo := false
 		for _, i := range all {

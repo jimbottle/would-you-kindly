@@ -7,11 +7,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// Debug, when true, makes every bd invocation log its argv, the -C dir,
+// elapsed time, and error via the standard logger. wyk sets this (and
+// points the standard logger at a file) when WYK_DEBUG / WYK_LOG_FILE is
+// set, so a stuck or slow TUI can be diagnosed — stderr is invisible
+// behind the alt-screen. Off by default = zero overhead.
+// (would-you-kindly-2vyt)
+var Debug bool
 
 // ErrBDNotFound is returned when the bd binary is not on the PATH.
 // The TUI distinguishes this from other errors so it can show a
@@ -64,9 +74,34 @@ type Client struct {
 	runner runner
 }
 
-// NewClient returns a Client with sensible defaults.
+// defaultBDTimeout is the per-call deadline when WYK_BD_TIMEOUT is unset.
+const defaultBDTimeout = 10 * time.Second
+
+// NewClient returns a Client with sensible defaults. The per-call
+// timeout can be overridden with WYK_BD_TIMEOUT — either a Go duration
+// ("20s", "1m500ms") or a bare number of seconds ("20") — so large
+// workspaces / slow filesystems can extend it without a recompile.
+// An unparseable or non-positive value falls back to the default.
+// (would-you-kindly-qhdf)
 func NewClient() *Client {
-	return &Client{Binary: "bd", Timeout: 10 * time.Second}
+	return &Client{Binary: "bd", Timeout: BDTimeoutFromEnv()}
+}
+
+// BDTimeoutFromEnv resolves the per-call bd timeout from WYK_BD_TIMEOUT,
+// falling back to defaultBDTimeout. Exported so other entry points
+// (e.g. doctor's per-repo probe) can honor the same override.
+func BDTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("WYK_BD_TIMEOUT"))
+	if raw == "" {
+		return defaultBDTimeout
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d
+	}
+	if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return defaultBDTimeout
 }
 
 // --- read methods --------------------------------------------------
@@ -345,7 +380,7 @@ func (c *Client) UpdateDescription(ctx context.Context, id, description string) 
 // run executes a bd subcommand and returns its stdout, classifying
 // "not found" and "no workspace" errors so callers can render
 // targeted messages. stdin may be nil for commands that don't need it.
-func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) (out []byte, err error) {
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
@@ -366,6 +401,15 @@ func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) ([]by
 	// when a shorter parent deadline fires first (the effective
 	// deadline is min(c.Timeout, parent.Deadline)).
 	start := time.Now()
+	// Debug tracing (would-you-kindly-2vyt): when enabled, log every bd
+	// invocation's argv + elapsed + error to the standard logger (which
+	// wyk points at WYK_DEBUG/WYK_LOG_FILE). Off by default = zero cost.
+	if Debug {
+		defer func() {
+			log.Printf("bd %s (dir=%q) took %s err=%v",
+				strings.Join(args, " "), c.Dir, time.Since(start).Round(time.Millisecond), err)
+		}()
+	}
 	stdout, stderr, err := r(ctx, c.Binary, full, stdin)
 	if err == nil {
 		return stdout, nil

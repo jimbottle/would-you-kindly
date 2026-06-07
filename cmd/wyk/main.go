@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -257,6 +258,19 @@ func main() {
 	// is wheel-scroll / click-to-set-cursor — navigation is keyboard
 	// only (j/k, PgUp/PgDn, g/G). Selecting text over the CLI was the
 	// repeated ask; mouse nav had keyboard equivalents.
+	// Optional debug logging (would-you-kindly-2vyt): WYK_DEBUG=1 (or
+	// WYK_LOG_FILE=<path>) tees Bubble Tea's standard logger — and every
+	// bd invocation's argv + timing — to a file, so a stuck or slow TUI
+	// can be diagnosed; stderr is invisible behind the alt-screen.
+	if logPath := debugLogPath(); logPath != "" {
+		if lf, err := tea.LogToFile(logPath, "wyk"); err == nil {
+			defer func() { _ = lf.Close() }()
+			beads.Debug = true
+			log.Printf("wyk %s starting; debug logging enabled (%s)", versionString(), logPath)
+		} else {
+			fmt.Fprintf(os.Stderr, "wyk: could not open debug log %q: %v\n", logPath, err)
+		}
+	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	// Kick a best-effort live check in the background. We don't
 	// post the result back into the running TUI — the snapshot

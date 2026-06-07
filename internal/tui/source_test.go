@@ -1042,3 +1042,25 @@ func TestNewMultiBDSource_SharesOneDepSemAcrossSubs(t *testing.T) {
 		}
 	}
 }
+
+func TestFetchConcurrencyFromEnv(t *testing.T) {
+	cases := []struct {
+		set  string
+		want int
+	}{
+		{"", defaultFetchConcurrency},
+		{"8", 8},
+		{"1", 1},
+		{"0", defaultFetchConcurrency},    // must be >=1
+		{"-3", defaultFetchConcurrency},   // must be >=1
+		{"lots", defaultFetchConcurrency}, // unparseable
+	}
+	for _, c := range cases {
+		t.Run(c.set, func(t *testing.T) {
+			t.Setenv("WYK_FETCH_CONCURRENCY", c.set)
+			if got := fetchConcurrencyFromEnv(); got != c.want {
+				t.Errorf("fetchConcurrencyFromEnv() with %q = %d, want %d", c.set, got, c.want)
+			}
+		})
+	}
+}

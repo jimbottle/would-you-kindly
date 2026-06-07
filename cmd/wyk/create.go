@@ -38,6 +38,22 @@ func sessionLabelFromEnv() string {
 	return sessionLabel(strings.TrimSpace(os.Getenv(sessionEnvVar)))
 }
 
+// debugLogPath resolves where the TUI should tee its debug log, or ""
+// to disable. WYK_LOG_FILE sets an explicit path; otherwise WYK_DEBUG
+// (any truthy value) enables logging to "wyk-debug.log" in the cwd.
+// (would-you-kindly-2vyt)
+func debugLogPath() string {
+	if p := strings.TrimSpace(os.Getenv("WYK_LOG_FILE")); p != "" {
+		return p
+	}
+	switch strings.TrimSpace(os.Getenv("WYK_DEBUG")) {
+	case "", "0", "false", "no", "off":
+		return ""
+	default:
+		return "wyk-debug.log"
+	}
+}
+
 // createUsage describes `wyk create`. It is intentionally thin: every
 // flag is forwarded verbatim to `bd create`, so the authoritative flag
 // reference is bd's own (`bd create --help`).
