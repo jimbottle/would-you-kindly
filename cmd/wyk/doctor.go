@@ -673,12 +673,6 @@ func doltRemoteCheck(prefix string, out []byte, err error) (check, bool) {
 	}, true
 }
 
-// classifyGuardHook turns the contents of a repo's .claude/settings.json
-// into a check for the bd-create-guard PreToolUse hook. data/readErr are
-// the os.ReadFile result; repoPath is only for the re-init hint. The PASS
-// case carries an explicit caveat: doctor verifies the FILE, but cannot
-// confirm Claude Code actually TRUSTS/RUNS the project hooks — that
-// approval state is invisible here (would-you-kindly-rp73).
 // claudeBlockSalienceNote returns a hint when the wyk conventions block
 // sits deep in a LONG CLAUDE.md — it's loaded either way, but low in a
 // big file an agent is likelier to under-weight it (would-you-kindly-rp73).
@@ -698,6 +692,12 @@ func claudeBlockSalienceNote(body []byte) string {
 	return ""
 }
 
+// classifyGuardHook turns the contents of a repo's .claude/settings.json
+// into a check for the bd-create-guard PreToolUse hook. data/readErr are
+// the os.ReadFile result; repoPath is only for the re-init hint. The PASS
+// case carries an explicit caveat: doctor verifies the FILE, but cannot
+// confirm Claude Code actually TRUSTS/RUNS the project hooks — that
+// approval state is invisible here (would-you-kindly-rp73).
 func classifyGuardHook(prefix, repoPath string, data []byte, readErr error) check {
 	name := prefix + ": bd-create-guard hook"
 	reinit := "Re-run `(cd " + repoPath + " && wyk init)` to install it."
