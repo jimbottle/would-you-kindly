@@ -380,6 +380,24 @@ func buildSource(dir, me string) (tui.Source, []string, string, error) {
 //	1   generic failure (bd error, IO error, …)
 //	2   bd missing or no workspace
 //	64  usage error (bad flags / missing args / TTY-stdin without --allow-empty)
+//
+// handoffRunbookTemplate is the skeleton `wyk handoff --template` prints.
+// It mirrors the three REQUIRED sections in docs/CONTRACT.md so a human
+// filling in a handoff doesn't have to memorize the headings.
+const handoffRunbookTemplate = `## Why this needs you (please confirm this is accurate)
+<What you tried (three concrete attempts), the boundary you hit, and why
+no workaround exists. Phrased as a claim the human can push back on.>
+
+## Steps
+1. <concrete step with a location>
+2. <…>
+3. Close this issue when complete.
+
+## What unblocks me when this returns
+<The concrete artifact you expect back — a credential at a known path, a
+URL in a constant, a decision recorded here — so the next agent can resume.>
+`
+
 func runHandoff(args []string) int {
 	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
 	dir := fs.String("C", "", "run as if bd had been started in this directory")
@@ -398,6 +416,8 @@ func runHandoff(args []string) int {
 		"route this handoff to a named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY")
 	dryRun := fs.Bool("dry-run", false,
 		"print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it")
+	template := fs.Bool("template", false,
+		"print the required 3-section runbook skeleton to stdout and exit (no bd writes); pipe it into your editor, fill it in, then `wyk handoff <id> < filled.md`")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -405,6 +425,14 @@ func runHandoff(args []string) int {
 			return 0
 		}
 		return 64
+	}
+
+	// --template short-circuits everything: emit the runbook skeleton so a
+	// human (or agent) has the required structure to fill in, rather than
+	// memorizing the three headings (would-you-kindly-uhux).
+	if *template {
+		fmt.Print(handoffRunbookTemplate)
+		return 0
 	}
 
 	// Resolve the routing identity (flag > $WYK_AGENT_IDENTITY > none).
@@ -424,7 +452,8 @@ func runHandoff(args []string) int {
 	case *createTitle == "" && fs.NArg() != 1:
 		fmt.Fprintln(os.Stderr,
 			"usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n"+
-				"   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]")
+				"   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]\n"+
+				"   or: wyk handoff -template   (print the runbook skeleton and exit)")
 		return 64
 	}
 

@@ -277,9 +277,10 @@ func (m Model) runRawBD(rest string) (tea.Model, tea.Cmd) {
 		repo = m.visible[m.cursor].Repo
 	}
 	args := shellFields(rest)
+	note := rawWriteWarning(args)
 	return m, func() tea.Msg {
 		out, err := raw.RawBD(context.Background(), repo, args)
-		return rawBDMsg{args: rest, out: out, err: err}
+		return rawBDMsg{args: rest, out: out, err: err, note: note}
 	}
 }
 
@@ -341,6 +342,47 @@ type rawBDMsg struct {
 	args string
 	out  []byte
 	err  error
+	// note is a wyk-side advisory (not from bd) prepended to the output
+	// overlay — e.g. the un-committed-write warning (would-you-kindly-17aw).
+	note string
+}
+
+// rawWriteWarning reports whether a `:bd` argv is a WRITE that would land
+// in Dolt's working set without an explicit --dolt-auto-commit (in which
+// case the user owns the persistence decision and we stay quiet),
+// returning the advisory to show or "" when no warning is warranted.
+func rawWriteWarning(args []string) string {
+	if len(args) == 0 || hasFlagPrefix(args, "--dolt-auto-commit") {
+		return ""
+	}
+	write := false
+	switch args[0] {
+	case "create", "close", "reopen", "delete", "update", "defer", "undefer",
+		"supersede", "forget", "remember", "note", "comment":
+		write = true
+	case "dep", "label":
+		// Two-word forms: "dep add/remove" and "label add/remove" write;
+		// "dep list" / "label" (list) are reads.
+		if len(args) > 1 && (args[1] == "add" || args[1] == "remove" || args[1] == "rm") {
+			write = true
+		}
+	}
+	if !write {
+		return ""
+	}
+	return "note: raw `:bd` writes are NOT auto-committed — this change may not " +
+		"survive a later `bd dolt push`. Re-run with --dolt-auto-commit=on, or use " +
+		"the dedicated TUI keys (a/H/n/d/…), which commit for you."
+}
+
+// hasFlagPrefix reports whether args contains `name` or `name=...`.
+func hasFlagPrefix(args []string, name string) bool {
+	for _, a := range args {
+		if a == name || strings.HasPrefix(a, name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // updateOutput drives the read-only modeOutput overlay. q / esc /

@@ -168,3 +168,21 @@ func TestHandoff_CreateStampsSessionLabel(t *testing.T) {
 		t.Errorf("dry-run -create should plan the session label; got:\n%s", out)
 	}
 }
+
+func TestHandoff_TemplatePrintsSkeletonAndExitsZero(t *testing.T) {
+	out := captureHandoffStdout(t, func() {
+		if code := runHandoff([]string{"-template"}); code != 0 {
+			t.Errorf("handoff -template exit %d, want 0", code)
+		}
+	})
+	for _, want := range []string{
+		"## Why this needs you (please confirm this is accurate)",
+		"## Steps",
+		"## What unblocks me when this returns",
+		"Close this issue when complete.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("template output missing %q; got:\n%s", want, out)
+		}
+	}
+}
