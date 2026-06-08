@@ -104,9 +104,21 @@ func descriptionForHandoff(ctx context.Context, m Mutator, id, runbook string) s
 	}
 	prior = strings.TrimSpace(prior)
 	// Nothing to preserve, or the prior body already IS this runbook
-	// (e.g. a retry) — don't append a duplicate.
-	if prior == "" || prior == strings.TrimSpace(runbook) || strings.Contains(runbook, priorDescriptionHeading) {
+	// (a retry of a handoff that had no original) — don't append.
+	if prior == "" || prior == strings.TrimSpace(runbook) {
 		return runbook
 	}
-	return runbook + "\n\n" + priorDescriptionHeading + "\n\n" + prior
+	// Retry of a handoff that DID preserve an original: the prior body is
+	// already "<old runbook>\n\n## Prior description\n\n<original>". Reuse
+	// that SAME preserved section under the (possibly updated) runbook
+	// rather than nesting another copy — this keeps repeated handoffs
+	// idempotent AND keeps the one original. Guarding on `prior` (not
+	// `runbook`, which never carries the marker) is the fix for
+	// would-you-kindly's roborev #1845.
+	sep := "\n\n" + priorDescriptionHeading
+	if i := strings.Index(prior, sep); i >= 0 {
+		return runbook + prior[i:]
+	}
+	// First handoff with a real prior body: preserve it under the heading.
+	return runbook + sep + "\n\n" + prior
 }
