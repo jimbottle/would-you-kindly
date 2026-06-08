@@ -680,6 +680,16 @@ func checkRepo(r registry.Repo) []check {
 		// a Dolt remote, issues live only on this machine and a teammate
 		// never sees them. bd exposes no ahead/behind count, so we surface
 		// the next-best signal: whether a remote is configured at all.
+		//
+		// This execs bd directly rather than through beads.Client's
+		// swappable runner (which has no DoltRemoteList method) — a
+		// deliberate exception to the CLAUDE.md "use the runner" convention
+		// for this ADVISORY-only row: the classification (the part that
+		// matters) is extracted into the unit-tested doltRemoteCheck, and a
+		// bad read just drops the row (rerr != nil → ok=false). .Output()
+		// captures stdout only by design — bd prints the remote list there;
+		// if a build emits it elsewhere we under-detect (WARN, the safe
+		// direction), never a false PASS (roborev #1844).
 		dctx, dcancel := context.WithTimeout(context.Background(), doctorPerRepoTimeout)
 		rout, rerr := exec.CommandContext(dctx, "bd", "-C", r.Path, "dolt", "remote", "list").Output()
 		dcancel()
