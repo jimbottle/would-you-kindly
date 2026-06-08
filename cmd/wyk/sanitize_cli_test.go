@@ -26,3 +26,13 @@ func TestDepNodeLabel_SanitizesTitle(t *testing.T) {
 		t.Errorf("depNodeLabel leaked a raw ESC from a hostile title: %q", got)
 	}
 }
+
+func TestJoinRepoErrors_Sanitizes(t *testing.T) {
+	got := joinRepoErrors([]repoError{
+		{Repo: evilTitle, Error: "boom" + evilTitle},
+		{Error: evilTitle},
+	})
+	if strings.ContainsRune(got, 0x1b) {
+		t.Errorf("error footer leaked a raw ESC from a hostile repo/error: %q", got)
+	}
+}
