@@ -651,3 +651,50 @@ func TestDoltRemoteCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyGuardHook(t *testing.T) {
+	const good = `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"wyk hook bd-create-guard"}]}]}}`
+	const noHook = `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"something else"}]}]}}`
+
+	// Present -> PASS, with the trust caveat.
+	c := classifyGuardHook("repo x", "/p", []byte(good), nil)
+	if c.status != statusPass {
+		t.Errorf("present hook should PASS; got %v", c.status)
+	}
+	if !strings.Contains(c.detail, "/hooks") || !strings.Contains(strings.ToLower(c.detail), "trust") {
+		t.Errorf("PASS detail must caveat that Claude Code must trust/run it; got %q", c.detail)
+	}
+	// Missing file -> WARN.
+	if c := classifyGuardHook("repo x", "/p", nil, os.ErrNotExist); c.status != statusWarn {
+		t.Errorf("missing settings.json should WARN; got %v", c.status)
+	}
+	// Invalid JSON -> WARN.
+	if c := classifyGuardHook("repo x", "/p", []byte("{not json"), nil); c.status != statusWarn || !strings.Contains(c.detail, "valid JSON") {
+		t.Errorf("invalid JSON should WARN about JSON; got %v %q", c.status, c.detail)
+	}
+	// Valid but hook absent -> WARN.
+	if c := classifyGuardHook("repo x", "/p", []byte(noHook), nil); c.status != statusWarn || !strings.Contains(c.detail, "missing") {
+		t.Errorf("hook-absent should WARN as missing; got %v %q", c.status, c.detail)
+	}
+}
+
+func TestClaudeBlockSalienceNote(t *testing.T) {
+	long := strings.Repeat("filler\n", 300)
+	block := wykConventionsBeginPrefix + " v:1 -->\n"
+	// Block near the bottom of a long file -> note.
+	if note := claudeBlockSalienceNote([]byte(long + block)); note == "" {
+		t.Error("buried block in a long file should produce a salience note")
+	}
+	// Block near the top of a long file -> no note.
+	if note := claudeBlockSalienceNote([]byte(block + long)); note != "" {
+		t.Errorf("top-placed block should not nag; got %q", note)
+	}
+	// Short file -> no note even if at the bottom.
+	if note := claudeBlockSalienceNote([]byte("a\nb\n" + block)); note != "" {
+		t.Errorf("short file should not nag; got %q", note)
+	}
+	// No block -> empty.
+	if note := claudeBlockSalienceNote([]byte(long)); note != "" {
+		t.Errorf("no block -> empty; got %q", note)
+	}
+}
