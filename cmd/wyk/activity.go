@@ -237,10 +237,15 @@ func emitActivityJSON(w io.Writer, events []activityEvent, cutoff time.Time, rep
 func joinRepoErrors(errs []repoError) string {
 	parts := make([]string, 0, len(errs))
 	for _, e := range errs {
-		if e.Repo != "" {
-			parts = append(parts, e.Repo+": "+e.Error)
+		// This footer prints to a terminal across inbox/activity/stats.
+		// Repo names and the error string (which carries bd's stderr) are
+		// untrusted-adjacent, so strip control bytes like the table rows
+		// do (would-you-kindly-5zlr / roborev #1858).
+		repo, errStr := sanitize.Inline(e.Repo), sanitize.Inline(e.Error)
+		if repo != "" {
+			parts = append(parts, repo+": "+errStr)
 		} else {
-			parts = append(parts, e.Error)
+			parts = append(parts, errStr)
 		}
 	}
 	return strings.Join(parts, "; ")
