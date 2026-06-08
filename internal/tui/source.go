@@ -432,7 +432,9 @@ type subCacheEntry struct {
 	mtime  time.Time
 	at     time.Time
 	issues []beads.Issue
-	branch string
+	// NB: the git branch is deliberately NOT cached — it's decoupled
+	// from .beads mtime (a `git checkout` wouldn't invalidate), so the
+	// fetch re-derives it live on every hit (roborev #1850).
 }
 
 // fetchCacheTTL bounds how long a cache entry is trusted even if its
@@ -459,25 +461,25 @@ func beadsMtime(repoPath string) (time.Time, bool) {
 // matches the requested preset, the current .beads mtime, and is within
 // the TTL. Returns a COPY so a downstream in-place re-stamp can't corrupt
 // the cached slice.
-func (m *MultiBDSource) cacheGet(name string, p filter.Preset, mtime time.Time) ([]beads.Issue, string, bool) {
+func (m *MultiBDSource) cacheGet(name string, p filter.Preset, mtime time.Time) ([]beads.Issue, bool) {
 	m.cacheMu.Lock()
 	defer m.cacheMu.Unlock()
 	e, ok := m.cache[name]
 	if !ok || e.preset != p || !e.mtime.Equal(mtime) || time.Since(e.at) > fetchCacheTTL {
-		return nil, "", false
+		return nil, false
 	}
-	return cloneIssues(e.issues), e.branch, true
+	return cloneIssues(e.issues), true
 }
 
 // cachePut snapshots a fresh fetch result for name. Stores a COPY so the
 // fetch path's subsequent in-place re-stamp doesn't mutate the entry.
-func (m *MultiBDSource) cachePut(name string, p filter.Preset, mtime time.Time, issues []beads.Issue, branch string) {
+func (m *MultiBDSource) cachePut(name string, p filter.Preset, mtime time.Time, issues []beads.Issue) {
 	m.cacheMu.Lock()
 	defer m.cacheMu.Unlock()
 	if m.cache == nil {
 		m.cache = make(map[string]subCacheEntry)
 	}
-	m.cache[name] = subCacheEntry{preset: p, mtime: mtime, at: time.Now(), issues: cloneIssues(issues), branch: branch}
+	m.cache[name] = subCacheEntry{preset: p, mtime: mtime, at: time.Now(), issues: cloneIssues(issues)}
 }
 
 // InvalidateCache drops every cached fetch result, forcing the next
@@ -628,9 +630,14 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 			// (ok==false) disables caching for this sub — always fetch live.
 			mtime, statOK := beadsMtime(sub.path)
 			if statOK {
-				if cached, branch, hit := m.cacheGet(sub.name, p, mtime); hit {
+				if cached, hit := m.cacheGet(sub.name, p, mtime); hit {
 					results[i] = result{issues: cached}
-					branches[i] = branch
+					// Re-derive the branch LIVE even on a cache hit: a
+					// `git checkout` changes the branch WITHOUT touching
+					// .beads/, so the cached mtime wouldn't catch it. The
+					// git rev-parse is far cheaper than the bd subprocess
+					// the cache is skipping (roborev #1850/#1849).
+					branches[i] = sub.branchFn(ctx)
 					return
 				}
 			}
@@ -665,7 +672,7 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 				// repo's bd call until its .beads/ changes (only when the
 				// mtime is known — never cache on an unknown stat).
 				if statOK {
-					m.cachePut(sub.name, p, mtime, issues, branches[i])
+					m.cachePut(sub.name, p, mtime, issues)
 				}
 			}
 		}(i, sub)
