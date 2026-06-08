@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -363,8 +365,13 @@ type fullSource interface {
 // quit, refresh-during-refresh) actually unblocks any in-flight
 // `git rev-parse`. Tests pass a constant.
 type subRepo struct {
-	name     string
-	src      fullSource
+	name string
+	src  fullSource
+	// path is the repo's working dir, used to stat .beads for the
+	// per-repo fetch cache (would-you-kindly-jipr). Empty disables
+	// caching for this sub (e.g. test stubs) — the stat fails, so the
+	// fetch always runs live.
+	path     string
 	branchFn func(context.Context) string
 }
 
@@ -403,6 +410,96 @@ type MultiSource interface {
 // set" failure rather than a silent ID-collision mis-route.
 type MultiBDSource struct {
 	subs []subRepo
+
+	// Per-repo fetch cache (would-you-kindly-jipr). A refresh re-queries
+	// every registered repo via bd, which scales poorly with registry
+	// size; most refreshes (a tick, or an fs-event from ONE repo's write)
+	// leave the other repos unchanged. We skip the bd subprocess for a
+	// repo whose .beads/ mtime AND preset match a recent cache entry.
+	// Invalidated by: an mtime change (covers every bd write, local or
+	// external, since bd's temp-file+rename writes bump the dir mtime),
+	// SetIncludeClosed (changes query semantics without touching .beads),
+	// an explicit InvalidateCache (the manual `r` refresh), and a TTL
+	// backstop that self-heals any missed mtime signal.
+	cacheMu sync.Mutex
+	cache   map[string]subCacheEntry
+}
+
+// subCacheEntry is one repo's cached fetch result. Keyed by sub name in
+// MultiBDSource.cache.
+type subCacheEntry struct {
+	preset filter.Preset
+	mtime  time.Time
+	at     time.Time
+	issues []beads.Issue
+	branch string
+}
+
+// fetchCacheTTL bounds how long a cache entry is trusted even if its
+// .beads mtime never changes — a backstop against a missed mtime signal.
+// Generous because mtime + the manual `r` refresh are the real freshness
+// mechanisms; the TTL just guarantees eventual self-heal.
+const fetchCacheTTL = 5 * time.Minute
+
+// beadsMtime returns the modification time of repoPath/.beads and ok=true
+// when it can be stat'd. ok=false (empty path, missing dir, stat error)
+// means "freshness unknown" — the caller must NOT serve from cache.
+func beadsMtime(repoPath string) (time.Time, bool) {
+	if repoPath == "" {
+		return time.Time{}, false
+	}
+	fi, err := os.Stat(filepath.Join(repoPath, ".beads"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
+
+// cacheGet returns the cached issues+branch for name when the entry
+// matches the requested preset, the current .beads mtime, and is within
+// the TTL. Returns a COPY so a downstream in-place re-stamp can't corrupt
+// the cached slice.
+func (m *MultiBDSource) cacheGet(name string, p filter.Preset, mtime time.Time) ([]beads.Issue, string, bool) {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+	e, ok := m.cache[name]
+	if !ok || e.preset != p || !e.mtime.Equal(mtime) || time.Since(e.at) > fetchCacheTTL {
+		return nil, "", false
+	}
+	return cloneIssues(e.issues), e.branch, true
+}
+
+// cachePut snapshots a fresh fetch result for name. Stores a COPY so the
+// fetch path's subsequent in-place re-stamp doesn't mutate the entry.
+func (m *MultiBDSource) cachePut(name string, p filter.Preset, mtime time.Time, issues []beads.Issue, branch string) {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+	if m.cache == nil {
+		m.cache = make(map[string]subCacheEntry)
+	}
+	m.cache[name] = subCacheEntry{preset: p, mtime: mtime, at: time.Now(), issues: cloneIssues(issues), branch: branch}
+}
+
+// InvalidateCache drops every cached fetch result, forcing the next
+// FetchWithSubErrors to re-query every repo live. Called on the manual
+// `r` refresh and whenever query semantics change (SetIncludeClosed).
+func (m *MultiBDSource) InvalidateCache() {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+	m.cache = nil
+}
+
+// cloneIssues returns a shallow copy of the slice (new backing array,
+// shared inner slices like Labels — which the render/leak-guard paths
+// never mutate). Enough to stop top-level struct aliasing between the
+// cache and the live fetch result.
+func cloneIssues(in []beads.Issue) []beads.Issue {
+	if in == nil {
+		return nil
+	}
+	out := make([]beads.Issue, len(in))
+	copy(out, in)
+	return out
 }
 
 // ClosedToggler is the optional interface a Source implements to
@@ -410,6 +507,14 @@ type MultiBDSource struct {
 // both satisfy it; the model runtime type-asserts.
 type ClosedToggler interface {
 	SetIncludeClosed(v bool)
+}
+
+// cacheInvalidator is the optional interface a Source implements to drop
+// any internal fetch cache on demand. MultiBDSource satisfies it; the
+// model calls it on the manual `r` refresh so the user can always force
+// fresh data (would-you-kindly-jipr).
+type cacheInvalidator interface {
+	InvalidateCache()
 }
 
 // SetIncludeClosed makes BDSource satisfy ClosedToggler so a
@@ -428,6 +533,10 @@ func (m *MultiBDSource) SetIncludeClosed(v bool) {
 			bds.IncludeClosed = v
 		}
 	}
+	// The cache is keyed on (preset, mtime) but NOT on IncludeClosed, and
+	// toggling it changes what a fetch returns without touching .beads —
+	// so drop the cache to avoid serving the old closed-ness.
+	m.InvalidateCache()
 }
 
 // Compile-time check.
@@ -461,6 +570,7 @@ func NewMultiBDSource(clients []*beads.Client, names []string, me string) (*Mult
 		subs[i] = subRepo{
 			name:     names[i],
 			src:      &BDSource{Client: c, Me: me, DepSem: depSem},
+			path:     dir,
 			branchFn: func(ctx context.Context) string { return gitBranch(ctx, dir) },
 		}
 	}
@@ -512,6 +622,18 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 		wg.Add(1)
 		go func(i int, sub subRepo) {
 			defer wg.Done()
+			// Per-repo cache fast path (would-you-kindly-jipr): if .beads
+			// can be stat'd and a recent entry matches this preset + mtime,
+			// reuse it and SKIP the bd subprocess entirely. A failed stat
+			// (ok==false) disables caching for this sub — always fetch live.
+			mtime, statOK := beadsMtime(sub.path)
+			if statOK {
+				if cached, branch, hit := m.cacheGet(sub.name, p, mtime); hit {
+					results[i] = result{issues: cached}
+					branches[i] = branch
+					return
+				}
+			}
 			// Each attempt acquires the semaphore for its own duration
 			// so the retry stays concurrency-capped too — a retry wave
 			// can't blow past fetchConcurrency.
@@ -539,6 +661,12 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 			results[i] = result{issues: issues, err: err}
 			if err == nil {
 				branches[i] = sub.branchFn(ctx)
+				// Cache the fresh result so the next refresh can skip this
+				// repo's bd call until its .beads/ changes (only when the
+				// mtime is known — never cache on an unknown stat).
+				if statOK {
+					m.cachePut(sub.name, p, mtime, issues, branches[i])
+				}
 			}
 		}(i, sub)
 	}
