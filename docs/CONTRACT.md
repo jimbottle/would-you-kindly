@@ -298,6 +298,27 @@ This document is the contract. If the labels or the field-mapping change,
 bump the **Schema** line below and update `wyk`'s preset query strings in the
 same commit.
 
+### Migrating between contract versions
+
+The contract is **additive by design**, which keeps migration cheap:
+
+- Every version so far only *adds* an optional label (`v2` added
+  `agent-handoff`; a future `v3` adds `src:agent:<name>`). Existing issues
+  stay valid — an issue filed under `v1` is still a correct `v2`/`v3` issue;
+  it simply doesn't carry the newer optional labels. **No relabeling is
+  required to upgrade.**
+- Because the encoding is plain bd labels with no parallel storage,
+  *downgrading* is just as safe: an older `wyk` ignores labels it doesn't
+  know, so a newer-version issue still shows up (minus the newer behavior).
+- The one hard rule: `wyk`'s query strings and this document move together
+  in the same commit (above), so a given `wyk` build and the contract it
+  speaks are never out of sync.
+
+There is intentionally **no `wyk migrate` command** — additive versioning
+means there's nothing to rewrite. If a future version ever makes a
+*breaking* change (renaming or repurposing a label), it will ship a
+one-shot relabel command and call it out here explicitly.
+
 **Schema:** `wyk-contract/v2`
 
 Changelog:

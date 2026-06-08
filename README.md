@@ -13,6 +13,10 @@ mechanical part of a task and needs a human to do the part it cannot.
 lets you press one key — `h` — to filter down to exactly the issues an
 agent has flagged for your attention.
 
+The name is the point: *"would you kindly"* is a polite imperative — the
+agent asking the human to please do the part it can't. `wyk` is the binary;
+`bd` (beads) is the tracker underneath.
+
 ## Why
 
 Most issue trackers assume tasks are either assigned to a person or
@@ -29,12 +33,31 @@ description is the runbook the human follows; `src:agent` / `src:human`
 records who filed it. The full contract lives in
 [`docs/CONTRACT.md`](docs/CONTRACT.md).
 
+## Mental model
+
+Three moving parts, smallest to largest:
+
+- **beads (`bd`)** is the issue tracker. It stores every issue in a
+  [Dolt](https://www.dolthub.com) database (a versioned SQL store) under
+  `.beads/`. wyk never touches that storage directly — it shells out to
+  `bd` for every read and write.
+- **wyk** is a *view* over bd plus a *label convention*. It owns no data of
+  its own; stop using wyk and your issues are still plain bd issues, readable
+  by any bd tool.
+- **the convention** is, at heart, one label: **`human` = your turn.**
+  Everything else (`src:agent`, `agent-handoff`, the presets, the Owner
+  column) is detail layered on that single signal.
+
+If you remember one thing: an issue with the `human` label is waiting on
+*you* — press `h` to see only those.
+
 ## Install
 
 You'll need Go 1.26+ (matching `go.mod`) and the **`bd` (beads)** binary on
 your `PATH` — wyk shells out to it for all storage. Install bd first by
 following the instructions in its repo:
-[github.com/gastownhall/beads](https://github.com/gastownhall/beads).
+[github.com/gastownhall/beads](https://github.com/gastownhall/beads). wyk is
+tested against **bd 1.0.4 or newer**; `wyk doctor` warns if your bd is older.
 
 Then install wyk:
 
@@ -73,6 +96,17 @@ wyk --version
 The `(commit …)` suffix and `-dirty` marker only appear for builds
 produced inside this repo's working tree — Go's module-proxy builds
 don't carry VCS stamps.
+
+### Platform support
+
+macOS and Linux are first-class. Windows is supported via **WSL** — the
+native Windows console isn't a target, because clipboard yank and the `e`
+editor-suspend use a `/dev/tty` path that doesn't exist there (the keys
+surface an error rather than misbehaving). Clipboard copy (`y`) uses
+**OSC 52**, so it reaches your local clipboard even over SSH; your terminal
+must support OSC 52, and in tmux you need `set -g allow-passthrough on`.
+Multi-word `$EDITOR` values (`code -w`, `emacsclient -nw`) are supported;
+a path containing spaces is not.
 
 ## Run
 
@@ -262,6 +296,19 @@ actually gets recorded instead of relying on the agent reading the docs.
 Every step is idempotent — re-running is safe. Add `-skills` to also
 install the agent skills; `-skip-claude-md` (covers both enrichment
 pieces) / `-skip-register` / `-skip-bd-init` opt out of individual steps.
+
+> **What it touches, and what the guard is.** `wyk init` writes *outside*
+> `.beads/` by default: a `post-commit` git hook (chained after any
+> existing hook — never clobbered; see `-chain`/`-force`), a conventions
+> block in `CLAUDE.md`, and the `bd-create-guard` in `.claude/settings.json`.
+> Preview all of it with `wyk init -dry-run`, or skip the agent-config
+> edits with `-skip-claude-md`.
+>
+> The **`bd-create-guard` is a convention nudge, not a security control.**
+> It steers an agent's `bd create` to `wyk create` so the Session column
+> gets populated, but it is best-effort and trivially bypassable
+> (`WYK_ALLOW_BD_CREATE=1`, a shell variable, a renamed binary, a different
+> tool). Don't rely on it to sandbox what an agent can do to your bd data.
 
 After `wyk init`, every commit whose message contains a
 `Closes:`, `Fixes:`, or `Resolves:` trailer (case-insensitive) auto-
