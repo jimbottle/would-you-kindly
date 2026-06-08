@@ -11,7 +11,12 @@ Required:
 - Go 1.26+ (the version pinned in [`go.mod`](go.mod))
 - [`bd`](https://github.com/gastownhall/beads) on your `PATH` — wyk shells
   out to it for every read and write, and the test suite needs it for the
-  `wyk doctor` / multi-repo paths
+  `wyk doctor` / multi-repo paths. **`github.com/gastownhall/beads` is the
+  canonical source** (the older `github.com/steveyegge/beads` path now
+  redirects there); wyk targets **bd 1.0.4 or newer**, and a few behaviors
+  are pinned to that floor (`wyk doctor` warns on older). Note that bd's own
+  generated `.beads/README.md` may still print the legacy `steveyegge` URL —
+  that file is bd's, not wyk's.
 - A POSIX shell + git
 
 Optional but recommended:
