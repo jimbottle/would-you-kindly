@@ -580,6 +580,32 @@ func checkRegistry() ([]check, []registry.Repo) {
 	}}, reg.Repos
 }
 
+// doltRemoteCheck classifies the output of `bd dolt remote list` for a
+// repo into a durability check. ok=false means "skip" (bd dolt errored —
+// the broken-workspace case is already covered by the bd-query check, so
+// we don't add a noisy duplicate). A URL in the output ("://") means a
+// remote is configured (PASS, with a manual-push reminder); otherwise no
+// remote is configured (WARN) — covering both empty output and a
+// "no remotes" message without depending on bd's exact phrasing.
+func doltRemoteCheck(prefix string, out []byte, err error) (check, bool) {
+	if err != nil {
+		return check{}, false
+	}
+	if strings.Contains(string(out), "://") {
+		first := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+		return check{
+			name:   prefix + ": Dolt remote",
+			status: statusPass,
+			detail: first + " — wyk auto-commits locally; replicate cross-machine with `bd dolt push` (wyk never pushes for you).",
+		}, true
+	}
+	return check{
+		name:   prefix + ": Dolt remote",
+		status: statusWarn,
+		detail: "no Dolt remote configured — issues live only in this machine's local Dolt; for cross-machine durability run `bd dolt remote add <name> <url>` then `bd dolt push`.",
+	}, true
+}
+
 func checkRepo(r registry.Repo) []check {
 	prefix := "repo " + r.Name
 	var out []check
@@ -647,6 +673,18 @@ func checkRepo(r registry.Repo) []check {
 				status: statusWarn,
 				detail: qerr.Error(),
 			})
+		}
+
+		// Dolt durability (would-you-kindly-wcsu): bd auto-commits every
+		// wyk write to the LOCAL Dolt, but nothing pushes it — so without
+		// a Dolt remote, issues live only on this machine and a teammate
+		// never sees them. bd exposes no ahead/behind count, so we surface
+		// the next-best signal: whether a remote is configured at all.
+		dctx, dcancel := context.WithTimeout(context.Background(), doctorPerRepoTimeout)
+		rout, rerr := exec.CommandContext(dctx, "bd", "-C", r.Path, "dolt", "remote", "list").Output()
+		dcancel()
+		if c, ok := doltRemoteCheck(prefix, rout, rerr); ok {
+			out = append(out, c)
 		}
 	}
 
