@@ -12,6 +12,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 )
 
 // runDepgraph walks the registered bd workspaces and emits the
@@ -283,9 +284,11 @@ func finalizeDepGraph(raw rawDepGraph, includeClosed bool, priorityCap int) depG
 }
 
 // depNodeLabel renders one issue as `ID — title (status)`, the same
-// shape the TUI detail view uses for its dependency sections.
+// shape the TUI detail view uses for its dependency sections. The title
+// is untrusted bd content printed to a terminal, so strip escapes
+// (would-you-kindly-5zlr).
 func depNodeLabel(n depGraphNode) string {
-	return fmt.Sprintf("%s — %s (%s)", n.ID, n.Title, n.Status)
+	return fmt.Sprintf("%s — %s (%s)", n.ID, sanitize.Inline(n.Title), n.Status)
 }
 
 // emitDepJSON writes the graph as indented {nodes, edges} JSON. Nil

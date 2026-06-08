@@ -11,6 +11,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 )
 
 // inboxQuery is the canonical "what's been bounced back to me" query.
@@ -370,10 +371,12 @@ func renderInboxText(all []beads.Issue, subErrs []subError) {
 		}
 		fmt.Printf("%d issue(s) in inbox:\n", len(all))
 		for _, i := range all {
+			// Titles (and repo names) are untrusted bd content going to a
+			// terminal — strip escapes (would-you-kindly-5zlr).
 			if multiRepo {
-				fmt.Printf("  [%s] %-22s P%d  %s\n", i.Repo, i.ID, i.Priority, i.Title)
+				fmt.Printf("  [%s] %-22s P%d  %s\n", sanitize.Inline(i.Repo), i.ID, i.Priority, sanitize.Inline(i.Title))
 			} else {
-				fmt.Printf("  %-22s P%d  %s\n", i.ID, i.Priority, i.Title)
+				fmt.Printf("  %-22s P%d  %s\n", i.ID, i.Priority, sanitize.Inline(i.Title))
 			}
 		}
 	}
