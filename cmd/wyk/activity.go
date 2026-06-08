@@ -13,6 +13,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 )
 
 // runActivity walks every registered bd workspace, gathers
@@ -206,12 +207,14 @@ func emitActivityTable(w io.Writer, events []activityEvent, cutoff time.Time) {
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, e := range events {
+		// Title/Repo are untrusted bd content printed to a terminal —
+		// strip escapes (would-you-kindly-5zlr).
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			e.UpdatedAt.Format("2006-01-02 15:04"),
-			e.Repo,
+			sanitize.Inline(e.Repo),
 			e.Status,
 			e.ID,
-			e.Title,
+			sanitize.Inline(e.Title),
 		)
 	}
 	_ = tw.Flush()

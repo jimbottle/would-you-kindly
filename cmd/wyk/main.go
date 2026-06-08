@@ -33,6 +33,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 	"github.com/jimbottle/would-you-kindly/internal/theme"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
@@ -613,7 +614,9 @@ func runProbe(src tui.Source) int {
 	}
 	fmt.Printf("%d issue(s) flagged for human:\n", len(issues))
 	for _, i := range issues {
-		fmt.Printf("  %-24s P%d  %s\n", i.ID, i.Priority, i.Title)
+		// Titles are untrusted bd content printed to a terminal — strip
+		// escapes like the TUI does (would-you-kindly-5zlr).
+		fmt.Printf("  %-24s P%d  %s\n", i.ID, i.Priority, sanitize.Inline(i.Title))
 	}
 	// Partial multi-repo failure: at least one repo responded (we're
 	// past the total-failure err path above), but others didn't. Name
