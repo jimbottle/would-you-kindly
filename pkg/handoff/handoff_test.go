@@ -3,6 +3,7 @@ package handoff
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -79,3 +80,50 @@ func TestBounceToHuman_EmptyRunbookAllowed(t *testing.T) {
 		t.Errorf("expected empty description; got %q", s.updated)
 	}
 }
+
+// readableStubMutator additionally implements descriptionReader, so
+// BounceToHuman preserves a prior description (would-you-kindly-e2a8).
+type readableStubMutator struct {
+	stubMutator
+	prior    string
+	priorErr error
+}
+
+func (s *readableStubMutator) GetDescription(_ context.Context, id string) (string, error) {
+	return s.prior, s.priorErr
+}
+
+func TestBounceToHuman_PreservesPriorDescription(t *testing.T) {
+	s := &readableStubMutator{prior: "the agent's original working notes"}
+	if err := BounceToHuman(context.Background(), s, "wyk-9", "## Steps\n1. do it"); err != nil {
+		t.Fatalf("BounceToHuman: %v", err)
+	}
+	got := s.updated
+	if !contains(got, "## Steps") {
+		t.Errorf("runbook must stay at the top; got:\n%s", got)
+	}
+	if !contains(got, "## Prior description") || !contains(got, "the agent's original working notes") {
+		t.Errorf("prior description must be preserved under a heading; got:\n%s", got)
+	}
+}
+
+func TestBounceToHuman_NoPriorNoAppend(t *testing.T) {
+	// Empty prior (e.g. a freshly -created issue) appends nothing.
+	s := &readableStubMutator{prior: ""}
+	if err := BounceToHuman(context.Background(), s, "wyk-9", "runbook"); err != nil {
+		t.Fatal(err)
+	}
+	if s.updated != "runbook" {
+		t.Errorf("empty prior should leave runbook untouched; got %q", s.updated)
+	}
+	// A read error also falls back to runbook-only.
+	s2 := &readableStubMutator{priorErr: errors.New("boom")}
+	if err := BounceToHuman(context.Background(), s2, "wyk-9", "runbook"); err != nil {
+		t.Fatal(err)
+	}
+	if s2.updated != "runbook" {
+		t.Errorf("read error should fall back to runbook-only; got %q", s2.updated)
+	}
+}
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }

@@ -165,6 +165,17 @@ func (c *Client) Show(ctx context.Context, id string) (Issue, error) {
 	return issues[0], nil
 }
 
+// GetDescription returns the issue's current description via `bd show`.
+// Used by pkg/handoff to preserve a prior description across a handoff
+// (would-you-kindly-e2a8). Read-only despite living near the writes.
+func (c *Client) GetDescription(ctx context.Context, id string) (string, error) {
+	i, err := c.Show(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return i.Description, nil
+}
+
 // --- write methods -------------------------------------------------
 
 // Close closes the given issue. Every write passes --dolt-auto-commit=on;
