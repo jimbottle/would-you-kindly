@@ -1126,7 +1126,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		b.WriteString(msg.args)
 		b.WriteString("\n\n")
 		if len(msg.out) > 0 {
-			b.Write(msg.out)
+			// bd's stdout can echo issue content (titles/descriptions);
+			// strip terminal escapes before showing it (would-you-kindly-waub).
+			b.WriteString(sanitizeBlock(string(msg.out)))
 			if msg.out[len(msg.out)-1] != '\n' {
 				b.WriteByte('\n')
 			}
@@ -3996,7 +3998,10 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	// preceding column. Without this, long titles wrap or overflow
 	// the right edge — most existing rows in real use spill past
 	// the terminal. Detail view (enter) still shows the full text.
-	title := i.Title
+	// Sanitize before trunc/highlight so width is computed on the clean
+	// text and no terminal escape from a hostile title reaches the screen
+	// (would-you-kindly-waub).
+	title := sanitizeInline(i.Title)
 	origLen := utf8.RuneCountInString(title)
 	if avail := m.titleBudget(); avail > 0 {
 		title = trunc(title, avail)
@@ -4379,13 +4384,13 @@ func detailBody(i beads.Issue, width int, deps, dependents []beads.Issue, depsEr
 	if strings.TrimSpace(i.Description) == "" {
 		b.WriteString(emptyStyle.Render("(no description)"))
 	} else {
-		b.WriteString(wrap(i.Description))
+		b.WriteString(wrap(sanitizeBlock(i.Description)))
 	}
 	if strings.TrimSpace(i.Notes) != "" {
 		b.WriteString("\n\n")
 		b.WriteString(detailLabelStyle.Render("notes"))
 		b.WriteString("\n")
-		b.WriteString(wrap(i.Notes))
+		b.WriteString(wrap(sanitizeBlock(i.Notes)))
 	}
 	// deps occupy global indices [0, len(deps)); dependents follow, so
 	// the dependents section's selection offset is len(deps).
@@ -4428,7 +4433,7 @@ func writeDepSection(b *strings.Builder, width int, header string, rows []beads.
 		if idx > 0 {
 			b.WriteString("\n")
 		}
-		line := fmt.Sprintf("%s — %s (%s)", r.ID, r.Title, r.Status)
+		line := fmt.Sprintf("%s — %s (%s)", r.ID, sanitizeInline(r.Title), r.Status)
 		if width > 2 {
 			line = trunc(line, width-2)
 		}
@@ -4469,7 +4474,7 @@ func (m Model) viewDetail() string {
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(detailHeaderStyle.Render(i.Title))
+	b.WriteString(detailHeaderStyle.Render(sanitizeInline(i.Title)))
 	b.WriteString("\n")
 
 	meta := fmt.Sprintf("%s  %s  %s  P%d",
