@@ -347,23 +347,25 @@ type rawBDMsg struct {
 	note string
 }
 
-// rawWriteWarning reports whether a `:bd` argv is a WRITE that would land
-// in Dolt's working set without an explicit --dolt-auto-commit (in which
-// case the user owns the persistence decision and we stay quiet),
-// returning the advisory to show or "" when no warning is warranted.
+// rawWriteWarning returns an advisory string when a `:bd` argv is a
+// WRITE that would land in Dolt's working set WITHOUT an explicit
+// --dolt-auto-commit (so it may silently revert on a later push);
+// otherwise it returns "". The user passing --dolt-auto-commit (either
+// value) means they own the persistence decision, so we stay quiet.
 func rawWriteWarning(args []string) string {
-	if len(args) == 0 || hasFlagPrefix(args, "--dolt-auto-commit") {
+	if hasFlagPrefix(args, "--dolt-auto-commit") {
 		return ""
 	}
+	verb, sub := firstVerbAndSub(args)
 	write := false
-	switch args[0] {
+	switch verb {
 	case "create", "close", "reopen", "delete", "update", "defer", "undefer",
 		"supersede", "forget", "remember", "note", "comment":
 		write = true
 	case "dep", "label":
 		// Two-word forms: "dep add/remove" and "label add/remove" write;
 		// "dep list" / "label" (list) are reads.
-		if len(args) > 1 && (args[1] == "add" || args[1] == "remove" || args[1] == "rm") {
+		if sub == "add" || sub == "remove" || sub == "rm" {
 			write = true
 		}
 	}
@@ -373,6 +375,43 @@ func rawWriteWarning(args []string) string {
 	return "note: raw `:bd` writes are NOT auto-committed — this change may not " +
 		"survive a later `bd dolt push`. Re-run with --dolt-auto-commit=on, or use " +
 		"the dedicated TUI keys (a/H/n/d/…), which commit for you."
+}
+
+// firstVerbAndSub finds the first non-flag token (the bd subcommand) and
+// the token after it, skipping leading global flags so a form like
+// `:bd -C /dir close a-1` still detects `close`. A value-taking global
+// flag in separate-arg form (-C <dir>) consumes its value too; the
+// inline form (-C=dir, --flag=v) consumes only itself.
+func firstVerbAndSub(args []string) (verb, sub string) {
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			break
+		}
+		if !strings.Contains(a, "=") && valueTakingGlobalFlag(a) {
+			i += 2
+		} else {
+			i++
+		}
+	}
+	if i < len(args) {
+		verb = args[i]
+		if i+1 < len(args) {
+			sub = args[i+1]
+		}
+	}
+	return verb, sub
+}
+
+// valueTakingGlobalFlag reports whether a bd global flag consumes the
+// following token as its value (separate-arg form).
+func valueTakingGlobalFlag(a string) bool {
+	switch a {
+	case "-C", "--dir":
+		return true
+	}
+	return false
 }
 
 // hasFlagPrefix reports whether args contains `name` or `name=...`.
