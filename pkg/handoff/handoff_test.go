@@ -127,3 +127,57 @@ func TestBounceToHuman_NoPriorNoAppend(t *testing.T) {
 }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+func TestBounceToHuman_RetryIsIdempotent(t *testing.T) {
+	// Regression for roborev #1845: handing off TWICE (the second call
+	// reading back the first call's stored body as prior) must not
+	// duplicate the runbook or the heading, and must keep the one
+	// original — for both the with-prior and no-prior cases.
+	t.Run("with prior original", func(t *testing.T) {
+		orig := "the agent's original working notes"
+		rb := "## Steps\n1. do it"
+		s := &readableStubMutator{prior: orig}
+		if err := BounceToHuman(context.Background(), s, "wyk-9", rb); err != nil {
+			t.Fatal(err)
+		}
+		first := s.updated
+		// Second handoff: feed the stored body back as prior.
+		s.prior = first
+		if err := BounceToHuman(context.Background(), s, "wyk-9", rb); err != nil {
+			t.Fatal(err)
+		}
+		second := s.updated
+		if second != first {
+			t.Errorf("retry not idempotent:\n first=%q\nsecond=%q", first, second)
+		}
+		if n := strings.Count(second, priorDescriptionHeading); n != 1 {
+			t.Errorf("heading appears %d times, want exactly 1:\n%s", n, second)
+		}
+		if n := strings.Count(second, orig); n != 1 {
+			t.Errorf("original appears %d times, want exactly 1:\n%s", n, second)
+		}
+	})
+	t.Run("updated runbook on retry keeps the one original", func(t *testing.T) {
+		orig := "ORIGINAL"
+		s := &readableStubMutator{prior: orig}
+		_ = BounceToHuman(context.Background(), s, "wyk-9", "RB1")
+		s.prior = s.updated
+		_ = BounceToHuman(context.Background(), s, "wyk-9", "RB2")
+		got := s.updated
+		if !contains(got, "RB2") || contains(got, "RB1") {
+			t.Errorf("retry should swap in the new runbook and drop the old; got:\n%s", got)
+		}
+		if n := strings.Count(got, priorDescriptionHeading); n != 1 || strings.Count(got, orig) != 1 {
+			t.Errorf("heading/original must each appear once; got:\n%s", got)
+		}
+	})
+	t.Run("no prior original stays a bare runbook across retries", func(t *testing.T) {
+		s := &readableStubMutator{prior: ""}
+		_ = BounceToHuman(context.Background(), s, "wyk-9", "RB")
+		s.prior = s.updated // "RB"
+		_ = BounceToHuman(context.Background(), s, "wyk-9", "RB")
+		if s.updated != "RB" {
+			t.Errorf("no-prior retry should stay %q; got %q", "RB", s.updated)
+		}
+	})
+}
