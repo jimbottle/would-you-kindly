@@ -466,3 +466,21 @@ func TestInit_FixForeignHooksFlagGuards(t *testing.T) {
 		}
 	}
 }
+
+func TestInitUsage_LeadsWithHappyPath(t *testing.T) {
+	out := captureStderr(t, func() {
+		// -h triggers fs.Usage and returns ErrHelp (exit 0).
+		if code := runInit([]string{"-h"}); code != 0 {
+			t.Errorf("init -h exit %d, want 0", code)
+		}
+	})
+	// The common case must appear BEFORE the alternate modes.
+	common := strings.Index(out, "Common case")
+	modes := strings.Index(out, "Other modes")
+	if common < 0 || modes < 0 || common > modes {
+		t.Errorf("usage should lead with the happy path then the modes; got:\n%s", out)
+	}
+	if !strings.Contains(out, "wyk init ") {
+		t.Errorf("usage should show the bare `wyk init` invocation; got:\n%s", out)
+	}
+}

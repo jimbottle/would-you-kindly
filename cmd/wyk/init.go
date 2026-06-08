@@ -65,6 +65,35 @@ const hookMarker = "Installed by `wyk init"
 // matching that could false-PASS on foreign hooks mentioning "wyk".
 const chainedHookMarker = "Installed by `wyk init -chain`"
 
+// printInitUsage renders `wyk init -h`, leading with the bare bootstrap
+// (the case ~everyone wants) before the alternate modes and the flag
+// table (would-you-kindly-5rgd).
+func printInitUsage(fs *flag.FlagSet) {
+	fmt.Fprint(os.Stderr, `wyk init — bootstrap this repo for wyk
+
+Common case:
+  wyk init                run "bd init" if needed, install the post-commit
+                          auto-close hook, register the repo, and seed the
+                          agent enrichment (CLAUDE.md + bd-create-guard).
+                          Idempotent — safe to re-run.
+
+Preview / opt out of pieces:
+  wyk init -dry-run           show what would change, write nothing
+  wyk init -skip-claude-md    skip the CLAUDE.md / .claude/settings.json edits
+  wyk init -chain             keep an existing post-commit hook, chain wyk after it
+  wyk init -force             overwrite an existing post-commit hook (destructive)
+
+Other modes (not the per-repo bootstrap):
+  wyk init -scan <root>       register every bd workspace found under <root>
+  wyk init -uninstall         remove wyk's hook from this repo
+  wyk init -fix-foreign-hooks chain wyk after foreign hooks across the registry
+  wyk init -skills            install wyk's agent skills into ~/.claude/skills
+
+Flags:
+`)
+	fs.PrintDefaults()
+}
+
 // runInit implements `wyk init`: a one-stop bootstrap for using wyk
 // in a repo. It (1) initialises a bd workspace if none exists,
 // (2) installs the post-commit auto-close hook, and (3) registers
@@ -91,6 +120,13 @@ func runInit(args []string) int {
 	fixForeignHooks := fs.Bool("fix-foreign-hooks", false, "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)")
 	installSkills := fs.Bool("skills", false, "also install wyk's agent skills into ~/.claude/skills (idempotent; like `wyk skills install`). Modified skills are left alone.")
 	fs.SetOutput(os.Stderr)
+	// Lead the help with the bare happy path so the common case isn't
+	// buried under the alternate modes and the alphabetical flag dump
+	// (would-you-kindly-5rgd). The alternate modes (-scan / -uninstall /
+	// -fix-foreign-hooks) would read more naturally as subcommands; that
+	// is a deliberate post-1.0 change (it reshapes the CLI surface), so
+	// for now they stay flags but are grouped distinctly here.
+	fs.Usage = func() { printInitUsage(fs) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
