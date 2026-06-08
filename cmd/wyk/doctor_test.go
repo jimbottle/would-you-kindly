@@ -632,3 +632,22 @@ func TestCheckRepo_GitlinkSubdirHookResolves(t *testing.T) {
 		t.Errorf("expected gitlink subdir's hook to be classified as plain wyk PASS; got %+v", checks)
 	}
 }
+
+func TestDoltRemoteCheck(t *testing.T) {
+	// Error -> skip (no row).
+	if _, ok := doltRemoteCheck("repo x", nil, os.ErrClosed); ok {
+		t.Error("bd dolt error should skip the check")
+	}
+	// A URL present -> PASS.
+	c, ok := doltRemoteCheck("repo x", []byte("origin   git+ssh://git@github.com/o/r.git\n"), nil)
+	if !ok || c.status != statusPass {
+		t.Errorf("remote present should PASS; got ok=%v status=%v", ok, c.status)
+	}
+	// Empty / no-remote message -> WARN.
+	for _, out := range [][]byte{[]byte(""), []byte("No remotes configured\n"), []byte("   \n")} {
+		c, ok := doltRemoteCheck("repo x", out, nil)
+		if !ok || c.status != statusWarn {
+			t.Errorf("no remote (%q) should WARN; got ok=%v status=%v", out, ok, c.status)
+		}
+	}
+}
