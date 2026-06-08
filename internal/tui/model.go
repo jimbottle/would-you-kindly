@@ -2981,6 +2981,12 @@ func clampPriority(p int) int {
 // full-canvas blank.
 func (m Model) manualRefresh() (tea.Model, tea.Cmd) {
 	m.refreshing = true
+	// `r` is the user's "I want fresh data NOW" escape hatch — drop any
+	// per-repo fetch cache so every repo is re-queried live, even if its
+	// .beads mtime looks unchanged (would-you-kindly-jipr).
+	if ci, ok := m.src.(cacheInvalidator); ok {
+		ci.InvalidateCache()
+	}
 	cmds := []tea.Cmd{m.fetchCmd()}
 	if isTerminalErr(m.lastErr) {
 		m.tickGen++
