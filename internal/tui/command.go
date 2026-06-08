@@ -405,7 +405,13 @@ func firstVerbAndSub(args []string) (verb, sub string) {
 }
 
 // valueTakingGlobalFlag reports whether a bd global flag consumes the
-// following token as its value (separate-arg form).
+// following token as its value (separate-arg form). Coverage is
+// intentionally limited to the common globals (-C / --dir, by far the
+// most likely to precede a `:bd` subcommand). This gates an
+// advisory-only un-committed-write warning, so a rarer value-flag
+// (`--db <path>`, etc.) preceding the verb merely risks a MISSED nudge,
+// never a wrong action — an acceptable trade for not enumerating bd's
+// whole global-flag surface here (roborev #1842).
 func valueTakingGlobalFlag(a string) bool {
 	switch a {
 	case "-C", "--dir":
