@@ -6453,6 +6453,11 @@ func TestRawWriteWarning(t *testing.T) {
 		{"dep", "add", "a-1", "a-2"},
 		{"label", "remove", "a-1", "human"},
 		{"note", "a-1", "hi"},
+		// Leading global flags must not suppress the warning (the
+		// fail-silent gap roborev #1841 caught).
+		{"-C", "/some/dir", "close", "a-1"},
+		{"--dir", "/d", "dep", "add", "a-1", "a-2"},
+		{"-C=/inline", "close", "a-1"},
 	}
 	for _, a := range warns {
 		if rawWriteWarning(a) == "" {
@@ -6465,7 +6470,8 @@ func TestRawWriteWarning(t *testing.T) {
 		{"query", "p0"},
 		{"show", "a-1"},
 		{"dep", "list", "a-1"},
-		{"label"}, // bare label = list
+		{"label"},            // bare label = list
+		{"-C", "/d", "list"}, // leading flag + read verb stays quiet
 		{"close", "a-1", "--dolt-auto-commit=on"}, // explicit: user owns it
 		{"close", "a-1", "--dolt-auto-commit=off"},
 		{},
