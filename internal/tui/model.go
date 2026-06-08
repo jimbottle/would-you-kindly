@@ -1129,6 +1129,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		b.WriteString("$ bd ")
 		b.WriteString(msg.args)
 		b.WriteString("\n\n")
+		if msg.note != "" {
+			b.WriteString(msg.note)
+			b.WriteString("\n\n")
+		}
 		if len(msg.out) > 0 {
 			// bd's stdout can echo issue content (titles/descriptions);
 			// strip terminal escapes before showing it (would-you-kindly-waub).

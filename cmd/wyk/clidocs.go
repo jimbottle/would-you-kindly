@@ -34,7 +34,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "handoff",
 		Summary: "Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file.",
-		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]",
+		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]\n   or: wyk handoff -template",
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "run as if bd had been started in this directory"},
 			{Name: "-file", Default: "", Description: "read the runbook from this file (default: stdin)"},
@@ -45,6 +45,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-note", Default: "", Description: "after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook"},
 			{Name: "-identity", Default: "", Description: "route this handoff to a named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY"},
 			{Name: "-dry-run", Default: "false", Description: "print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it"},
+			{Name: "-template", Default: "false", Description: "print the required 3-section runbook skeleton to stdout and exit (no bd writes); fill it in, then `wyk handoff <id> < filled.md`"},
 		},
 	},
 	{

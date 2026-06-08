@@ -6444,3 +6444,35 @@ func TestPruneStaleMarks(t *testing.T) {
 		t.Errorf("want 2 marks after prune, got %d", len(m.marked))
 	}
 }
+
+func TestRawWriteWarning(t *testing.T) {
+	warns := [][]string{
+		{"close", "a-1"},
+		{"create", "--title", "x"},
+		{"update", "a-1", "--status", "closed"},
+		{"dep", "add", "a-1", "a-2"},
+		{"label", "remove", "a-1", "human"},
+		{"note", "a-1", "hi"},
+	}
+	for _, a := range warns {
+		if rawWriteWarning(a) == "" {
+			t.Errorf("rawWriteWarning(%v) = \"\", want a warning", a)
+		}
+	}
+	quiet := [][]string{
+		{"list"},
+		{"ready"},
+		{"query", "p0"},
+		{"show", "a-1"},
+		{"dep", "list", "a-1"},
+		{"label"}, // bare label = list
+		{"close", "a-1", "--dolt-auto-commit=on"}, // explicit: user owns it
+		{"close", "a-1", "--dolt-auto-commit=off"},
+		{},
+	}
+	for _, a := range quiet {
+		if w := rawWriteWarning(a); w != "" {
+			t.Errorf("rawWriteWarning(%v) = %q, want no warning", a, w)
+		}
+	}
+}
