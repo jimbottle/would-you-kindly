@@ -4784,11 +4784,13 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	}
 	if m.isMultiRepo() {
 		if m.colVisible(colIDRepo) {
-			b.WriteString(renderMatchCell(i.Repo, m.cw.repo, m.query, typeC))
+			b.WriteString(renderMatchCell(sanitizeInline(i.Repo), m.cw.repo, m.query, typeC))
 			b.WriteString(sep)
 		}
 		if m.colVisible(colIDBranch) {
-			b.WriteString(renderMatchCell(i.Branch, m.cw.branch, m.query, typeC))
+			// A git branch name can carry control bytes; sanitize like the
+			// other single-line cells (roborev #1848).
+			b.WriteString(renderMatchCell(sanitizeInline(i.Branch), m.cw.branch, m.query, typeC))
 			b.WriteString(sep)
 		}
 	}
@@ -5318,7 +5320,10 @@ func (m Model) viewDetail() string {
 
 	if len(i.Labels) > 0 {
 		b.WriteString(detailLabelStyle.Render("labels: "))
-		b.WriteString(strings.Join(i.Labels, ", "))
+		// Labels are unconstrained bd content (no charset limit), so a
+		// hostile one could embed a terminal escape — sanitize like every
+		// other untrusted field (roborev #1848).
+		b.WriteString(sanitizeInline(strings.Join(i.Labels, ", ")))
 		b.WriteString("\n\n")
 	}
 
