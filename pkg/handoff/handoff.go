@@ -45,9 +45,14 @@ type descriptionReader interface {
 	GetDescription(ctx context.Context, id string) (string, error)
 }
 
-// priorDescriptionHeading marks the preserved prior body. Exported-ish
-// as a package const so a future reader could strip it back out.
-const priorDescriptionHeading = "## Prior description"
+// priorDescriptionHeading marks the preserved prior body AND is the
+// sentinel BounceToHuman scans for to stay idempotent across retries.
+// The parenthetical makes it specific enough that a human-authored body
+// is realistically never going to contain it verbatim — so the marker
+// and legitimate content stay distinguishable (roborev #1846 finding 1).
+// Detection assumes this exact string appears only as a wyk-inserted
+// boundary.
+const priorDescriptionHeading = "## Prior description (preserved on handoff)"
 
 // HumanLabel is the label this package writes. Exported as a constant
 // so external tools that need to query for "anything handed to a
@@ -105,6 +110,14 @@ func descriptionForHandoff(ctx context.Context, m Mutator, id, runbook string) s
 	prior = strings.TrimSpace(prior)
 	// Nothing to preserve, or the prior body already IS this runbook
 	// (a retry of a handoff that had no original) — don't append.
+	//
+	// Note the fundamental ambiguity (roborev #1846 finding 2): a bare
+	// prior with no marker is indistinguishable from a genuine original
+	// description. So re-handing-off an issue that had NO original with a
+	// CHANGED runbook (RB1 → RB2) preserves the previous runbook RB1 under
+	// the heading. That's the intended, documented behavior — it keeps a
+	// trail of the prior handoff text rather than silently dropping it;
+	// pinned by TestBounceToHuman_RetryChangedRunbookNoOriginal.
 	if prior == "" || prior == strings.TrimSpace(runbook) {
 		return runbook
 	}

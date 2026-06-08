@@ -181,3 +181,30 @@ func TestBounceToHuman_RetryIsIdempotent(t *testing.T) {
 		}
 	})
 }
+
+func TestBounceToHuman_RetryChangedRunbookNoOriginal(t *testing.T) {
+	// Documented behavior for the ambiguous case (roborev #1846 finding 2):
+	// an issue with NO original description, handed off as RB1, then
+	// re-handed-off as a CHANGED runbook RB2. The previous runbook is
+	// preserved under the heading rather than dropped (a bare prior is
+	// indistinguishable from a real original, so we keep the trail).
+	s := &readableStubMutator{prior: ""}
+	_ = BounceToHuman(context.Background(), s, "wyk-9", "RB1") // stores "RB1"
+	s.prior = s.updated
+	_ = BounceToHuman(context.Background(), s, "wyk-9", "RB2")
+	got := s.updated
+	want := "RB2\n\n" + priorDescriptionHeading + "\n\nRB1"
+	if got != want {
+		t.Errorf("changed-runbook/no-original retry:\n got=%q\nwant=%q", got, want)
+	}
+	// And a THIRD handoff (RB3) must stay idempotent on the marker, not
+	// nest a second one — RB1 stays the single preserved body.
+	s.prior = got
+	_ = BounceToHuman(context.Background(), s, "wyk-9", "RB3")
+	if n := strings.Count(s.updated, priorDescriptionHeading); n != 1 {
+		t.Errorf("third handoff must keep exactly one heading; got %d:\n%s", n, s.updated)
+	}
+	if !contains(s.updated, "RB3") || !contains(s.updated, "RB1") || contains(s.updated, "RB2") {
+		t.Errorf("third handoff should be RB3 + preserved RB1 (RB2 gone); got:\n%s", s.updated)
+	}
+}
