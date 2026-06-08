@@ -673,6 +673,54 @@ func doltRemoteCheck(prefix string, out []byte, err error) (check, bool) {
 	}, true
 }
 
+// classifyGuardHook turns the contents of a repo's .claude/settings.json
+// into a check for the bd-create-guard PreToolUse hook. data/readErr are
+// the os.ReadFile result; repoPath is only for the re-init hint. The PASS
+// case carries an explicit caveat: doctor verifies the FILE, but cannot
+// confirm Claude Code actually TRUSTS/RUNS the project hooks — that
+// approval state is invisible here (would-you-kindly-rp73).
+// claudeBlockSalienceNote returns a hint when the wyk conventions block
+// sits deep in a LONG CLAUDE.md — it's loaded either way, but low in a
+// big file an agent is likelier to under-weight it (would-you-kindly-rp73).
+// Empty string = block is well-placed (or the file is short), so the
+// PASS row stays clean.
+func claudeBlockSalienceNote(body []byte) string {
+	idx := bytes.Index(body, []byte(wykConventionsBeginPrefix))
+	if idx < 0 {
+		return ""
+	}
+	markerLine := bytes.Count(body[:idx], []byte("\n")) + 1 // 1-based
+	total := bytes.Count(body, []byte("\n")) + 1
+	// Only nag for a genuinely long file with the block in its bottom third.
+	if total >= 150 && markerLine*3 >= total*2 {
+		return fmt.Sprintf("present, but the conventions block starts at line %d of %d — near the bottom of a long CLAUDE.md, where an agent may under-weight it. Consider moving it up or trimming the file.", markerLine, total)
+	}
+	return ""
+}
+
+func classifyGuardHook(prefix, repoPath string, data []byte, readErr error) check {
+	name := prefix + ": bd-create-guard hook"
+	reinit := "Re-run `(cd " + repoPath + " && wyk init)` to install it."
+	switch {
+	case errors.Is(readErr, os.ErrNotExist):
+		return check{name: name, status: statusWarn,
+			detail: "no .claude/settings.json — the bd-create-guard PreToolUse hook (redirects an agent's `bd create` to `wyk create`) isn't installed, so plans here may be filed with raw `bd create`/TodoWrite. " + reinit}
+	case readErr != nil:
+		return check{name: name, status: statusWarn, detail: "couldn't read .claude/settings.json: " + readErr.Error()}
+	}
+	var root map[string]any
+	if jerr := json.Unmarshal(data, &root); jerr != nil {
+		return check{name: name, status: statusWarn,
+			detail: ".claude/settings.json is not valid JSON (" + jerr.Error() + ") — Claude Code won't load its hooks. Fix it, then " + reinit}
+	}
+	if !claudeSettingsHasHook(root, claudeSettingsHook) {
+		return check{name: name, status: statusWarn,
+			detail: "the bd-create-guard PreToolUse hook is missing from .claude/settings.json. " + reinit}
+	}
+	return check{name: name, status: statusPass,
+		detail: "bd-create-guard PreToolUse hook present in .claude/settings.json.\nNOTE: doctor verifies the FILE only — Claude Code must TRUST/approve the project's hooks to actually run it. Verify in-session with `/hooks`; an unapproved hook silently never fires."}
+}
+
 func checkRepo(r registry.Repo) []check {
 	prefix := "repo " + r.Name
 	var out []check
@@ -774,7 +822,13 @@ func checkRepo(r registry.Repo) []check {
 	claudeMDPath := filepath.Join(r.Path, "CLAUDE.md")
 	switch body, err := os.ReadFile(claudeMDPath); {
 	case err == nil && bytes.Contains(body, []byte(wykConventionsBeginPrefix)):
-		out = append(out, check{name: prefix + ": CLAUDE.md wyk-aware", status: statusPass})
+		c := check{name: prefix + ": CLAUDE.md wyk-aware", status: statusPass}
+		// Salience: the block is loaded, but buried at the bottom of a long
+		// CLAUDE.md is easy for a model to under-weight (would-you-kindly-rp73).
+		if note := claudeBlockSalienceNote(body); note != "" {
+			c.detail = note
+		}
+		out = append(out, c)
 	case err == nil || errors.Is(err, os.ErrNotExist):
 		noun := "CLAUDE.md has no wyk conventions block"
 		if errors.Is(err, os.ErrNotExist) {
@@ -792,6 +846,14 @@ func checkRepo(r registry.Repo) []check {
 			detail: "couldn't read CLAUDE.md: " + err.Error(),
 		})
 	}
+
+	// bd-create-guard PreToolUse hook in .claude/settings.json — the OTHER
+	// half of the agent-enrichment (it redirects a Bash `bd create` to
+	// `wyk create`). doctor checked the CLAUDE.md block but never this hook,
+	// so a missing/malformed guard passed silently (would-you-kindly-rp73).
+	settingsPath := filepath.Join(r.Path, ".claude", "settings.json")
+	sData, sErr := os.ReadFile(settingsPath)
+	out = append(out, classifyGuardHook(prefix, r.Path, sData, sErr))
 
 	// post-commit hook — is wyk's (plain or chained), foreign, or absent?
 	// Resolve via git so gitlinks (.git as a file) and worktrees land on
