@@ -100,3 +100,36 @@ func TestMultiBDSource_NoCacheWithoutPath(t *testing.T) {
 		t.Errorf("no-path sub should fetch live every time; count=%d, want 3", got)
 	}
 }
+
+// TestMultiBDSource_BranchReDerivedOnCacheHit pins roborev #1850/#1849:
+// a cache hit must reflect the CURRENT git branch (re-derived live),
+// not a branch frozen at cache time — a `git checkout` doesn't touch
+// .beads so the cache stays valid, but the Branch must still update.
+func TestMultiBDSource_BranchReDerivedOnCacheHit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeRepoSource{issues: []beads.Issue{{ID: "alpha-1"}}}
+	branch := "main"
+	m := &MultiBDSource{subs: []subRepo{{
+		name:     "alpha",
+		src:      fake,
+		path:     dir,
+		branchFn: func(_ context.Context) string { return branch },
+	}}}
+	ctx := context.Background()
+
+	all, _, _ := m.FetchWithSubErrors(ctx, filter.PresetAll) // miss → caches issues
+	if len(all) != 1 || all[0].Branch != "main" {
+		t.Fatalf("first fetch: branch=%q want main", all[0].Branch)
+	}
+	branch = "feature-x" // simulate a git checkout (does NOT touch .beads)
+	all, _, _ = m.FetchWithSubErrors(ctx, filter.PresetAll)
+	if got := atomic.LoadInt32(&fake.fetchCount); got != 1 {
+		t.Errorf("second fetch should still be a cache hit (no bd call); count=%d want 1", got)
+	}
+	if len(all) != 1 || all[0].Branch != "feature-x" {
+		t.Errorf("cache hit must re-derive the live branch; got %q want feature-x", all[0].Branch)
+	}
+}
