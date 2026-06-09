@@ -99,6 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The TUI paints cached rows on open instead of waiting on the cold
+  fetch** — warm-start (the on-disk last-fetch snapshot) was silently
+  skipped whenever the saved preset differed from the restored one (e.g.
+  quit on `all`, reopen on `human`), so the user stared at a `loading…`
+  spinner for the entire multi-repo `bd` cold-start (~9s with several
+  repos). The snapshot is the full `all` superset and presets filter it
+  in memory, so it now seeds regardless of preset and the first frame
+  shows rows immediately; the live fetch reconciles in the background.
+
 - **Preset switching is now instant** — pressing `h` / `tab` (or any
   preset change) used to fire a fresh multi-repo `bd` query and leave the
   previous preset's rows on screen for the 2-3s a cold round-trip takes,
