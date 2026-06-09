@@ -1171,6 +1171,188 @@ func TestHelpOverlay_FromDetailReturnsToDetail(t *testing.T) {
 	}
 }
 
+// enterDetailWithMutator fetches the sample issues into a
+// mutator-backed model and opens the cursor row's detail view.
+func enterDetailWithMutator(t *testing.T, s *stubMutator) Model {
+	t.Helper()
+	m := applyMutatorFetched(New(s), s)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Fatalf("setup: expected modeDetail, got %v", m.mode)
+	}
+	return m
+}
+
+func TestDetailClose_ConfirmsAndDispatches(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := enterDetailWithMutator(t, s)
+
+	// `a` opens the confirm prompt overlaid on the detail view.
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	if m.mode != modeConfirmClose {
+		t.Fatalf("`a` in detail should enter modeConfirmClose; got %v", m.mode)
+	}
+	if m.promptReturn != modeDetail {
+		t.Errorf("promptReturn should be modeDetail; got %v", m.promptReturn)
+	}
+	if cmd != nil || len(s.closed) != 0 {
+		t.Error("`a` alone must not dispatch a close")
+	}
+	// The confirm prompt must render over the detail view, not the list.
+	if !strings.Contains(m.View(), "close "+s.issues[0].ID+"?") {
+		t.Errorf("detail view should show the close confirm prompt; got:\n%s", m.View())
+	}
+
+	// `y` dispatches the close and drops back to the list (the
+	// just-closed issue leaves the open view).
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("confirmed close from detail should land in modeList; got %v", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("confirmed close must return a write command")
+	}
+	if wm := cmd().(writeMsg); wm.action != "close" || wm.id != s.issues[0].ID {
+		t.Errorf("writeMsg action=%q id=%q", wm.action, wm.id)
+	}
+	if len(s.closed) != 1 || s.closed[0] != s.issues[0].ID {
+		t.Errorf("expected Close(%q); got %+v", s.issues[0].ID, s.closed)
+	}
+}
+
+func TestDetailClose_CancelReturnsToDetail(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := enterDetailWithMutator(t, s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	// Any non-y key cancels — and we land back in detail, not the list.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Errorf("cancelling a detail-opened close should return to detail; got %v", m.mode)
+	}
+	if m.promptReturn != modeList {
+		t.Errorf("promptReturn should reset to modeList after cancel; got %v", m.promptReturn)
+	}
+	if len(s.closed) != 0 {
+		t.Errorf("cancel must not close; got %+v", s.closed)
+	}
+}
+
+func TestDetailClose_ReopensWhenClosed(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := enterDetailWithMutator(t, s)
+	// Simulate viewing a closed issue's detail (reachable via show-closed).
+	m.detailIssue.Status = "closed"
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Errorf("reopen is immediate — mode should stay modeDetail; got %v", m.mode)
+	}
+	if m.detailIssue.Status != "open" {
+		t.Errorf("reopen should optimistically flip status to open; got %q", m.detailIssue.Status)
+	}
+	if cmd == nil {
+		t.Fatal("`a` on a closed issue should dispatch a reopen")
+	}
+	if wm := cmd().(writeMsg); wm.action != "reopen" || wm.id != s.issues[0].ID {
+		t.Errorf("writeMsg action=%q id=%q, want reopen", wm.action, wm.id)
+	}
+	if len(s.reopened) != 1 || s.reopened[0] != s.issues[0].ID {
+		t.Errorf("expected Reopen(%q); got %+v", s.issues[0].ID, s.reopened)
+	}
+}
+
+func TestDetailDefer_DispatchesAndReturnsToDetail(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := enterDetailWithMutator(t, s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = model.(Model)
+	if m.mode != modeDefer || m.promptReturn != modeDetail {
+		t.Fatalf("`d` in detail should enter modeDefer with promptReturn=detail; got mode=%v ret=%v", m.mode, m.promptReturn)
+	}
+	if m.pendingTarget.ID != s.issues[0].ID {
+		t.Errorf("defer should target the detail issue; got %q", m.pendingTarget.ID)
+	}
+	for _, r := range "+1d" {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Errorf("defer from detail should return to detail; got %v", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("enter with a value should dispatch SetDefer")
+	}
+	if wm := cmd().(writeMsg); wm.action != "defer" || wm.id != s.issues[0].ID {
+		t.Errorf("writeMsg action=%q id=%q", wm.action, wm.id)
+	}
+	if len(s.deferred) != 1 || s.deferred[0] != (labelOp{s.issues[0].ID, "+1d"}) {
+		t.Errorf("SetDefer not dispatched correctly; got %+v", s.deferred)
+	}
+}
+
+func TestDetailNote_DispatchesAppendsAndReturnsToDetail(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := enterDetailWithMutator(t, s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = model.(Model)
+	if m.mode != modeNote || m.promptReturn != modeDetail {
+		t.Fatalf("`n` in detail should enter modeNote with promptReturn=detail; got mode=%v ret=%v", m.mode, m.promptReturn)
+	}
+	// The textarea overlay renders over the detail view (not the list).
+	if !strings.Contains(m.View(), "ctrl+s save") {
+		t.Errorf("detail note overlay should render the textarea hint; got:\n%s", m.View())
+	}
+	m.noteArea.SetValue("verified on staging")
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Errorf("note from detail should return to detail; got %v", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("ctrl+s with a note should dispatch a write")
+	}
+	if wm := cmd().(writeMsg); wm.action != "note" || wm.id != s.issues[0].ID {
+		t.Errorf("writeMsg action=%q id=%q", wm.action, wm.id)
+	}
+	// Optimistic append so the new note shows without re-opening the row.
+	if !strings.Contains(m.detailIssue.Notes, "verified on staging") {
+		t.Errorf("note should be optimistically appended to the detail body; Notes=%q", m.detailIssue.Notes)
+	}
+}
+
+func TestDetailWrites_ReadOnlyWithoutMutator(t *testing.T) {
+	// A plain Source (no Mutator) must refuse the detail write keys
+	// with a status hint and stay in detail.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Fatalf("setup: expected modeDetail, got %v", m.mode)
+	}
+	for _, r := range []rune{'a', 'd', 'n'} {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+		if m.mode != modeDetail {
+			t.Errorf("%q without a mutator should stay in detail; got %v", string(r), m.mode)
+		}
+		if !strings.Contains(m.status, "read-only") {
+			t.Errorf("%q without a mutator should set a read-only hint; got %q", string(r), m.status)
+		}
+	}
+}
+
 func TestQuickAdd_DispatchesCreateWithCursorRepoAndTypedTitle(t *testing.T) {
 	// Pre-load the model with an issue carrying Repo="alpha" so the
 	// quick-add inherits the cursor's repo. Pressing N opens the

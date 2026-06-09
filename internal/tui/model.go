@@ -232,6 +232,17 @@ type Model struct {
 	// drop the user back into whichever they came from.
 	helpReturnMode mode
 
+	// promptReturn is the mode a write prompt (modeConfirmClose /
+	// modeDefer / modeNote) returns to when it closes. Zero value is
+	// modeList — the long-standing behaviour for list-initiated
+	// prompts. The detail view sets it to modeDetail so a close /
+	// defer / note opened while reading one task returns to that
+	// task instead of dropping back to the list. (Close is the lone
+	// exception: a successful close forces modeList because the
+	// just-closed issue leaves the open view.) The prompt overlay
+	// also renders over viewDetail vs viewList based on this.
+	promptReturn mode
+
 	// detailIssue is the enriched (full-field, includes notes) issue
 	// shown in the detail view. Populated by a Detail Cmd dispatched
 	// on enter; before the result arrives the view falls back to the
@@ -1547,9 +1558,15 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	bulk := len(m.marked) > 0
 	target := m.pendingTarget
+	ret := m.promptReturn
+	fromDetail := ret == modeDetail
 	m.pendingTarget = beads.Issue{}
+	m.promptReturn = modeList
 	if msg.String() == "y" || msg.String() == "Y" {
 		mu := m.mutator()
+		// A successful close drops the issue out of the open view, so
+		// we land back in the list regardless of where the prompt was
+		// opened — there's nothing useful left to show in detail.
 		m.mode = modeList
 		if bulk {
 			targets := m.markedIssues()
@@ -1558,7 +1575,12 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return mu.Close(ctx, i)
 			})
 		}
-		if !m.issueExists(target.ID) {
+		// The list path validates against m.all (the prompt may have
+		// outlived a refetch that removed the row). The detail path
+		// trusts its snapshot: a drilled-in link can legitimately be
+		// absent from the filtered list, so issueExists would
+		// false-negative — let bd surface a genuinely-gone ID instead.
+		if !fromDetail && !m.issueExists(target.ID) {
 			m.status = "close cancelled: " + target.ID + " was removed from the workspace by a refresh"
 			return m, nil
 		}
@@ -1567,8 +1589,8 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return mu.Close(ctx, target)
 		})
 	}
-	// any other key cancels
-	m.mode = modeList
+	// any other key cancels — back to wherever the prompt was opened
+	m.mode = ret
 	m.status = "close cancelled"
 	return m, nil
 }
@@ -1735,7 +1757,8 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quitNow()
 	}
 	if msg.Type == tea.KeyEsc {
-		m.mode = modeList
+		m.mode = m.promptReturn
+		m.promptReturn = modeList
 		m.noteArea.Blur()
 		m.pendingTarget = beads.Issue{}
 		return m, nil
@@ -1745,17 +1768,33 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+s" {
 		text := strings.TrimSpace(m.noteArea.Value())
 		target := m.pendingTarget
+		fromDetail := m.promptReturn == modeDetail
 		m.pendingTarget = beads.Issue{}
 		mu := m.mutator()
-		m.mode = modeList
+		m.mode = m.promptReturn
+		m.promptReturn = modeList
 		m.noteArea.Blur()
 		if text == "" {
 			m.status = "note cancelled (empty)"
 			return m, nil
 		}
-		if !m.issueExists(target.ID) {
+		// Detail path trusts its snapshot (see updateConfirmClose);
+		// the list path guards against a refetch removing the row.
+		if !fromDetail && !m.issueExists(target.ID) {
 			m.status = "note cancelled: " + target.ID + " was removed from the workspace by a refresh"
 			return m, nil
+		}
+		// Optimistically append the note to the detail body so it
+		// shows immediately — the list refetch won't re-enrich the
+		// detail issue, so without this the new note wouldn't appear
+		// until the user re-opened the row.
+		if fromDetail && m.detailIssue.ID == target.ID {
+			if strings.TrimSpace(m.detailIssue.Notes) == "" {
+				m.detailIssue.Notes = text
+			} else {
+				m.detailIssue.Notes += "\n\n" + text
+			}
+			m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
 		}
 		return m, runWrite("note", target.ID, func(ctx context.Context) error {
 			return mu.Note(ctx, target, text)
@@ -2156,11 +2195,23 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// `c` copies the issue's instructions (description + notes) to
 		// the clipboard; `y` stays a silent alias for muscle memory.
 		return m.handleYankDetailBody()
-	case msg.Type == tea.KeyTab, msg.String() == "n":
+	case keyHit(msg, m.keys.Close):
+		// `a` closes an open issue (confirm prompt) or reopens a
+		// closed one (immediate) — both overlaid on the detail view.
+		return m.detailCloseOrReopen()
+	case keyHit(msg, m.keys.Defer):
+		// `d` defers the issue. This shadows the viewport's
+		// half-page-down; j/k, pgdn, space and g/G still scroll.
+		return m.beginDeferDetail()
+	case keyHit(msg, m.keys.AddNote):
+		// `n` appends a note. This reclaims the old `n`/`p` link-cycle
+		// aliases — Tab/Shift-Tab remain the link-selection axis.
+		return m.beginNoteDetail()
+	case msg.Type == tea.KeyTab:
 		// Cycle the dependency/dependent link selection forward. j/k
 		// stay as body scroll — link nav is the separate Tab axis.
 		return m.cycleDetailLink(+1)
-	case msg.Type == tea.KeyShiftTab, msg.String() == "p":
+	case msg.Type == tea.KeyShiftTab:
 		return m.cycleDetailLink(-1)
 	case keyHit(msg, m.keys.Open):
 		// Enter opens the highlighted link (drill into the graph); with
@@ -2176,6 +2227,79 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.detailVP, cmd = m.detailVP.Update(msg)
 	return m, cmd
+}
+
+// detailCloseOrReopen is the `a` action in the detail view. An open
+// issue routes through the same y/N confirm as the list close (here
+// overlaid on the detail view via promptReturn); a closed issue is
+// reopened immediately — matching the list, where reopen (`u` undo)
+// carries no confirm because it's non-destructive. The detailIssue
+// snapshot is the target, so a drilled-in link that isn't in the
+// current filtered list still closes/reopens correctly.
+func (m Model) detailCloseOrReopen() (tea.Model, tea.Cmd) {
+	if m.mutator() == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	i := m.detailIssue
+	if i.ID == "" {
+		return m, nil
+	}
+	if i.Status == "closed" {
+		mu := m.mutator()
+		// Optimistically flip the local copy so the badge/footer
+		// reflect the reopen before the (list-only) refetch lands.
+		m.detailIssue.Status = "open"
+		m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
+		return m, runWriteWithIssue("reopen", i, func(ctx context.Context) error {
+			return mu.Reopen(ctx, i)
+		})
+	}
+	m.pendingTarget = i
+	m.promptReturn = modeDetail
+	m.mode = modeConfirmClose
+	return m, nil
+}
+
+// beginDeferDetail opens the defer-until prompt for the detail issue,
+// overlaid on the detail view (promptReturn = modeDetail). Mirrors
+// beginDefer's single-target path but targets m.detailIssue and has
+// no bulk branch.
+func (m Model) beginDeferDetail() (tea.Model, tea.Cmd) {
+	if m.mutator() == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if m.detailIssue.ID == "" {
+		return m, nil
+	}
+	m.pendingTarget = m.detailIssue
+	m.promptReturn = modeDetail
+	m.mode = modeDefer
+	m.input.SetValue("")
+	m.input.Prompt = "defer until ▸ "
+	m.input.Placeholder = "+1d, +1w, tomorrow, next monday, 2026-06-15…"
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
+// beginNoteDetail opens the note textarea for the detail issue,
+// overlaid on the detail view (promptReturn = modeDetail). Mirrors
+// beginNote but targets m.detailIssue.
+func (m Model) beginNoteDetail() (tea.Model, tea.Cmd) {
+	if m.mutator() == nil {
+		m.setStatus("read-only mode (no Mutator wired up)")
+		return m, flashClearCmd(m.statusGen)
+	}
+	if m.detailIssue.ID == "" {
+		return m, nil
+	}
+	m.pendingTarget = m.detailIssue
+	m.promptReturn = modeDetail
+	m.mode = modeNote
+	m.noteArea.Reset()
+	m.noteArea.Focus()
+	return m, textarea.Blink
 }
 
 // cycleDetailLink moves the dependency/dependent selection by delta
@@ -3439,7 +3563,8 @@ func (m Model) updateDefer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
-		m.mode = modeList
+		m.mode = m.promptReturn
+		m.promptReturn = modeList
 		m.input.Blur()
 		m.restoreFilterPrompt()
 		m.pendingTarget = beads.Issue{}
@@ -3447,9 +3572,11 @@ func (m Model) updateDefer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		when := strings.TrimSpace(m.input.Value())
 		target := m.pendingTarget
+		fromDetail := m.promptReturn == modeDetail
 		m.pendingTarget = beads.Issue{}
 		mu := m.mutator()
-		m.mode = modeList
+		m.mode = m.promptReturn
+		m.promptReturn = modeList
 		m.input.Blur()
 		m.restoreFilterPrompt()
 		if when == "" {
@@ -3467,8 +3594,10 @@ func (m Model) updateDefer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Mirror the close/note handlers: if a refetch deleted
 		// the target while the prompt was open, surface the same
 		// friendly cancellation banner instead of shelling out a
-		// stale ID to bd and exposing a raw error.
-		if !m.issueExists(target.ID) {
+		// stale ID to bd and exposing a raw error. The detail path
+		// trusts its snapshot (a drilled-in link may be out of the
+		// filtered list), so it skips the check.
+		if !fromDetail && !m.issueExists(target.ID) {
 			m.setStatus("defer cancelled: " + target.ID + " was removed from the workspace by a refresh")
 			return m, flashClearCmd(m.statusGen)
 		}
@@ -3501,6 +3630,14 @@ func (m Model) View() string {
 	switch m.mode {
 	case modeDetail:
 		return m.viewDetail()
+	case modeConfirmClose, modeDefer, modeNote:
+		// These prompts can be opened from either view. When they
+		// were opened from the detail view, render them overlaid on
+		// it; otherwise they belong to the list (the default below).
+		if m.promptReturn == modeDetail {
+			return m.viewDetail()
+		}
+		return m.viewList()
 	case modeHelp:
 		return m.viewHelp()
 	case modeColumns:
@@ -4638,6 +4775,21 @@ func (m Model) viewDetail() string {
 		b.WriteString("\n\n")
 	}
 
+	// A write prompt opened from the detail view (close confirm /
+	// defer input / note textarea) renders in place of the footer.
+	// The note textarea is multi-line, so shrink the scrollable body
+	// by its extra rows to keep the overall height stable — the
+	// single-line confirm/defer prompts just reuse the footer's slot.
+	// m is a value receiver, so mutating detailVP.Height here is
+	// local to this paint.
+	promptBlock, extraRows := m.detailPromptOverlay()
+	if extraRows > 0 {
+		m.detailVP.Height -= extraRows
+		if m.detailVP.Height < 1 {
+			m.detailVP.Height = 1
+		}
+	}
+
 	// Scrollable body — viewport handles overflow. Re-seed
 	// content on every paint so a direct mutation of
 	// m.detailIssue (tests, future code paths) stays reflected.
@@ -4646,14 +4798,24 @@ func (m Model) viewDetail() string {
 	m.detailVP.SetContent(m.renderDetailBody(i))
 	b.WriteString(m.detailVP.View())
 
-	// Footer: scroll percent (only when there's actually
-	// something to scroll) + key hint.
 	b.WriteString("\n")
-	footer := "esc: back ▕ j/k ↑↓ scroll ▕ c: copy instructions ▕ q: quit"
+	if promptBlock != "" {
+		b.WriteString(promptBlock)
+		return b.String()
+	}
+
+	// Footer: scroll percent (only when there's actually
+	// something to scroll) + key hint. `a` reads as reopen when the
+	// issue is already closed (viewable via show-closed).
+	act := "a: close"
+	if i.Status == "closed" {
+		act = "a: reopen"
+	}
+	footer := act + " ▕ d: defer ▕ n: note ▕ c: copy ▕ j/k scroll ▕ esc: back ▕ q: quit"
 	// When the issue has dependency/dependent links, advertise the
 	// drill-in nav: Tab highlights a link, Enter opens it.
 	if len(m.detailLinks()) > 0 {
-		footer = "tab: link ▕ ⏎ open ▕ esc: back ▕ j/k ↑↓ scroll ▕ c: copy instructions ▕ q: quit"
+		footer = "tab: link ▕ ⏎ open ▕ " + footer
 	}
 	if m.detailVP.TotalLineCount() > m.detailVP.Height {
 		pct := int(m.detailVP.ScrollPercent() * 100)
@@ -4661,6 +4823,33 @@ func (m Model) viewDetail() string {
 	}
 	b.WriteString(helpStyle.Render(footer))
 	return b.String()
+}
+
+// detailPromptOverlay returns the rendered write-prompt block to show
+// in the detail view's footer slot, and the number of EXTRA rows it
+// occupies beyond that single slot (so viewDetail can shrink the body
+// to keep total height stable). An empty string means no prompt is
+// active — render the normal footer. Only fires when the prompt was
+// opened from the detail view (promptReturn == modeDetail).
+func (m Model) detailPromptOverlay() (string, int) {
+	if m.promptReturn != modeDetail {
+		return "", 0
+	}
+	switch m.mode {
+	case modeConfirmClose:
+		if m.pendingTarget.ID == "" {
+			return "", 0
+		}
+		return confirmStyle.Render(fmt.Sprintf("close %s? [y/N]", m.pendingTarget.ID)), 0
+	case modeDefer:
+		return m.input.View(), 0
+	case modeNote:
+		hint := helpStyle.Render("ctrl+s save ▕ esc cancel")
+		// hint (1) + textarea (noteArea.Height()) rows, one of which
+		// reuses the footer slot — the rest are the extra rows.
+		return hint + "\n" + m.noteArea.View(), m.noteArea.Height()
+	}
+	return "", 0
 }
 
 func (m Model) statusBar() string {
