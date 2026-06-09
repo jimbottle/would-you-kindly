@@ -11,8 +11,18 @@ permissions:
 
 jobs:
   test:
-    name: build + test
-    runs-on: ubuntu-latest
+    name: build + test (${{ matrix.os }})
+    # wyk is a TUI whose instant-refresh path uses platform-specific
+    # fsnotify, and it's developed on macOS — so build + race-tested
+    # suite run on both Linux and macOS. The static gates (gofmt,
+    # docs-drift, golangci-lint, govulncheck) are OS-independent and
+    # run once, on Linux, to avoid burning the slower/costlier macOS
+    # minutes on redundant work.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       # Actions are pinned to a commit SHA (the human-readable version is in
       # the trailing comment) for supply-chain safety — a mutable major tag
@@ -32,6 +42,7 @@ jobs:
         run: go mod download
 
       - name: gofmt
+        if: matrix.os == 'ubuntu-latest'
         # Capture `gofmt -l .` output (the list of non-conforming
         # files) and fail when it's non-empty. Previous rounds
         # accumulated drift across 9 files; pinning this in CI
@@ -48,6 +59,7 @@ jobs:
           fi
 
       - name: docs-snapshot drift check
+        if: matrix.os == 'ubuntu-latest'
         # Builds wyk, regenerates docs/generated/{keymap.md,cli.md}, and
         # fails if the diff isn't clean. A code change touching a flag
         # surface or keymap entry must bring the matching docs snapshot
@@ -66,6 +78,7 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
+        if: matrix.os == 'ubuntu-latest'
         # Runs the linter set declared in .golangci.yml: govet,
         # staticcheck, errcheck, ineffassign, unused. Pinned to a
         # specific version so a CI flake from a new linter release
@@ -86,6 +99,7 @@ jobs:
         run: go test -race -timeout 5m ./...
 
       - name: Vulnerability scan (govulncheck)
+        if: matrix.os == 'ubuntu-latest'
         # Reports known vulnerabilities in dependencies + the Go stdlib
         # that the code actually CALLS — a vuln in an unused code path
         # doesn't gate CI, which keeps the signal actionable. Pinned so a

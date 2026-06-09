@@ -62,6 +62,24 @@ func TestRunCompletion_RejectsBadArgs(t *testing.T) {
 	}
 }
 
+func TestRunCompletion_HelpExitsZero(t *testing.T) {
+	// -h / --help / help are deliberate requests, not usage errors:
+	// they print the synopsis to stdout and exit 0 (rather than the
+	// old "unknown shell" exit 64).
+	for _, arg := range []string{"-h", "--help", "help"} {
+		t.Run(arg, func(t *testing.T) {
+			var code int
+			out := captureRunStdout(t, func() int { code = runCompletion([]string{arg}); return code })
+			if code != 0 {
+				t.Errorf("exit = %d, want 0", code)
+			}
+			if !strings.Contains(out, "usage: wyk completion") {
+				t.Errorf("expected usage on stdout; got %q", out)
+			}
+		})
+	}
+}
+
 // captureRunStdout runs fn (a runX-style returning int) while
 // redirecting stdout to a buffer and returns whatever fn wrote.
 // Distinct from captureStdout in update_test.go (which takes

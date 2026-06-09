@@ -54,16 +54,24 @@ func noColorRequested() bool {
 	return os.Getenv("NO_COLOR") != "" || os.Getenv("WYK_NO_COLOR") != ""
 }
 
-// applyNoColor forces lipgloss's default renderer into ASCII when
-// the user has opted out of color. Badges, chips, and status
-// styles then render plain text. Called once at startup; useful
-// for screen readers, log capture, SSH into dumb terminals, and
-// CI runs of `wyk --probe`.
+// disableColor forces lipgloss's default renderer into ASCII so
+// badges, chips, and status styles render as plain text. The single
+// place the renderer is downgraded — shared by the env path
+// (applyNoColor) and the --no-color flag.
+func disableColor() {
+	lipgloss.SetColorProfile(termenv.Ascii)
+}
+
+// applyNoColor downgrades to ASCII when the user has opted out of
+// color via the environment. Called once at startup; useful for
+// screen readers, log capture, SSH into dumb terminals, and CI runs
+// of `wyk --probe`. The --no-color flag (parsed later, on the TUI /
+// probe path) is the explicit equivalent.
 func applyNoColor() {
 	if !noColorRequested() {
 		return
 	}
-	lipgloss.SetColorProfile(termenv.Ascii)
+	disableColor()
 }
 
 func main() {
@@ -119,7 +127,15 @@ func main() {
 	me := flag.String("me", "", "current user, used by the 'mine' preset (default: git user.email or $USER)")
 	probe := flag.Bool("probe", false, "non-TTY: print the human-flagged issues and exit (useful in scripts/CI)")
 	startupPreset := flag.String("preset", "", "launch into a specific preset (all, ready, human, mine, blocked)")
+	noColor := flag.Bool("no-color", false, "disable colored output (same as NO_COLOR / WYK_NO_COLOR)")
 	flag.Parse()
+	// The flag is the explicit equivalent of the env opt-out. The env
+	// path already ran in applyNoColor at startup; honor the flag here,
+	// before the model is built or --probe renders, since both touch
+	// the package-level lipgloss styles.
+	if *noColor {
+		disableColor()
+	}
 	if *startupPreset != "" && !filter.IsPreset(*startupPreset) {
 		fmt.Fprintf(os.Stderr, "wyk: unknown -preset %q (valid: ", *startupPreset)
 		for i, p := range filter.AllPresets() {
@@ -307,6 +323,20 @@ func backgroundUpdateCheck() {
 //     gets a working TUI from inside a bd repo.
 func buildSource(dir, me string) (tui.Source, []string, string, error) {
 	if dir != "" {
+		// Validate -C up front so a bad path produces a clean message
+		// instead of bd's raw JSON error blob surfacing through a
+		// failed Fetch ("bd query …: { \"error\": … }"). A common
+		// typo deserves a one-liner, not a stack of escaped JSON.
+		info, err := os.Stat(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil, "", fmt.Errorf("-C directory %q does not exist", dir)
+			}
+			return nil, nil, "", fmt.Errorf("-C directory %q: %w", dir, err)
+		}
+		if !info.IsDir() {
+			return nil, nil, "", fmt.Errorf("-C %q is not a directory", dir)
+		}
 		c := beads.NewClient()
 		c.Dir = dir
 		return &tui.BDSource{Client: c, Me: me, Name: filepath.Base(dir)}, []string{dir}, "", nil
@@ -748,7 +778,7 @@ Subcommands:
   init         install the post-commit auto-close hook in this repo
   doctor       diagnose installation / registry / per-repo configuration
   stats        aggregate handoff metrics across registered repos
-  dashboard    per-repo open/human/closed-this-week summary (−json for structured)
+  dashboard    per-repo open/human/closed-this-week summary (-json for structured)
   export       JSON dump of every registered repo's full issue list + ready IDs
   import       restore from a 'wyk export' dump (-file path, -dry-run)
   activity     recently-touched issues across registered repos (-since 24h, -json)
@@ -757,7 +787,7 @@ Subcommands:
   help         pointer to the in-TUI overlay; --markdown emits a keymap reference
   completion   emit bash/zsh/fish completion script (run: wyk completion <shell>)
   registry     list / remove / prune registered workspaces
-  conventions  print the agent-facing label convention (–json for structured)
+  conventions  print the agent-facing label convention (-json for structured)
   update       check for and install a newer wyk release
   version      print the version string (--check polls the release feed)
   hook         internal: invoked by the installed post-commit hook
