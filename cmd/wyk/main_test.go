@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -75,6 +78,68 @@ func TestRunProbe_NoSubErrorsNoStderrNoise(t *testing.T) {
 	}
 	if strings.Contains(stderr, "repo(s) failed") {
 		t.Errorf("stderr should be quiet when no repo failed: %q", stderr)
+	}
+}
+
+// TestBuildSource_BadDir checks that an invalid -C directory fails
+// fast with a clean, path-naming message rather than letting bd's raw
+// JSON error blob surface later through a failed Fetch.
+func TestBuildSource_BadDir(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "nope")
+		_, _, _, err := buildSource(missing, "me")
+		if err == nil {
+			t.Fatal("expected an error for a non-existent -C dir")
+		}
+		if !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "does not exist") {
+			t.Errorf("error %q should name the path and say it does not exist", err)
+		}
+		if strings.Contains(err.Error(), "{") {
+			t.Errorf("error %q leaks raw bd JSON", err)
+		}
+	})
+	t.Run("not a dir", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "afile")
+		if werr := os.WriteFile(f, []byte("x"), 0o600); werr != nil {
+			t.Fatal(werr)
+		}
+		_, _, _, err := buildSource(f, "me")
+		if err == nil || !strings.Contains(err.Error(), "not a directory") {
+			t.Errorf("expected a 'not a directory' error, got %v", err)
+		}
+	})
+}
+
+// TestPrintTopLevelUsage_NoDashGlyphInFlagHint guards against the
+// Unicode-dash regression: the top-level --help is the most-read
+// screen, and a stray en-dash / minus-sign inside a "(-json …)" hint
+// breaks a copy-paste (`flag provided but not defined`). We only flag
+// a dash glyph immediately followed by a letter — that's the
+// flag-shaped case — so the intentional spaced prose em-dashes
+// ("wyk — terminal UI …") and the `↔` arrow pass cleanly.
+func TestPrintTopLevelUsage_NoDashGlyphInFlagHint(t *testing.T) {
+	var buf bytes.Buffer
+	old := flag.CommandLine.Output()
+	flag.CommandLine.SetOutput(&buf)
+	defer flag.CommandLine.SetOutput(old)
+
+	printTopLevelUsage()
+
+	// U+2010..U+2015 (hyphen, non-breaking hyphen, figure/en/em dashes,
+	// horizontal bar) and U+2212 MINUS SIGN — all easy to paste in by
+	// accident in place of an ASCII '-'.
+	dashGlyphs := map[rune]bool{
+		'‐': true, '‑': true, '‒': true, '–': true,
+		'—': true, '―': true, '−': true,
+	}
+	runes := []rune(buf.String())
+	for i, r := range runes {
+		if dashGlyphs[r] && i+1 < len(runes) {
+			next := runes[i+1]
+			if (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') {
+				t.Errorf("usage text has a non-ASCII dash glyph %U before %q — looks like a flag (e.g. `-json`); use ASCII '-' so it stays copy-pasteable", r, next)
+			}
+		}
 	}
 }
 

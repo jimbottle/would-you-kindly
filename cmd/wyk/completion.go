@@ -57,6 +57,12 @@ func runCompletion(args []string) int {
 		return 64
 	}
 	switch args[0] {
+	case "-h", "--help", "help":
+		// A help request is deliberate, not a usage error — print the
+		// synopsis to stdout and exit 0 (mirrors how the flag package
+		// treats --help on the other subcommands).
+		fmt.Fprintln(os.Stdout, "usage: wyk completion <bash|zsh|fish>")
+		return 0
 	case "bash":
 		emitBashCompletion(os.Stdout)
 	case "zsh":

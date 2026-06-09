@@ -424,8 +424,9 @@ to override any subset of the built-in lipgloss styles:
 ```
 
 Empty or missing keys fall through to the defaults. Colors accept ANSI
-256 codes (`"212"`) or hex literals (`"#ff66cc"`). Set `NO_COLOR=1` (or
-`WYK_NO_COLOR=1`) to disable styling entirely.
+256 codes (`"212"`) or hex literals (`"#ff66cc"`). Disable styling
+entirely with `NO_COLOR=1` (or `WYK_NO_COLOR=1`), or pass `--no-color`
+on the command line for the same effect.
 
 ### Other subcommands
 
@@ -550,6 +551,29 @@ human-in-the-loop handoff contract: the multi-repo TUI plus subcommands
 `update`), agent
 skills installable into Claude Code, a `theme.json` color overlay with
 light/dark adaptation, and `NO_COLOR` support.
+
+### Platforms
+
+Developed and used on **macOS** and **Linux**; CI builds and runs the
+race-tested suite on both. Windows is not currently tested or supported —
+the instant-refresh `fsnotify` path in particular hasn't been exercised
+there (the tool degrades to the 10-second polling refresh if the watcher
+can't start, so it may still work, but it's unverified).
+
+`go install` builds against the toolchain in `go.mod`; on an older Go it
+will download the matching toolchain automatically (Go 1.21+ with the
+default `GOTOOLCHAIN=auto`).
+
+### What `wyk` is not
+
+- **Not a replacement for `bd`.** wyk shells out to bd for all storage and
+  never touches the database directly; bd remains the source of truth.
+- **Not a server.** It's a local, single-user developer tool with no
+  network service of its own — the only outbound call is an opt-in GitHub
+  release check for `wyk update`.
+- **Not a general project-management UI.** The scope is the agent ↔ human
+  handoff loop and the views that serve it, not sprints, boards, or
+  time-tracking.
 
 ## License
 
