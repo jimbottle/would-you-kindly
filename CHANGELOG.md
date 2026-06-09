@@ -99,6 +99,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Preset switching is now instant** — pressing `h` / `tab` (or any
+  preset change) used to fire a fresh multi-repo `bd` query and leave the
+  previous preset's rows on screen for the 2-3s cold round-trip took,
+  which felt unusable across many repos. Each preset's last result is now
+  cached and painted immediately on switch, with an authoritative fetch
+  reconciling in the background (cache cleared when `C` toggles the
+  closed-scope). Repeated filter switching no longer waits on bd.
+
+- **`h` toggles the human view** — pressing `h` while already in the
+  human view returns to the preset you came from (default `all`) instead
+  of being a one-way trip.
+
 - **The `/` filter now matches repo / branch / ID, and no longer floods
   on common words** — it previously searched only the title (fuzzy) and
   description, so filtering by repo name (the most common use) didn't

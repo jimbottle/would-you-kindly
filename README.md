@@ -306,7 +306,7 @@ to restore the original.
 | `esc`     | Back to the list                                  |
 | `/`       | Open the filter input (fuzzy title; substring on repo, branch, ID, body) |
 | `@name`   | Expand a saved fuzzy filter (manage via `:filter`)|
-| `h`       | Jump to the human-flagged view                    |
+| `h`       | Toggle the human-flagged view (press again to return) |
 | `tab`     | Cycle preset filters (all → ready → human → mine → blocked) |
 | `C`       | Toggle "show closed" across all presets           |
 | `s` / `S` | Cycle sort key / reverse the active direction     |

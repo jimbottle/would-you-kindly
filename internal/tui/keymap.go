@@ -186,7 +186,7 @@ func defaultKeyMap() keyMap {
 		Open:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "open")),
 		Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
-		Human:   key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "human")),
+		Human:   key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "toggle human")),
 		Cycle:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "preset")),
 		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),

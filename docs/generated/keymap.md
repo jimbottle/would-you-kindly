@@ -21,7 +21,7 @@ internal/tui/keymap.go (`DocsKeymap`).
 | Key | Action |
 |-----|--------|
 | `/` | filter |
-| `h` | human |
+| `h` | toggle human |
 | `tab` | preset |
 | `s` | sort |
 | `S` | reverse sort |

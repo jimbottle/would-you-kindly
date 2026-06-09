@@ -272,6 +272,97 @@ func TestHumanKeyJumpsToHumanPreset(t *testing.T) {
 	}
 }
 
+func pressRune(t *testing.T, m Model, r rune) (Model, tea.Cmd) {
+	t.Helper()
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	return model.(Model), cmd
+}
+
+func ids(issues []beads.Issue) []string {
+	out := make([]string, len(issues))
+	for i, is := range issues {
+		out[i] = is.ID
+	}
+	return out
+}
+
+// TestSwitchPreset_PaintsFromCacheInstantly verifies the latency fix:
+// once a preset has been fetched, switching back to it swaps its cached
+// rows in immediately — before (and independent of) the reconciling
+// fetch — so the list never lingers on the previous preset's rows.
+func TestSwitchPreset_PaintsFromCacheInstantly(t *testing.T) {
+	allIssues := []beads.Issue{{ID: "a-1"}, {ID: "a-2"}, {ID: "a-3"}}
+	humanIssues := []beads.Issue{{ID: "a-2"}}
+	src := &stubSource{issues: allIssues}
+	m := applyFetched(New(src), src) // preset=all cached
+
+	// Jump to human (cache miss the first time) and land its fetch so
+	// the human set gets cached with a DISTINCT membership.
+	m, _ = pressRune(t, m, 'h')
+	model, _ := m.Update(fetchedMsg{preset: filter.PresetHuman, issues: humanIssues})
+	m = model.(Model)
+
+	// Toggle back to all (cache hit), then into human again (cache hit).
+	m, _ = pressRune(t, m, 'h') // -> all
+	if m.preset != filter.PresetAll {
+		t.Fatalf("toggle back: preset = %q, want all", m.preset)
+	}
+	m, cmd := pressRune(t, m, 'h') // -> human, should paint from cache NOW
+	if m.preset != filter.PresetHuman {
+		t.Fatalf("preset = %q, want human", m.preset)
+	}
+	// The key assertion: m.all reflects the cached HUMAN set on this
+	// frame, with no fetchedMsg applied since the switch.
+	if got := ids(m.all); len(got) != 1 || got[0] != "a-2" {
+		t.Errorf("m.all = %v, want [a-2] painted instantly from cache", got)
+	}
+	if got := ids(m.visible); len(got) != 1 || got[0] != "a-2" {
+		t.Errorf("m.visible = %v, want [a-2]", got)
+	}
+	// And a reconciling fetch is still dispatched.
+	if cmd == nil {
+		t.Error("expected a background reconcile fetch after a cached switch")
+	}
+}
+
+func TestHumanKeyTogglesBackToOrigin(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src) // preset=all
+
+	// all -> human
+	m, _ = pressRune(t, m, 'h')
+	if m.preset != filter.PresetHuman {
+		t.Fatalf("first h: preset = %q, want human", m.preset)
+	}
+	// human -> back to all (the origin)
+	m, _ = pressRune(t, m, 'h')
+	if m.preset != filter.PresetAll {
+		t.Errorf("second h: preset = %q, want all (origin)", m.preset)
+	}
+
+	// From a non-all origin, h should return there too.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab}) // all -> ready
+	m = model.(Model)
+	origin := m.preset
+	m, _ = pressRune(t, m, 'h') // -> human
+	m, _ = pressRune(t, m, 'h') // -> origin
+	if m.preset != origin {
+		t.Errorf("toggle from %q: returned to %q, want %q", origin, m.preset, origin)
+	}
+}
+
+func TestToggleShowClosed_ClearsPresetCache(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	if m.presetCache == nil {
+		t.Fatal("setup: expected a populated preset cache after a fetch")
+	}
+	m, _ = pressRune(t, m, 'C')
+	if m.presetCache != nil {
+		t.Errorf("presetCache should be cleared on showClosed toggle (scope change); got %v", m.presetCache)
+	}
+}
+
 func TestTabCyclesPresets(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)

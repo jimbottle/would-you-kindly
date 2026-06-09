@@ -199,8 +199,26 @@ type Model struct {
 	preset filter.Preset
 	query  string
 
+	// humanReturnPreset is the preset the user was on when they pressed
+	// `h` to jump into the human view, so a second `h` toggles back to
+	// it instead of being a one-way trip. Empty (or itself "human")
+	// falls back to PresetAll.
+	humanReturnPreset filter.Preset
+
 	all     []beads.Issue // last full fetch result
 	visible []beads.Issue // after fuzzy filter
+
+	// presetCache holds the last successful fetch for each preset so
+	// switching back to a preset paints its rows INSTANTLY instead of
+	// staring at the previous preset's list for the 2-3s a cold
+	// multi-repo bd round-trip takes. A switch still dispatches an
+	// authoritative fetch in the background to reconcile (the cached
+	// rows are at most one refresh-interval stale, and the refreshing
+	// indicator signals it). Keyed by preset; the entries are scoped
+	// to the current showClosed setting, so toggling `C` clears it.
+	// nil until the first fetch lands — a cache miss simply falls back
+	// to the old "keep the stale rows until the fetch returns" path.
+	presetCache map[filter.Preset][]beads.Issue
 	// commonPrefix is the longest shared ID prefix (ending in `-`)
 	// across m.all. Recomputed on each fetch; used by displayID to
 	// strip noise from the ID column in single-repo mode.
@@ -992,6 +1010,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.all = msg.issues
 			m.commonPrefix = commonIDPrefix(m.all)
+			// Remember this preset's result so a later switch back to
+			// it can paint instantly from cache (see switchPreset).
+			if m.presetCache == nil {
+				m.presetCache = make(map[filter.Preset][]beads.Issue)
+			}
+			m.presetCache[msg.preset] = msg.issues
 			// Freshen cached detail-view dependency rows from the new
 			// list so a status that drifted (an external write, or a
 			// prior mutation) doesn't linger stale under an issue's
@@ -1384,6 +1408,18 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible()
 		return m, textinput.Blink
 	case keyHit(msg, m.keys.Human):
+		// `h` toggles the human view: jump in from wherever you are,
+		// press again to return to the view you came from (default
+		// all). Remember the origin only on the way IN so a stray
+		// double-press can't strand the return target on "human".
+		if m.preset == filter.PresetHuman {
+			target := m.humanReturnPreset
+			if target == "" || target == filter.PresetHuman {
+				target = filter.PresetAll
+			}
+			return m.switchPreset(target)
+		}
+		m.humanReturnPreset = m.preset
 		return m.switchPreset(filter.PresetHuman)
 	case keyHit(msg, m.keys.Cycle):
 		return m.switchPreset(filter.NextPreset(m.preset))
@@ -2065,6 +2101,19 @@ func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
 	m.cursor = 0
 	m.scroll = 0
 	m.refreshing = true
+	// Instant paint: if we've fetched this preset before, swap its
+	// cached rows in NOW so the list reflects the new view on this
+	// frame instead of showing the old preset's rows for the duration
+	// of the bd round-trip. The fetch dispatched below still runs and
+	// reconciles when it lands (its fetchedMsg refreshes both m.all and
+	// the cache). A cache miss leaves the previous rows up — the same
+	// behavior as before this optimization — until the fetch returns.
+	if cached, ok := m.presetCache[p]; ok {
+		m.all = cached
+		m.commonPrefix = commonIDPrefix(m.all)
+		m.recomputeVisible()
+		m.ensureCursorVisible()
+	}
 	return m, m.fetchCmd()
 }
 
@@ -4192,6 +4241,10 @@ func (m Model) toggleShowClosed() (tea.Model, tea.Cmd) {
 	if tog, ok := m.src.(ClosedToggler); ok {
 		tog.SetIncludeClosed(m.showClosed)
 	}
+	// The cached per-preset rows were fetched under the OLD showClosed
+	// scope, so they'd paint the wrong set (closed rows present/absent)
+	// on the next switch. Drop them; they repopulate from fresh fetches.
+	m.presetCache = nil
 	m.cursor = 0
 	m.refreshing = true
 	return m, m.fetchCmd()
