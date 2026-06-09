@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unparseable version or a newer-than-tested major, and PASSes in range.
   Since wyk shells out to bd for every read and write, this turns a
   silent version skew into an explicit, actionable signal.
+- **`--no-color` flag** — a top-level flag that disables colored output,
+  equivalent to the existing `NO_COLOR` / `WYK_NO_COLOR` environment
+  variables. Closes the conventional-CLI gap of honoring the env var but
+  not the flag.
+
+- **README `Platforms` + `What wyk is not` sections** — explicit
+  tested-platform statement (macOS + Linux; Windows unsupported/untested)
+  and a short non-goals list, so adopters know the scope and support
+  surface up front.
 
 - **`bd-create-guard` PreToolUse hook** — `wyk init` now registers a
   Claude Code hook in `.claude/settings.json` that blocks an agent's raw
@@ -77,6 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is stricter than intended and contradicted the README/CONTRIBUTING
   "Go 1.26+". Nothing in the tree requires a 1.26.3-specific fix, so the
   directive now states the true minimum.
+
+- **CI now also builds + race-tests on macOS** — the test workflow runs
+  the build and `go test -race` on both `ubuntu-latest` and `macos-latest`
+  (the TUI's instant-refresh path uses platform-specific `fsnotify`, and
+  the tool is developed on macOS). The static gates (gofmt, docs-drift,
+  golangci-lint, govulncheck) stay Linux-only to avoid redundant macOS
+  minutes.
 
 - **The status-bar footer wraps into a column-aligned key grid** — the
   status info sits on its own line and the key bindings flow into a
@@ -132,6 +148,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the real cause is "a repo failed." The issue list still goes to
   stdout unchanged; the warning is stderr-only, matching the partial-
   failure handling already in `wyk inbox` and `wyk stats`.
+- **`wyk --help` no longer uses Unicode dashes in flag hints** — two
+  subcommand hints rendered `(−json …)` / `(–json …)` with a minus sign /
+  en dash instead of an ASCII `-`, so copy-pasting them produced `flag
+  provided but not defined`. Guarded by a test.
+
+- **A bad `-C <dir>` now gives a clean error** — `wyk -C /no/such/dir`
+  reported bd's raw JSON error blob; it now validates the directory up
+  front and prints `-C directory "…" does not exist` (or `… is not a
+  directory`).
+
+- **`wyk completion -h|--help` prints usage and exits 0** — previously it
+  reported `unknown shell "-h"` and exited 64.
 
 - **The `/` filter now matches repo / branch / ID, and no longer floods
   on common words** — it previously searched only the title (fuzzy) and

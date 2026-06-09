@@ -33,8 +33,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          # Pin to go.mod so this CI always uses the project's declared
-          # toolchain instead of drifting to whatever setup-go defaults to.
+          # Pin to go.mod so CI uses the project's declared floor (1.24.5,
+          # driven by a dependency) instead of drifting to whatever setup-go
+          # defaults to — this is also what proves the floor still builds:
+          # setup-go installs the latest patch of the go.mod minor, so a
+          # change that needs a newer Go than the floor fails here.
           go-version-file: go.mod
           check-latest: true
 
