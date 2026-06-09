@@ -115,10 +115,11 @@ func sampleIssues() []beads.Issue {
 
 // applyFetched simulates the first fetch completing under the model's
 // current preset. The preset tag matters: the model now drops results
-// for any preset other than the one currently selected, so tests must
-// echo m.preset back into the message.
+// The fetched result lands in m.all (the all-superset) for every
+// preset except ready, which lands in m.readySet. Tests that drive the
+// ready preset should set ready:true.
 func applyFetched(m Model, src *stubSource) Model {
-	model, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	return model.(Model)
 }
 
@@ -286,42 +287,66 @@ func ids(issues []beads.Issue) []string {
 	return out
 }
 
-// TestSwitchPreset_PaintsFromCacheInstantly verifies the latency fix:
-// once a preset has been fetched, switching back to it swaps its cached
-// rows in immediately — before (and independent of) the reconciling
-// fetch — so the list never lingers on the previous preset's rows.
-func TestSwitchPreset_PaintsFromCacheInstantly(t *testing.T) {
-	allIssues := []beads.Issue{{ID: "a-1"}, {ID: "a-2"}, {ID: "a-3"}}
-	humanIssues := []beads.Issue{{ID: "a-2"}}
-	src := &stubSource{issues: allIssues}
-	m := applyFetched(New(src), src) // preset=all cached
-
-	// Jump to human (cache miss the first time) and land its fetch so
-	// the human set gets cached with a DISTINCT membership.
-	m, _ = pressRune(t, m, 'h')
-	model, _ := m.Update(fetchedMsg{preset: filter.PresetHuman, issues: humanIssues})
-	m = model.(Model)
-
-	// Toggle back to all (cache hit), then into human again (cache hit).
-	m, _ = pressRune(t, m, 'h') // -> all
-	if m.preset != filter.PresetAll {
-		t.Fatalf("toggle back: preset = %q, want all", m.preset)
+// TestSwitchPreset_FiltersInMemoryInstantly is the core latency
+// guarantee: switching to the human view filters the already-loaded
+// superset on the same frame, with NO new bd fetch on the critical
+// path. sampleIssues has 2 human rows (a-1, a-3) and 1 non-human (a-2).
+func TestSwitchPreset_FiltersInMemoryInstantly(t *testing.T) {
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src) // preset=all; m.all = 3 rows
+	if len(m.visible) != 3 {
+		t.Fatalf("all view: visible = %d, want 3", len(m.visible))
 	}
-	m, cmd := pressRune(t, m, 'h') // -> human, should paint from cache NOW
+
+	callsBefore := src.calls // fetch closures aren't executed in tests
+	m, cmd := pressRune(t, m, 'h')
 	if m.preset != filter.PresetHuman {
 		t.Fatalf("preset = %q, want human", m.preset)
 	}
-	// The key assertion: m.all reflects the cached HUMAN set on this
-	// frame, with no fetchedMsg applied since the switch.
-	if got := ids(m.all); len(got) != 1 || got[0] != "a-2" {
-		t.Errorf("m.all = %v, want [a-2] painted instantly from cache", got)
+	// Visible reflects ONLY the human rows immediately — proved purely
+	// in memory, since no Fetch ran (the returned cmd is unexecuted).
+	if got := ids(m.visible); len(got) != 2 || got[0] != "a-1" || got[1] != "a-3" {
+		t.Errorf("human view: visible = %v, want [a-1 a-3] filtered in memory", got)
 	}
-	if got := ids(m.visible); len(got) != 1 || got[0] != "a-2" {
-		t.Errorf("m.visible = %v, want [a-2]", got)
+	if src.calls != callsBefore {
+		t.Errorf("switch triggered %d synchronous Fetch calls; want 0 (filter is in memory)", src.calls-callsBefore)
 	}
-	// And a reconciling fetch is still dispatched.
+	// The superset itself is untouched, and a background refresh is
+	// still scheduled to reconcile.
+	if len(m.all) != 3 {
+		t.Errorf("m.all (superset) = %d rows, want 3 unchanged", len(m.all))
+	}
 	if cmd == nil {
-		t.Error("expected a background reconcile fetch after a cached switch")
+		t.Error("expected a background refresh fetch to be dispatched")
+	}
+}
+
+func TestFilterByPreset(t *testing.T) {
+	all := sampleIssues() // a-1 human, a-2 not, a-3 human; no Owner set
+	cases := []struct {
+		name string
+		p    filter.Preset
+		me   string
+		want []string
+	}{
+		{"all", filter.PresetAll, "", []string{"a-1", "a-2", "a-3"}},
+		{"human", filter.PresetHuman, "", []string{"a-1", "a-3"}},
+		{"blocked-none", filter.PresetBlocked, "", nil},
+		{"mine-empty-me-is-all", filter.PresetMine, "", []string{"a-1", "a-2", "a-3"}},
+		{"mine-no-match", filter.PresetMine, "nobody", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ids(filterByPreset(all, tc.p, tc.me))
+			if len(got) != len(tc.want) {
+				t.Fatalf("filterByPreset(%s, me=%q) = %v, want %v", tc.p, tc.me, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("filterByPreset(%s) = %v, want %v", tc.p, got, tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -348,18 +373,6 @@ func TestHumanKeyTogglesBackToOrigin(t *testing.T) {
 	m, _ = pressRune(t, m, 'h') // -> origin
 	if m.preset != origin {
 		t.Errorf("toggle from %q: returned to %q, want %q", origin, m.preset, origin)
-	}
-}
-
-func TestToggleShowClosed_ClearsPresetCache(t *testing.T) {
-	src := &stubSource{issues: sampleIssues()}
-	m := applyFetched(New(src), src)
-	if m.presetCache == nil {
-		t.Fatal("setup: expected a populated preset cache after a fetch")
-	}
-	m, _ = pressRune(t, m, 'C')
-	if m.presetCache != nil {
-		t.Errorf("presetCache should be cleared on showClosed toggle (scope change); got %v", m.presetCache)
 	}
 }
 
@@ -576,49 +589,61 @@ func TestHumanBadge_AlwaysReadsHUMAN(t *testing.T) {
 func TestErrorStateShowsFriendlyMessage(t *testing.T) {
 	src := &stubSource{err: beads.ErrBDNotFound}
 	m := New(src)
-	model, _ := m.Update(fetchedMsg{preset: m.preset, err: src.err})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, err: src.err})
 	out := model.(Model).View()
 	if !strings.Contains(out, "bd is not installed") {
 		t.Errorf("error view missing friendly bd-not-installed copy:\n%s", out)
 	}
 }
 
-func TestStaleFetchIsDroppedAfterPresetChange(t *testing.T) {
-	// A tick fires while the user is on the default preset, then the
-	// user switches to PresetHuman before the fetch returns. The late
-	// fetched message must not overwrite the model's state.
-	//
-	// The "no-blank-on-switch" change keeps the OLD preset's rows
-	// visible during the switch (so users don't see a wiped table
-	// for the duration of bd's round-trip); the dropped-stale
-	// invariant is about NEW data not overwriting NEWER state, so
-	// we check that the stale fetch leaves m.all == the old rows
-	// rather than asserting m.all is cleared.
+func TestStaleFetchIsDroppedAtReadyBoundary(t *testing.T) {
+	// Presets now filter a shared in-memory superset, so an all-fetch is
+	// valid for ANY non-ready view and is no longer dropped on a
+	// non-ready→non-ready switch (that's the latency win). The remaining
+	// drop boundary is ready vs non-ready: a late all-fetch that arrives
+	// after the user has switched to the ready view must NOT be mistaken
+	// for the ready set, and must not clobber the superset's display.
 	src := &stubSource{issues: sampleIssues()}
-	m := applyFetched(New(src), src)
+	m := applyFetched(New(src), src) // preset=all; m.all = 3
 	wantCount := len(m.all)
 
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab}) // all -> ready
 	m = model.(Model)
+	if m.preset != filter.PresetReady {
+		t.Fatalf("setup: preset = %q, want ready", m.preset)
+	}
 	if !m.refreshing {
 		t.Errorf("preset switch should set refreshing=true; got false")
 	}
 
-	// late fetch for the OLD preset arrives — must NOT clobber the
-	// current preset's rows even though they're still the OLD data
-	// on screen.
-	stale := []beads.Issue{{ID: "stale-1", Title: "stale", Labels: []string{}}}
-	model, _ = m.Update(fetchedMsg{preset: filter.PresetAll, issues: stale})
+	// A late ALL fetch (dispatched before the switch) lands while on
+	// ready — it must be dropped, not treated as the ready set.
+	stale := []beads.Issue{{ID: "stale-1", Title: "stale"}}
+	model, _ = m.Update(fetchedMsg{ready: false, issues: stale})
 	m = model.(Model)
 	if len(m.all) != wantCount {
-		t.Errorf("stale fetch should have been dropped; m.all changed from %d to %d", wantCount, len(m.all))
+		t.Errorf("all-fetch landed while on ready; m.all changed from %d to %d", wantCount, len(m.all))
+	}
+	if len(m.readySet) != 0 {
+		t.Errorf("all-fetch leaked into readySet (%d rows)", len(m.readySet))
+	}
+
+	// Conversely, a ready fetch is accepted on the ready view.
+	readyRows := []beads.Issue{{ID: "r-1", Title: "ready one"}}
+	model, _ = m.Update(fetchedMsg{ready: true, issues: readyRows})
+	m = model.(Model)
+	if got := ids(m.readySet); len(got) != 1 || got[0] != "r-1" {
+		t.Errorf("ready fetch not stored: readySet = %v", got)
+	}
+	if got := ids(m.visible); len(got) != 1 || got[0] != "r-1" {
+		t.Errorf("ready view should show the ready set; visible = %v", got)
 	}
 }
 
 func TestTickSuspendsOnTerminalError(t *testing.T) {
 	src := &stubSource{err: beads.ErrBDNotFound}
 	m := New(src)
-	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, err: beads.ErrBDNotFound})
 	m = model.(Model)
 	_, cmd := m.Update(tickMsg{gen: m.tickGen})
 	if cmd != nil {
@@ -720,7 +745,7 @@ func TestTerminalErrorBannerAppendsRetryHint(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)
 
-	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, err: beads.ErrBDNotFound})
 	m = model.(Model)
 
 	out := m.View()
@@ -740,7 +765,7 @@ func TestTransientErrorBannerOmitsRetryHint(t *testing.T) {
 	src := &stubSource{issues: sampleIssues()}
 	m := applyFetched(New(src), src)
 
-	model, _ := m.Update(fetchedMsg{preset: m.preset, err: errors.New("bd: transient flake")})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, err: errors.New("bd: transient flake")})
 	m = model.(Model)
 
 	out := m.View()
@@ -767,7 +792,7 @@ func TestTransientFetchErrorKeepsTableVisible(t *testing.T) {
 	}
 
 	// Simulate a flaky bd query: tick → fetch returns error.
-	model, _ := m.Update(fetchedMsg{preset: m.preset, err: errors.New("bd: transient flake")})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, err: errors.New("bd: transient flake")})
 	m = model.(Model)
 
 	out = m.View()
@@ -870,7 +895,7 @@ func TestInitialPaintShowsLoading(t *testing.T) {
 
 // applyMutatorFetched is the stubMutator equivalent of applyFetched.
 func applyMutatorFetched(m Model, s *stubMutator) Model {
-	model, _ := m.Update(fetchedMsg{preset: m.preset, issues: s.issues})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: s.issues})
 	return model.(Model)
 }
 
@@ -1126,7 +1151,7 @@ func TestConfirmCloseTargetsCapturedIDNotCursor(t *testing.T) {
 
 	// Simulate a refetch that reorders: original first issue now at index 1.
 	reordered := []beads.Issue{s.issues[1], s.issues[0], s.issues[2]}
-	model, _ = m.Update(fetchedMsg{preset: m.preset, issues: reordered})
+	model, _ = m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: reordered})
 	m = model.(Model)
 
 	// y confirms — should still close the originally-targeted ID.
@@ -1156,7 +1181,7 @@ func TestConfirmCloseCancelsIfTargetVanishes(t *testing.T) {
 	m = model.(Model)
 
 	// refetch with the target removed
-	model, _ = m.Update(fetchedMsg{preset: m.preset, issues: s.issues[1:]})
+	model, _ = m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: s.issues[1:]})
 	m = model.(Model)
 
 	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
@@ -1569,7 +1594,7 @@ func TestRecoveryFromTerminalErrorReArmsTickChain(t *testing.T) {
 	// detects the recovery and re-arms.
 	src := &stubSource{err: beads.ErrBDNotFound}
 	m := New(src)
-	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, err: beads.ErrBDNotFound})
 	m = model.(Model)
 	// initial tick self-suspends
 	model, _ = m.Update(tickMsg{gen: m.tickGen})
@@ -1583,7 +1608,7 @@ func TestRecoveryFromTerminalErrorReArmsTickChain(t *testing.T) {
 	preGen := m.tickGen
 
 	// fetch eventually succeeds: recovery must re-arm a tick chain
-	model, cmd := m.Update(fetchedMsg{preset: m.preset, issues: sampleIssues()})
+	model, cmd := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: sampleIssues()})
 	m = model.(Model)
 	if m.tickGen <= preGen {
 		t.Errorf("recovery should bump tickGen (was %d, now %d)", preGen, m.tickGen)
@@ -1601,7 +1626,7 @@ func TestRefreshAfterTerminalErrorRestartsTickAndRetiresOldChain(t *testing.T) {
 	src := &stubSource{err: beads.ErrBDNotFound}
 	m := New(src)
 	// land a terminal error and let the tick handler retire the current chain.
-	model, _ := m.Update(fetchedMsg{preset: m.preset, err: beads.ErrBDNotFound})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, err: beads.ErrBDNotFound})
 	m = model.(Model)
 	model, _ = m.Update(tickMsg{gen: m.tickGen})
 	m = model.(Model)
@@ -2282,7 +2307,7 @@ func TestEmptyState_HumanPresetCelebrates(t *testing.T) {
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	m = model.(Model)
 	// Pretend the human-preset fetch came back empty.
-	model, _ = m.Update(fetchedMsg{preset: m.preset, issues: []beads.Issue{}})
+	model, _ = m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: []beads.Issue{}})
 	m = model.(Model)
 	out := m.View()
 	if !strings.Contains(out, "no human-flagged issues") {
@@ -2440,7 +2465,7 @@ func TestShowClosed_TogglesStateAndRefetches(t *testing.T) {
 	m := New(src)
 	// Seed initial rows without applyFetched (which wants the
 	// concrete *stubSource).
-	model, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	m = model.(Model)
 
 	if m.showClosed {
@@ -3623,7 +3648,7 @@ func TestAssign_CancelsWhenTargetVanishes(t *testing.T) {
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}})
 	m = model.(Model)
 	// Simulate a refetch that drops a-1 entirely.
-	model, _ = m.Update(fetchedMsg{preset: m.preset, issues: nil})
+	model, _ = m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: nil})
 	m = model.(Model)
 	// Submit a new value — guard should refuse to dispatch.
 	for _, r := range "bob" {
@@ -4655,7 +4680,7 @@ func TestCommandPalette_BDDispatchesAndOpensOutputOverlay(t *testing.T) {
 		out:        []byte("ready: 2 issues\n"),
 	}
 	m := New(src)
-	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	mod, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	m = mod.(Model)
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
@@ -4689,7 +4714,7 @@ func TestCommandPalette_BDEmptyArgsIsUsageError(t *testing.T) {
 
 	src := &stubRawBD{stubSource: stubSource{issues: sampleIssues()}}
 	m := New(src)
-	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	mod, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	m = mod.(Model)
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
@@ -4720,7 +4745,7 @@ func TestCommandPalette_BDOutputFooterShowsScrollPercent(t *testing.T) {
 		m := New(src)
 		mod, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 		m = mod.(Model)
-		mod, _ = m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+		mod, _ = m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 		m = mod.(Model)
 		mod, _ = m.Update(rawBDMsg{args: "ready", out: src.out})
 		m = mod.(Model)
@@ -4744,7 +4769,7 @@ func TestCommandPalette_BDOutputFooterShowsScrollPercent(t *testing.T) {
 		m := New(src)
 		mod, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 		m = mod.(Model)
-		mod, _ = m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+		mod, _ = m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 		m = mod.(Model)
 		mod, _ = m.Update(rawBDMsg{args: "ready", out: src.out})
 		m = mod.(Model)
@@ -4768,7 +4793,7 @@ func TestCommandPalette_BDOutputUsesViewport(t *testing.T) {
 	m := New(src)
 	mod, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = mod.(Model)
-	mod, _ = m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	mod, _ = m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	m = mod.(Model)
 
 	mod, _ = m.Update(rawBDMsg{args: "ready", out: src.out})
@@ -4799,7 +4824,7 @@ func TestCommandPalette_BDErrorRendersBracketedErrorLine(t *testing.T) {
 		rawErr:     errors.New("bd exited 1"),
 	}
 	m := New(src)
-	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	mod, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	m = mod.(Model)
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
@@ -4837,7 +4862,7 @@ func TestCommandPalette_BDDoesNotYankFromDetailMode(t *testing.T) {
 
 	src := &stubRawBD{stubSource: stubSource{issues: sampleIssues()}, out: []byte("done\n")}
 	m := New(src)
-	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	mod, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	m = mod.(Model)
 	// Simulate: user pressed enter to open detail view.
 	m.mode = modeDetail
@@ -4858,7 +4883,7 @@ func TestCommandPalette_BDDoesNotYankFromDetailMode(t *testing.T) {
 func TestCommandPalette_OutputOverlayClosesOnEsc(t *testing.T) {
 	src := &stubRawBD{stubSource: stubSource{issues: sampleIssues()}, out: []byte("hi\n")}
 	m := New(src)
-	mod, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	mod, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	m = mod.(Model)
 	model, _ := m.Update(rawBDMsg{args: "ready", out: src.out})
 	m = model.(Model)
@@ -5515,22 +5540,33 @@ func TestWithCacheSnapshot_PaintsCachedRowsImmediately(t *testing.T) {
 	}
 }
 
-func TestWithCacheSnapshot_IgnoresMismatchedPreset(t *testing.T) {
-	// A cached "all" snapshot is useless when the user launched
-	// with -preset human; seeding it would mis-paint. The check
-	// keeps the cold-path "loading…" experience for these cases.
+func TestWithCacheSnapshot_SeedsAcrossPresets(t *testing.T) {
+	// The persisted snapshot is always the `all` superset, and presets
+	// are in-memory predicates over it — so warm-start must seed
+	// regardless of which preset the session restored, applying the
+	// filter in memory. Here a snapshot saved under `all` warm-starts a
+	// launch restored to `human`: the superset seeds m.all and the human
+	// predicate selects the human row on the very first frame, instead
+	// of staring at the spinner for the whole cold fetch (the bug that
+	// made the human view take ~9s to appear).
 	src := &stubSource{}
 	cache := Cache{
 		Preset:  string(filter.PresetAll),
 		SavedAt: time.Now(),
-		Issues:  []beads.Issue{{ID: "wyk-1"}},
+		Issues: []beads.Issue{
+			{ID: "h-1", Labels: []string{"human"}},
+			{ID: "a-1", Labels: []string{"src:agent"}},
+		},
 	}
 	m := New(src).WithPreset(filter.PresetHuman).WithCacheSnapshot(cache, "")
-	if len(m.all) != 0 {
-		t.Errorf("mismatched preset should not seed; got %+v", m.all)
+	if len(m.all) != 2 {
+		t.Errorf("superset should seed m.all with both rows; got %d", len(m.all))
 	}
-	if m.cacheStale {
-		t.Error("cacheStale should remain false on mismatch")
+	if !m.cacheStale {
+		t.Error("cacheStale should be true after a warm-start seed")
+	}
+	if got := ids(m.visible); len(got) != 1 || got[0] != "h-1" {
+		t.Errorf("human preset should filter the seeded superset to [h-1]; got %v", got)
 	}
 }
 
@@ -5555,8 +5591,8 @@ func TestStatusBar_FailedFetchAfterWarmStartStaysCached(t *testing.T) {
 
 	// Live fetch fails.
 	model, _ := m.Update(fetchedMsg{
-		preset: filter.PresetAll,
-		err:    errors.New("bd list --json: timed out after 10s"),
+		ready: false,
+		err:   errors.New("bd list --json: timed out after 10s"),
 	})
 	m = model.(Model)
 
@@ -5594,7 +5630,7 @@ func TestFetchedMsg_ClearsCacheStaleAndPersistsSnapshot(t *testing.T) {
 	}
 
 	fresh := []beads.Issue{{ID: "wyk-7", Title: "fresh"}}
-	model, cmd := m.Update(fetchedMsg{preset: filter.PresetAll, issues: fresh})
+	model, cmd := m.Update(fetchedMsg{ready: false, issues: fresh})
 	m = model.(Model)
 	if m.cacheStale {
 		t.Error("cacheStale should clear after a successful fetchedMsg")
@@ -5871,7 +5907,7 @@ func TestSortByDeps_RefreshReResolvesNewRows(t *testing.T) {
 		{ID: "a-2", Priority: 1, DependencyCount: 1},
 		{ID: "a-3", Priority: 0, DependencyCount: 1},
 	}
-	model, cmd := m.Update(fetchedMsg{preset: m.preset, issues: newRows})
+	model, cmd := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: newRows})
 	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("refresh while deps-sort active should return a resolve Cmd for the new row")
@@ -5962,7 +5998,7 @@ func TestRefreshDepCachesFromList_FreshensOnFetch(t *testing.T) {
 
 	// Re-deliver the fetch (simulating a refresh that carries b-2's
 	// updated status).
-	model, _ := m.Update(fetchedMsg{preset: m.preset, issues: src.issues})
+	model, _ := m.Update(fetchedMsg{ready: m.preset == filter.PresetReady, issues: src.issues})
 	m = model.(Model)
 
 	row := m.depCache["a-1"][0]

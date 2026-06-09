@@ -205,20 +205,24 @@ type Model struct {
 	// falls back to PresetAll.
 	humanReturnPreset filter.Preset
 
-	all     []beads.Issue // last full fetch result
-	visible []beads.Issue // after fuzzy filter
+	// all is the full "all" superset — every open issue (plus closed
+	// when showClosed is on), fetched once and refreshed on the
+	// tick/fs/manual cycle. The human / mine / blocked / all presets
+	// are pure predicates over this set, applied IN MEMORY by
+	// recomputeVisible, so switching between them is instant — no bd
+	// round-trip. This is what makes `h` / `tab` feel immediate; the
+	// old per-preset fetch left the previous view's rows on screen for
+	// the 2-3s a cold cross-repo query takes.
+	all     []beads.Issue // the all-superset; presets filter it in memory
+	visible []beads.Issue // after preset predicate + priority + fuzzy filter
 
-	// presetCache holds the last successful fetch for each preset so
-	// switching back to a preset paints its rows INSTANTLY instead of
-	// staring at the previous preset's list for the 2-3s a cold
-	// multi-repo bd round-trip takes. A switch still dispatches an
-	// authoritative fetch in the background to reconcile (the cached
-	// rows are at most one refresh-interval stale, and the refreshing
-	// indicator signals it). Keyed by preset; the entries are scoped
-	// to the current showClosed setting, so toggling `C` clears it.
-	// nil until the first fetch lands — a cache miss simply falls back
-	// to the old "keep the stale rows until the fetch returns" path.
-	presetCache map[filter.Preset][]beads.Issue
+	// readySet holds the bd ready result for PresetReady. Ready has
+	// blocker-aware semantics that no label/status predicate can
+	// reproduce (see filter.Query), so it's the one preset still
+	// materialised by a bd call rather than filtered from m.all. Kept
+	// separate so switching AWAY from ready paints the master instantly
+	// without waiting on a fresh fetch.
+	readySet []beads.Issue
 	// commonPrefix is the longest shared ID prefix (ending in `-`)
 	// across m.all. Recomputed on each fetch; used by displayID to
 	// strip noise from the ID column in single-repo mode.
@@ -628,15 +632,23 @@ func (m Model) WithPriorityEmphasis(on bool) Model {
 // passes this through so the model can call SaveCache after each
 // fetchedMsg lands. Empty path disables persistence.
 //
-// The cache is only honored if c.Preset matches the model's
-// current preset — a snapshot of the "all" view isn't useful when
-// the user launched with -preset human. The snapshot is also
-// dropped when it carries zero issues (no value in pre-painting
-// an empty list); the loading branch still shows the spinner so
-// first-run users don't see a confusing dead screen.
+// The snapshot is preset-AGNOSTIC: what's persisted is always the
+// `all` superset (every non-ready fetch saves it; ready never
+// overwrites it), and every label/status preset is just an
+// in-memory predicate over that set. So a snapshot saved under any
+// preset seeds m.all here and recomputeVisible filters it to
+// whatever preset the session restored — which is the whole point,
+// since the cold multi-repo fetch is the 9s we're hiding. We used
+// to require c.Preset == m.preset, which silently disabled warm-
+// start whenever the saved and restored presets differed (e.g.
+// quit on `all`, reopen restored to `human`) and left the user
+// staring at the spinner for the full fetch. The snapshot is only
+// dropped when it carries zero issues (nothing to pre-paint); the
+// loading branch then shows the spinner so first-run users don't
+// see a confusing dead screen.
 func (m Model) WithCacheSnapshot(c Cache, path string) Model {
 	m.cachePath = path
-	if len(c.Issues) == 0 || filter.Preset(c.Preset) != m.preset {
+	if len(c.Issues) == 0 {
 		return m
 	}
 	m.all = c.Issues
@@ -815,26 +827,37 @@ func waitFSEvent(events <-chan struct{}) tea.Cmd {
 	}
 }
 
-// fetchCmd asks the Source for issues matching the current preset.
-// It uses a fresh background context per call; the bd Client applies
-// its own per-call timeout. The originating preset is echoed back in
-// the result so stale fetches (a tick that arrived while the user was
-// switching presets) can be dropped instead of overwriting newer data.
+// fetchCmd refreshes the data backing the current view. For every
+// preset except ready it fetches the full "all" superset (which the
+// presets then filter in memory); for ready it fetches bd's
+// blocker-aware ready set. The result carries a `ready` flag so the
+// handler knows which slot to land it in — and so an all-fetch
+// dispatched under one preset can still satisfy any other in-memory
+// preset, instead of being dropped as "stale" on a fast switch.
 //
-// When the Source is a MultiSource, per-sub errors are pulled
-// atomically with the issues (via FetchWithSubErrors) so a
-// concurrent next-tick fetch cannot interleave its errors with this
-// fetch's rows.
+// It uses a fresh background context per call; the bd Client applies
+// its own per-call timeout. When the Source is a MultiSource, per-sub
+// errors are pulled atomically with the issues (via
+// FetchWithSubErrors) so a concurrent next-tick fetch cannot
+// interleave its errors with this fetch's rows.
 func (m Model) fetchCmd() tea.Cmd {
-	src, preset := m.src, m.preset
+	src := m.src
+	ready := m.preset == filter.PresetReady
+	// Non-ready presets all read from the all-superset; fetch that
+	// regardless of which one is active so a switch never needs a new
+	// query. Ready is the lone exception.
+	fetchPreset := filter.PresetAll
+	if ready {
+		fetchPreset = filter.PresetReady
+	}
 	return func() tea.Msg {
 		ctx := context.Background()
 		if ms, ok := src.(MultiSource); ok {
-			issues, subErrs, err := ms.FetchWithSubErrors(ctx, preset)
-			return fetchedMsg{preset: preset, issues: issues, subErrs: subErrs, err: err}
+			issues, subErrs, err := ms.FetchWithSubErrors(ctx, fetchPreset)
+			return fetchedMsg{ready: ready, issues: issues, subErrs: subErrs, err: err}
 		}
-		issues, err := src.Fetch(ctx, preset)
-		return fetchedMsg{preset: preset, issues: issues, err: err}
+		issues, err := src.Fetch(ctx, fetchPreset)
+		return fetchedMsg{ready: ready, issues: issues, err: err}
 	}
 }
 
@@ -843,7 +866,11 @@ func tickCmd(gen int) tea.Cmd {
 }
 
 type fetchedMsg struct {
-	preset  filter.Preset
+	// ready distinguishes a bd-ready fetch (lands in m.readySet) from
+	// the all-superset fetch (lands in m.all). It also drives the
+	// accept/drop decision: an all-fetch is valid for any non-ready
+	// view, a ready-fetch only for the ready view.
+	ready   bool
 	issues  []beads.Issue
 	subErrs []FetchError
 	err     error
@@ -988,10 +1015,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case fetchedMsg:
-		// Drop results from a fetch dispatched for a preset we've
-		// since moved off of — otherwise an in-flight tick can clobber
-		// the user's newly-selected view.
-		if msg.preset != m.preset {
+		// Accept an all-superset fetch for any non-ready view and a
+		// ready fetch only for the ready view; drop the mismatch. This
+		// is looser than the old "preset must match exactly" check on
+		// purpose: an all-fetch dispatched under [human] is still valid
+		// after the user tabs to [mine], because both filter the same
+		// superset in memory — so a fast switch no longer throws away a
+		// fetch that was about to satisfy it.
+		if msg.ready != (m.preset == filter.PresetReady) {
 			return m, nil
 		}
 		// If we're recovering from a terminal-error state (no bd / no
@@ -1008,14 +1039,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastErr = msg.err
 		var cacheCmd, depsCmd tea.Cmd
 		if msg.err == nil {
-			m.all = msg.issues
-			m.commonPrefix = commonIDPrefix(m.all)
-			// Remember this preset's result so a later switch back to
-			// it can paint instantly from cache (see switchPreset).
-			if m.presetCache == nil {
-				m.presetCache = make(map[filter.Preset][]beads.Issue)
+			// Land the result in the right slot: the ready fetch into
+			// m.readySet, the all-superset (every other preset) into
+			// m.all. commonPrefix tracks the superset, so it's only
+			// recomputed when m.all changes.
+			if msg.ready {
+				m.readySet = msg.issues
+			} else {
+				m.all = msg.issues
+				m.commonPrefix = commonIDPrefix(m.all)
 			}
-			m.presetCache[msg.preset] = msg.issues
 			// Freshen cached detail-view dependency rows from the new
 			// list so a status that drifted (an external write, or a
 			// prior mutation) doesn't linger stale under an issue's
@@ -1047,7 +1080,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// rename run off the Bubble Tea event loop — inline
 			// would stutter input handling on slow disks, which
 			// would defeat the warm-start latency win.
-			if m.cachePath != "" {
+			// Only the all-superset is worth persisting for warm-start —
+			// it seeds m.all on the next launch and every preset filters
+			// from it. A ready fetch leaves m.all untouched, so there's
+			// nothing new to save.
+			if m.cachePath != "" && !msg.ready {
 				cacheCmd = saveCacheCmd(m.cachePath, string(m.preset), msg.issues)
 			}
 		}
@@ -2101,19 +2138,16 @@ func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
 	m.cursor = 0
 	m.scroll = 0
 	m.refreshing = true
-	// Instant paint: if we've fetched this preset before, swap its
-	// cached rows in NOW so the list reflects the new view on this
-	// frame instead of showing the old preset's rows for the duration
-	// of the bd round-trip. The fetch dispatched below still runs and
-	// reconciles when it lands (its fetchedMsg refreshes both m.all and
-	// the cache). A cache miss leaves the previous rows up — the same
-	// behavior as before this optimization — until the fetch returns.
-	if cached, ok := m.presetCache[p]; ok {
-		m.all = cached
-		m.commonPrefix = commonIDPrefix(m.all)
-		m.recomputeVisible()
-		m.ensureCursorVisible()
-	}
+	// Instant paint: the new preset is just a different predicate over
+	// the superset we already hold (or, for ready, the readySet we may
+	// already hold), so recompute the visible rows NOW. No bd round-trip
+	// is on the critical path — the fetch dispatched below only
+	// refreshes the underlying data in the background. The lone case
+	// that still shows stale rows briefly is switching INTO ready before
+	// its first fetch lands (m.readySet empty); every label/status
+	// preset is instant and correct.
+	m.recomputeVisible()
+	m.ensureCursorVisible()
 	return m, m.fetchCmd()
 }
 
@@ -2442,6 +2476,60 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.maybeResolveDeps())
 }
 
+// filterByPreset selects the rows of the all-superset that belong to
+// preset p, in memory. These predicates mirror the bd queries in
+// filter.QueryWithClosed exactly — the only difference is they run
+// over an already-fetched slice instead of round-tripping to bd, which
+// is what makes preset switching instant. Closed-state inclusion is
+// already decided by what's in `all` (List vs ListAll under the
+// showClosed toggle), so the predicates don't re-check it.
+//
+//   - all:     everything in the superset.
+//   - human:   carries the `human` label (matches `label=human`).
+//   - blocked: status == blocked (matches `status=blocked`).
+//   - mine:    owner == me (matches `assignee=me`); empty me means no
+//     identity, so it degrades to "all", exactly like the bd query.
+//   - ready:   NOT handled here — bd ready is blocker-aware and lives
+//     in m.readySet; callers special-case it.
+//
+// Returns the input slice unchanged (no copy) for the all / empty-me
+// cases so the common path allocates nothing; recomputeVisible clones
+// before it sorts, so sharing the backing array here is safe.
+func filterByPreset(all []beads.Issue, p filter.Preset, me string) []beads.Issue {
+	keep := func(pred func(beads.Issue) bool) []beads.Issue {
+		out := make([]beads.Issue, 0, len(all))
+		for _, i := range all {
+			if pred(i) {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
+	switch p {
+	case filter.PresetHuman:
+		return keep(func(i beads.Issue) bool { return issueHasLabel(i, "human") })
+	case filter.PresetBlocked:
+		return keep(func(i beads.Issue) bool { return i.Status == "blocked" })
+	case filter.PresetMine:
+		if me == "" {
+			return all
+		}
+		return keep(func(i beads.Issue) bool { return i.Owner == me })
+	default: // PresetAll, PresetReady (handled by caller), unknown
+		return all
+	}
+}
+
+// issueHasLabel reports whether the issue carries the given label.
+func issueHasLabel(i beads.Issue, label string) bool {
+	for _, l := range i.Labels {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
 // recomputeVisible applies the text filter to m.all. The TITLE is matched
 // with sahilm/fuzzy (subsequence, rank-based: best-first, ties fall back
 // to position in m.all so the cursor doesn't jump as the user types) so
@@ -2451,13 +2539,22 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // matched independently so a query can't span a field boundary, and
 // title matches rank above the rest.
 func (m *Model) recomputeVisible() {
-	// Apply the priority cap first so the fuzzy ranking only ever
+	// Select the preset's rows from the in-memory superset first, so a
+	// preset switch reflects on THIS frame instead of waiting on a bd
+	// query. PresetReady is materialised by bd (blocker-aware) into
+	// m.readySet; every other preset is a predicate over m.all.
+	base := filterByPreset(m.all, m.preset, m.me)
+	if m.preset == filter.PresetReady {
+		base = m.readySet
+	}
+
+	// Apply the priority cap next so the fuzzy ranking only ever
 	// runs over rows the user actually wants to see. -1 means "no
 	// cap"; the test below short-circuits.
-	pool := m.all
+	pool := base
 	if m.priorityCap >= 0 {
-		filtered := make([]beads.Issue, 0, len(m.all))
-		for _, i := range m.all {
+		filtered := make([]beads.Issue, 0, len(base))
+		for _, i := range base {
 			if i.Priority <= m.priorityCap {
 				filtered = append(filtered, i)
 			}
@@ -4241,10 +4338,6 @@ func (m Model) toggleShowClosed() (tea.Model, tea.Cmd) {
 	if tog, ok := m.src.(ClosedToggler); ok {
 		tog.SetIncludeClosed(m.showClosed)
 	}
-	// The cached per-preset rows were fetched under the OLD showClosed
-	// scope, so they'd paint the wrong set (closed rows present/absent)
-	// on the next switch. Drop them; they repopulate from fresh fetches.
-	m.presetCache = nil
 	m.cursor = 0
 	m.refreshing = true
 	return m, m.fetchCmd()

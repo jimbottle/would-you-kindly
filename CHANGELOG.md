@@ -101,11 +101,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Preset switching is now instant** — pressing `h` / `tab` (or any
   preset change) used to fire a fresh multi-repo `bd` query and leave the
-  previous preset's rows on screen for the 2-3s cold round-trip took,
-  which felt unusable across many repos. Each preset's last result is now
-  cached and painted immediately on switch, with an authoritative fetch
-  reconciling in the background (cache cleared when `C` toggles the
-  closed-scope). Repeated filter switching no longer waits on bd.
+  previous preset's rows on screen for the 2-3s a cold round-trip takes,
+  which felt unusable across many repos. The `all` / `human` / `mine` /
+  `blocked` presets are now pure predicates over a single in-memory
+  superset, so switching between them filters on the spot with no bd
+  round-trip on the critical path (a background refresh still reconciles).
+  `ready` keeps its blocker-aware `bd ready` fetch — it can't be
+  reproduced as a label/status predicate — but reconciles the same way.
 
 - **`h` toggles the human view** — pressing `h` while already in the
   human view returns to the preset you came from (default `all`) instead
