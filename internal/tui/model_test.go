@@ -52,6 +52,11 @@ type stubMutator struct {
 	notes            []labelOp // reuse the {id,label} shape for {id, text}
 	created          []labelOp // {repo, title} for quick-add
 	createdAssignees []string  // parallel slice to created, recording the assignee passed to Create
+
+	// Injectable failures so tests can drive the write-error paths
+	// (e.g. the detail-view optimistic-mutation rollback). nil = succeed.
+	reopenErr error
+	noteErr   error
 }
 
 type labelOp struct{ id, label string }
@@ -69,6 +74,9 @@ func (s *stubMutator) RemoveLabel(_ context.Context, i beads.Issue, label string
 	return nil
 }
 func (s *stubMutator) Note(_ context.Context, i beads.Issue, text string) error {
+	if s.noteErr != nil {
+		return s.noteErr
+	}
 	s.notes = append(s.notes, labelOp{i.ID, text})
 	return nil
 }
@@ -78,6 +86,9 @@ func (s *stubMutator) Create(_ context.Context, repo, title, assignee string) (s
 	return "new-id", nil
 }
 func (s *stubMutator) Reopen(_ context.Context, i beads.Issue) error {
+	if s.reopenErr != nil {
+		return s.reopenErr
+	}
 	s.reopened = append(s.reopened, i.ID)
 	return nil
 }
@@ -1328,6 +1339,55 @@ func TestDetailNote_DispatchesAppendsAndReturnsToDetail(t *testing.T) {
 	// Optimistic append so the new note shows without re-opening the row.
 	if !strings.Contains(m.detailIssue.Notes, "verified on staging") {
 		t.Errorf("note should be optimistically appended to the detail body; Notes=%q", m.detailIssue.Notes)
+	}
+}
+
+func TestDetailReopen_FailureRollsBackOptimisticStatus(t *testing.T) {
+	// A failed reopen must restore Status="closed" so the detail body
+	// doesn't contradict the error banner (which would otherwise show
+	// an "open" issue with an "a: close" footer).
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}, reopenErr: errors.New("boom")}
+	m := enterDetailWithMutator(t, s)
+	m.detailIssue.Status = "closed"
+
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	if m.detailIssue.Status != "open" {
+		t.Fatalf("setup: reopen should optimistically flip to open; got %q", m.detailIssue.Status)
+	}
+	// Feed the real (failing) writeMsg back through Update.
+	model, _ = m.Update(cmd().(writeMsg))
+	m = model.(Model)
+	if m.detailIssue.Status != "closed" {
+		t.Errorf("failed reopen should roll the detail status back to closed; got %q", m.detailIssue.Status)
+	}
+	if !strings.Contains(m.status, "failed") {
+		t.Errorf("failed reopen should surface a failure banner; got %q", m.status)
+	}
+}
+
+func TestDetailNote_FailureRollsBackOptimisticAppend(t *testing.T) {
+	// A failed note must strip the optimistically-appended body text
+	// so the detail view doesn't show a phantom note.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}, noteErr: errors.New("boom")}
+	m := enterDetailWithMutator(t, s)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = model.(Model)
+	m.noteArea.SetValue("phantom note")
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = model.(Model)
+	if !strings.Contains(m.detailIssue.Notes, "phantom note") {
+		t.Fatalf("setup: note should be optimistically appended; Notes=%q", m.detailIssue.Notes)
+	}
+	// Feed the real (failing) writeMsg back through Update.
+	model, _ = m.Update(cmd().(writeMsg))
+	m = model.(Model)
+	if strings.Contains(m.detailIssue.Notes, "phantom note") {
+		t.Errorf("failed note should roll the optimistic append back out; Notes=%q", m.detailIssue.Notes)
+	}
+	if !strings.Contains(m.status, "failed") {
+		t.Errorf("failed note should surface a failure banner; got %q", m.status)
 	}
 }
 

@@ -1796,7 +1796,11 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
 		}
-		return m, runWrite("note", target.ID, func(ctx context.Context) error {
+		// runWriteWithIssue (not runWrite) so the error path in
+		// handleWriteResult has the pre-append snapshot to roll the
+		// detail body back to on failure. target is m.pendingTarget,
+		// captured before the optimistic append above.
+		return m, runWriteWithIssue("note", target, func(ctx context.Context) error {
 			return mu.Note(ctx, target, text)
 		})
 	}
@@ -2082,6 +2086,19 @@ func (m *Model) optimisticListUpdate(action string, issue beads.Issue) {
 // failure message; the existing data stays so the user can retry.
 func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		// Roll back an optimistic detail-view mutation when the write
+		// failed, so the detail body can't contradict the error
+		// banner — a failed reopen would otherwise keep showing
+		// Status="open" and an "a: close" footer, and a failed note
+		// would leave a phantom entry in the body. The list path never
+		// touches detailIssue, so gating on modeDetail + a matching ID
+		// confines this to detail-initiated reopen/note. msg.issue is
+		// the pre-mutation snapshot threaded by runWriteWithIssue.
+		if (msg.action == "reopen" || msg.action == "note") &&
+			m.mode == modeDetail && msg.issue.ID != "" && msg.issue.ID == m.detailIssue.ID {
+			m.detailIssue = msg.issue
+			m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
+		}
 		// Create failure has no ID yet — render without the empty
 		// "id" slot to keep the message clean (no double-space).
 		if msg.id == "" {
