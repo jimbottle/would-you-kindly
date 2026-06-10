@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typo gets `unknown subcommand "inbx" — did you mean "inbox"?`, and a
   known subcommand preceded by flags is told the subcommand must come
   first (each owns its own flags).
+- **`wyk handoff -create` validates `-priority` / `-type` at parse
+  time** — `-priority banana` used to sail through `-dry-run` ("would
+  create: … priority=banana") and only fail when bd rejected the real
+  write, defeating dry-run's purpose. Both flags are now checked
+  against bd's accepted values (0-4 / P0-P4; the nine issue types)
+  with a usage error naming the valid set.
+
+- **`wyk import` rejects dumps it can't trust and always reports
+  totals** — valid JSON without a `schema_version` (wrong file,
+  hand-rolled blob) or with a newer schema than this wyk reads used to
+  pass silently with exit 0; both now fail loudly. The plan summary
+  always leads with "N issue(s) across M repo(s) in the dump", so an
+  empty dump reads as the warning it is rather than silent success.
 
 - **Go standard-library vulnerabilities `GO-2026-5039` (`net/textproto`)
   and `GO-2026-5037` (`crypto/x509`)** — CI's `govulncheck` step was
