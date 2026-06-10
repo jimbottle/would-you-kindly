@@ -735,8 +735,19 @@ func runProbe(src tui.Source) int {
 	return 0
 }
 
+// injectedVersion is stamped at link time by goreleaser via
+// `-ldflags "-X main.injectedVersion=vX.Y.Z"`. goreleaser builds with
+// `go build` from a clean checkout, so debug.ReadBuildInfo reports
+// Main.Version as "(devel)" — the tag never reaches the binary on its
+// own. When set, it takes precedence so prebuilt-binary and Homebrew
+// installs carry their real tag. Empty for go install / go build, which
+// already get an honest version from build info, so this changes nothing
+// for those paths.
+var injectedVersion string
+
 // versionString returns the human-readable version line printed by
-// `wyk --version`. Pulls from Go's build info so module-installed
+// `wyk --version`. Prefers the link-time injectedVersion (goreleaser
+// builds); otherwise pulls from Go's build info so module-installed
 // builds (go install ...@vX.Y.Z) carry their tag; source-tree
 // builds (go build, go run) report "(devel)" — which is honest:
 // they don't HAVE a tag. Includes the commit SHA and dirty marker
@@ -746,11 +757,17 @@ func versionString() string {
 	const name = "wyk"
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
+		if injectedVersion != "" {
+			return name + " " + injectedVersion
+		}
 		return name + " (unknown — build info missing)"
 	}
 	v := info.Main.Version
 	if v == "" {
 		v = "(devel)"
+	}
+	if injectedVersion != "" {
+		v = injectedVersion
 	}
 	// Go already appends "+dirty" to the pseudoversion when an
 	// installed build had local modifications; strip it so we
