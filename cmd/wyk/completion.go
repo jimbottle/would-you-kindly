@@ -8,18 +8,19 @@ import (
 )
 
 // wykSubcommands is the user-facing subcommand list that ships in
-// the generated shell completion scripts. Kept in sync with
-// main.go's dispatch switch by convention.
+// the generated shell completion scripts. Parity with main.go's
+// subcommandHandlers dispatch map is enforced by
+// TestWykSubcommandsMatchDispatch — drift fails the build, it isn't
+// a convention.
 //
-// Ordering mirrors the switch in main.go (not the prose order in
-// printTopLevelUsage). The two USED to claim to match — they
-// don't, and the dispatch order is the source of truth.
+// Ordering mirrors the dispatch map's declaration order in main.go
+// (not the prose order in printTopLevelUsage).
 //
 // Intentionally excluded: `hook`. It's invoked by the installed
 // git post-commit hook, not by humans on the command line, and
-// completing to it would be misleading. Other top-level switch
-// cases (`version`, `--version`, `-v`) are aliases and only the
-// canonical `version` is listed.
+// completing to it would be misleading. The `--version` / `-v`
+// aliases are flag-spelled aliases, not names; only the canonical
+// `version` is listed.
 var wykSubcommands = []string{
 	"handoff",
 	"create",
@@ -41,17 +42,29 @@ var wykSubcommands = []string{
 	"version",
 }
 
+// strayArgGuard is the testable core of main's post-flag.Parse check:
+// given the positionals that survived top-level parsing, it reports
+// whether the invocation is bad and the message to print before
+// exit 64. Zero positionals is the only good state — the TUI/probe
+// path takes no positional arguments.
+func strayArgGuard(args []string) (msg string, bad bool) {
+	if len(args) == 0 {
+		return "", false
+	}
+	return strayArgMsg(args[0]), true
+}
+
 // strayArgMsg builds the error for a positional argument that survived
 // top-level flag parsing. Two distinct mistakes land here and deserve
 // distinct messages: a known subcommand preceded by top-level flags
 // (the subcommand must come first — each owns its own FlagSet, so
 // `wyk -C dir handoff` never reaches handoff's parser), and an unknown
-// word (a typo, with a did-you-mean when one is close enough).
+// word (a typo, with a did-you-mean when one is close enough). Known
+// is defined by the subcommandHandlers dispatch map itself, so this
+// check cannot drift from what main actually dispatches.
 func strayArgMsg(arg string) string {
-	for _, s := range append([]string{"hook"}, wykSubcommands...) {
-		if arg == s {
-			return fmt.Sprintf("wyk: %q must be the first argument — subcommands take their own flags (try: wyk %s ...)", arg, arg)
-		}
+	if _, ok := subcommandHandlers[arg]; ok {
+		return fmt.Sprintf("wyk: %q must be the first argument — subcommands take their own flags (try: wyk %s ...)", arg, arg)
 	}
 	msg := fmt.Sprintf("wyk: unknown subcommand %q (run `wyk --help`)", arg)
 	if s := closestSubcommand(arg); s != "" {

@@ -74,50 +74,45 @@ func applyNoColor() {
 	disableColor()
 }
 
+// subcommandHandlers maps every dispatchable subcommand name to its
+// runner. main consults it before flag.Parse so each subcommand can
+// own its own FlagSet without interfering with the top-level flags;
+// strayArgMsg consults it so the flags-before-subcommand error can
+// never drift from the real dispatch surface, and
+// TestWykSubcommandsMatchDispatch pins it against the completion
+// list (roborev #2029). The `--version` / `-v` aliases are handled
+// separately in main — they're flag-spelled aliases, not subcommand
+// names, and don't belong in completion or did-you-mean.
+var subcommandHandlers = map[string]func([]string) int{
+	"handoff":     runHandoff,
+	"create":      runCreate,
+	"init":        runInit,
+	"hook":        runHook,
+	"inbox":       runInbox,
+	"stats":       runStats,
+	"doctor":      runDoctor,
+	"registry":    runRegistry,
+	"conventions": runConventions,
+	"update":      runUpdate,
+	"dashboard":   runDashboard,
+	"export":      runExport,
+	"import":      runImport,
+	"activity":    runActivity,
+	"skills":      runSkills,
+	"depgraph":    runDepgraph,
+	"help":        runHelp,
+	"completion":  runCompletion,
+	"version":     runVersion,
+}
+
 func main() {
 	applyNoColor()
-	// Subcommand dispatch happens before flag.Parse so each subcommand
-	// can own its own FlagSet without interfering with the top-level
-	// flags. The TUI/probe path keeps the existing flat flag layout.
 	if len(os.Args) >= 2 {
+		if run, ok := subcommandHandlers[os.Args[1]]; ok {
+			os.Exit(run(os.Args[2:]))
+		}
 		switch os.Args[1] {
-		case "handoff":
-			os.Exit(runHandoff(os.Args[2:]))
-		case "create":
-			os.Exit(runCreate(os.Args[2:]))
-		case "init":
-			os.Exit(runInit(os.Args[2:]))
-		case "hook":
-			os.Exit(runHook(os.Args[2:]))
-		case "inbox":
-			os.Exit(runInbox(os.Args[2:]))
-		case "stats":
-			os.Exit(runStats(os.Args[2:]))
-		case "doctor":
-			os.Exit(runDoctor(os.Args[2:]))
-		case "registry":
-			os.Exit(runRegistry(os.Args[2:]))
-		case "conventions":
-			os.Exit(runConventions(os.Args[2:]))
-		case "update":
-			os.Exit(runUpdate(os.Args[2:]))
-		case "dashboard":
-			os.Exit(runDashboard(os.Args[2:]))
-		case "export":
-			os.Exit(runExport(os.Args[2:]))
-		case "import":
-			os.Exit(runImport(os.Args[2:]))
-		case "activity":
-			os.Exit(runActivity(os.Args[2:]))
-		case "skills":
-			os.Exit(runSkills(os.Args[2:]))
-		case "depgraph":
-			os.Exit(runDepgraph(os.Args[2:]))
-		case "help":
-			os.Exit(runHelp(os.Args[2:]))
-		case "completion":
-			os.Exit(runCompletion(os.Args[2:]))
-		case "version", "--version", "-v":
+		case "--version", "-v":
 			os.Exit(runVersion(os.Args[2:]))
 		}
 	}
@@ -134,8 +129,8 @@ func main() {
 	// the dispatcher above only looks at os.Args[1], so both used to
 	// fall through here and silently launch the TUI. Fail loudly
 	// instead (would-you-kindly-tu9t).
-	if flag.NArg() > 0 {
-		fmt.Fprintln(os.Stderr, strayArgMsg(flag.Arg(0)))
+	if msg, bad := strayArgGuard(flag.Args()); bad {
+		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(64)
 	}
 	// The flag is the explicit equivalent of the env opt-out. The env

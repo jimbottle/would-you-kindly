@@ -165,3 +165,41 @@ func TestLevenshtein(t *testing.T) {
 		}
 	}
 }
+
+func TestWykSubcommandsMatchDispatch(t *testing.T) {
+	// wykSubcommands (completion + did-you-mean) must be exactly the
+	// dispatch map minus `hook` (internal, hook-invoked only). Drift
+	// used to cost only shell-completion coverage; since strayArgMsg,
+	// it would also misclassify a known subcommand as unknown in the
+	// flags-before-subcommand error (roborev #2029).
+	listed := make(map[string]bool, len(wykSubcommands))
+	for _, s := range wykSubcommands {
+		if _, ok := subcommandHandlers[s]; !ok {
+			t.Errorf("wykSubcommands lists %q but main dispatches no such subcommand", s)
+		}
+		if listed[s] {
+			t.Errorf("wykSubcommands lists %q twice", s)
+		}
+		listed[s] = true
+	}
+	for name := range subcommandHandlers {
+		if name == "hook" {
+			continue // internal: deliberately absent from completion
+		}
+		if !listed[name] {
+			t.Errorf("subcommand %q is dispatched but missing from wykSubcommands (completion + did-you-mean)", name)
+		}
+	}
+}
+
+func TestStrayArgGuard(t *testing.T) {
+	// The post-flag.Parse contract main relies on: zero positionals is
+	// the only good state; anything else must produce a message so main
+	// exits 64 before the TUI/probe path runs.
+	if msg, bad := strayArgGuard(nil); bad || msg != "" {
+		t.Errorf("strayArgGuard(nil) = (%q, %v), want clean pass", msg, bad)
+	}
+	if msg, bad := strayArgGuard([]string{"inbx", "extra"}); !bad || msg == "" {
+		t.Errorf("strayArgGuard with positionals = (%q, %v), want a message and bad=true", msg, bad)
+	}
+}
