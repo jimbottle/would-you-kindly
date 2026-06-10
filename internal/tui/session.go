@@ -56,6 +56,12 @@ type SessionState struct {
 	// restore: if the ID isn't in the current visible set (closed,
 	// filtered out, deleted) the cursor falls back to the top.
 	CursorID string `json:"cursor_id,omitempty"`
+	// MouseOff disables mouse capture (`m` in the TUI), trading
+	// wheel/click navigation for bare click-drag text selection.
+	// Stored in the negative so the zero value — including every
+	// state.json written before the field existed — keeps mouse
+	// navigation ON, the default.
+	MouseOff bool `json:"mouse_off,omitempty"`
 }
 
 // SessionDefaultPath returns the canonical state-file location,

@@ -319,6 +319,14 @@ type Model struct {
 	// or the data set changes shape.
 	scroll int
 
+	// mouseOff disables mouse capture: no wheel/click navigation,
+	// but the terminal's native click-drag text selection works
+	// without a Shift/Option modifier. Toggled with `m`, restored
+	// from state.json (zero value = captured, the default). Mouse
+	// capture was originally dropped entirely for native selection
+	// (would-you-kindly-p2hn); the toggle serves both wants.
+	mouseOff bool
+
 	// detailVP scrolls the detail view's body (description +
 	// notes) so long runbooks stay readable without dropping out
 	// to a pager. The header lines (title, meta, badge) stay
@@ -678,6 +686,7 @@ func (m Model) WithSession(s SessionState, path string) Model {
 		m.sortDesc = s.SortDesc
 	}
 	m.pendingCursorID = s.CursorID
+	m.mouseOff = s.MouseOff
 	return m
 }
 
@@ -714,6 +723,7 @@ func (m Model) persistSession() {
 		// change reset enforces that), so this naturally stays false
 		// when there's no sort to reverse.
 		SortDesc: m.sortDesc,
+		MouseOff: m.mouseOff,
 	}
 	if m.cursor >= 0 && m.cursor < len(m.visible) {
 		st.CursorID = m.visible[m.cursor].ID
@@ -784,6 +794,12 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.fetchCmd(), tickCmd(m.tickGen), m.spinner.Tick}
 	if m.fsEvents != nil {
 		cmds = append(cmds, waitFSEvent(m.fsEvents))
+	}
+	// Mouse capture is requested here rather than as a Program
+	// option so the session-restored preference (mouseOff) decides
+	// it and the toggle logic lives in one package.
+	if !m.mouseOff {
+		cmds = append(cmds, tea.EnableMouseCellMotion)
 	}
 	return tea.Batch(cmds...)
 }
@@ -1283,6 +1299,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		// Mouse routes by mode (only reachable while capture is on —
+		// the `m` toggle releases it):
+		// - modeList: wheel moves the cursor; left-click lands it
+		// - modeDetail / modeOutput: wheel scrolls the viewport
+		// - other modes (help, modals, prompts): keyboard-focused,
+		//   the event is dropped
+		switch m.mode {
+		case modeList:
+			return m.handleMouse(msg)
+		case modeDetail:
+			var cmd tea.Cmd
+			m.detailVP, cmd = m.detailVP.Update(msg)
+			return m, cmd
+		case modeOutput:
+			var cmd tea.Cmd
+			m.outputVP, cmd = m.outputVP.Update(msg)
+			return m, cmd
+		default:
+			return m, nil
+		}
+
 	case tea.KeyMsg:
 		// Any keystroke processed in modeList — including the ones
 		// that open the filter or note prompts — clears the previous
@@ -1421,6 +1459,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setSortKey(m.sortBy.next())
 	case keyHit(msg, m.keys.SortReverse):
 		return m.reverseSort()
+	case keyHit(msg, m.keys.Mouse):
+		return m.toggleMouse()
 	case keyHit(msg, m.keys.Command):
 		return m.beginCommand()
 	case keyHit(msg, m.keys.PriorityUp):
@@ -3731,8 +3771,9 @@ func (m Model) viewHelp() string {
 	b.WriteString(helpStyle.Render("  IDs in the table are shown without the repeated workspace prefix\n"))
 	b.WriteString(helpStyle.Render("  (e.g. \"ma5.2.1\" stands for \"" + exampleFullID(m) + "ma5.2.1\").\n"))
 	b.WriteString(helpStyle.Render("  Press ⏎ to expand a row and see the full ID in the detail view.\n"))
-	b.WriteString(helpStyle.Render("  Selection: drag with the mouse to select and copy any text on\n"))
-	b.WriteString(helpStyle.Render("  screen (no mouse navigation — move with j/k, PgUp/PgDn, g/G).\n"))
+	b.WriteString(helpStyle.Render("  Mouse: wheel scrolls, click selects a row; press m to release\n"))
+	b.WriteString(helpStyle.Render("  the mouse for click-drag text selection (most terminals also\n"))
+	b.WriteString(helpStyle.Render("  pass shift- or option-drag through to selection while captured).\n"))
 	b.WriteString(helpStyle.Render("  Yank (y) uses OSC 52 so the copy reaches your local clipboard\n"))
 	b.WriteString(helpStyle.Render("  even over SSH; in tmux, enable `set -g allow-passthrough on`.\n"))
 	b.WriteString("\n")
@@ -5237,6 +5278,103 @@ func (m *Model) ensureCursorVisible() {
 	if m.scroll < 0 {
 		m.scroll = 0
 	}
+}
+
+// toggleMouse flips mouse capture at runtime. Capture trades the
+// terminal's bare click-drag text selection (Shift/Option-click
+// still reaches it in most terminals) for wheel/click navigation;
+// the user picks per taste and the choice persists via state.json.
+func (m Model) toggleMouse() (tea.Model, tea.Cmd) {
+	m.mouseOff = !m.mouseOff
+	if m.mouseOff {
+		m.setStatus("mouse capture off — click-drag selects text; m to re-enable mouse nav")
+		// Returned BARE, not batched with flashClearCmd like other
+		// banners: batching the mouse-mode cmd was observed (live,
+		// under a PTY) to delay or drop the terminal mode-switch
+		// write, while the bare cmd applies instantly. The banner
+		// still clears on the next keystroke via modeList's
+		// status-reset, which is arguably better here anyway — the
+		// mode reminder lingers while the user is mousing.
+		return m, tea.DisableMouse
+	}
+	m.setStatus("mouse capture on — wheel scrolls, click selects; hold shift/option to select text, m to disable")
+	return m, tea.EnableMouseCellMotion
+}
+
+// handleMouse interprets a tea.MouseMsg against the list view:
+// wheel up/down moves the cursor (like k/j); left-click lands the
+// cursor on the targeted row. Out-of-bounds clicks (header, chip
+// strip, banners, the ↑/↓ overflow hints) are silently ignored.
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Act on the press only — a release is the tail of a gesture we
+	// already handled, and wheel ticks never emit releases.
+	if msg.Action == tea.MouseActionRelease {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if m.cursor > 0 {
+			m.cursor--
+			m.ensureCursorVisible()
+		}
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		if m.cursor < len(m.visible)-1 {
+			m.cursor++
+			m.ensureCursorVisible()
+		}
+		return m, nil
+	case tea.MouseButtonLeft:
+		// Compute the cell-row offset from the top of the table
+		// body, then translate to a m.visible index via the current
+		// scroll offset. Clicks above the body (title/setupHint/
+		// chips/header) or past the last rendered row produce an
+		// out-of-range target → no-op. The rendered-window clamp
+		// also keeps a click on the "↑/↓ N more" hint lines (just
+		// past the row window) from mapping to an out-of-window row,
+		// which produced a surprising downward jump.
+		rowY := msg.Y - m.rowsStartY()
+		if rowY < 0 {
+			return m, nil
+		}
+		visibleRows := len(m.visible) - m.scroll
+		if h := m.bodyHeight(); h > 0 && visibleRows > h {
+			visibleRows = h
+		}
+		if rowY >= visibleRows {
+			return m, nil
+		}
+		target := m.scroll + rowY
+		if target < 0 || target >= len(m.visible) {
+			return m, nil
+		}
+		m.cursor = target
+		m.ensureCursorVisible()
+		return m, nil
+	}
+	return m, nil
+}
+
+// rowsStartY returns the Y-coordinate (zero-indexed from the top
+// of the rendered output) at which the first table row lands.
+// Mirrors the viewList chrome ordering — bumping any conditional
+// chrome there means bumping it here too (the chip-strip check
+// calls the SAME renderFilterChips so the two can't disagree on
+// when the strip renders). We use this to map a click's msg.Y back
+// to a row index.
+func (m Model) rowsStartY() int {
+	y := 1 // title line
+	if m.setupHint != "" {
+		// setupHint can wrap; count newlines + 1 to match the
+		// vertical real estate it actually consumes.
+		y += 1 + strings.Count(m.setupHint, "\n")
+	}
+	if renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed) != "" {
+		y++ // chip strip
+	}
+	y++ // blank line between header chrome and table header
+	y++ // table header
+	return y
 }
 
 // renderFilterChips builds the filter-strip line shown above the

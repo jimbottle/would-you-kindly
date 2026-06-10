@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mouse navigation, with an `m` toggle** — the wheel moves the list
+  cursor (and scrolls the detail/output views) and a left-click lands
+  the cursor on the clicked row. Mouse capture had been dropped
+  entirely so click-drag text selection would work; the toggle now
+  serves both: press `m` to release the mouse for bare click-drag
+  selection (most terminals also pass shift/option-drag through while
+  captured), press it again to re-capture. The preference persists in
+  `state.json`; existing files default to captured.
+
 ### Fixed
 
 - **Go standard-library vulnerabilities `GO-2026-5039` (`net/textproto`)
