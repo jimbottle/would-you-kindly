@@ -59,31 +59,23 @@ func runStats(args []string) int {
 	}
 
 	all, subErrs := fetchAllIssues(subs)
-	if len(subErrs) > 0 && len(subErrs) == len(subs) {
-		// Total failure = EVERY queried repo errored (count-based, like
-		// inbox/activity — a healthy-but-empty repo alongside a failing
-		// one is a partial success, not total). Classify the typed bd
-		// sentinels for the documented exit codes.
-		first := subErrs[0].err
-		switch {
-		case errors.Is(first, beads.ErrBDNotFound):
-			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
-			return 2
-		case errors.Is(first, beads.ErrNoWorkspace):
-			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
-			return 2
+	// Total failure = EVERY queried repo errored (count-based — a
+	// healthy-but-empty repo alongside a failing one is a partial
+	// success, not total). classifyTotalFetchFailure maps the typed bd
+	// sentinels to the documented exit codes; other total failures
+	// (code 1) still emit a parseable (zero) stats object carrying the
+	// errors so an agent isn't left with nothing.
+	if code, total := classifyTotalFetchFailure(len(subs), subErrs); total {
+		if code == 1 {
+			if *asJSON {
+				s := computeStats(nil, time.Now())
+				attachStatsErrors(&s, subErrs)
+				emitStatsJSON(s, *compact)
+			} else {
+				fmt.Fprintln(os.Stderr, "wyk stats:", joinRepoErrors(subErrorsToRepoErrors(subErrs)))
+			}
 		}
-		// Other total failures still emit a parseable (zero) stats
-		// object carrying the errors so an agent isn't left with
-		// nothing; exit 1 to flag it.
-		if *asJSON {
-			s := computeStats(nil, time.Now())
-			attachStatsErrors(&s, subErrs)
-			emitStatsJSON(s, *compact)
-		} else {
-			fmt.Fprintln(os.Stderr, "wyk stats:", joinRepoErrors(subErrorsToRepoErrors(subErrs)))
-		}
-		return 1
+		return code
 	}
 
 	s := computeStats(all, time.Now())
