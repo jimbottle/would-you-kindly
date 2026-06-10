@@ -161,6 +161,7 @@ type importRepoResult struct {
 	Updated   []string // local IDs we changed
 	Unchanged []string // existed and matched — no-op
 	Skipped   []string // closed-in-dump or no matching registered repo
+	Failed    []string // a write errored and the issue landed in no other bucket
 	Err       string
 }
 
@@ -231,6 +232,12 @@ func runImportPlan(reg *registry.Registry, dump exportDump, dryRun bool, mk func
 					row.Updated = append(row.Updated, in.ID)
 				case perr == nil:
 					row.Unchanged = append(row.Unchanged, in.ID)
+				default:
+					// Nothing landed and the write errored: without a
+					// bucket these rows vanish from the totals line,
+					// understating what the dump contained
+					// (roborev #2038).
+					row.Failed = append(row.Failed, in.ID)
 				}
 				if perr != nil {
 					row.Err = appendErr(row.Err, in.ID+": "+perr.Error())
@@ -240,6 +247,7 @@ func runImportPlan(reg *registry.Registry, dump exportDump, dryRun bool, mk func
 			}
 			newID, perr := applyImportCreate(c, in, dryRun)
 			if perr != nil {
+				row.Failed = append(row.Failed, in.ID)
 				row.Err = appendErr(row.Err, in.ID+": "+perr.Error())
 				out.HadError = true
 				continue
@@ -397,8 +405,8 @@ func appendErr(prev, next string) string {
 // Split from runImport so the rejection rules are unit-testable.
 func validateDumpSchema(dump exportDump) error {
 	switch {
-	case dump.SchemaVersion == 0:
-		return fmt.Errorf("not a wyk export dump (missing schema_version) — produce one with `wyk export`")
+	case dump.SchemaVersion < 1:
+		return fmt.Errorf("not a wyk export dump (missing or invalid schema_version) — produce one with `wyk export`")
 	case dump.SchemaVersion > exportSchemaVersion:
 		return fmt.Errorf("dump is schema v%d; this wyk reads up to v%d — re-export with a matching wyk, or upgrade this one",
 			dump.SchemaVersion, exportSchemaVersion)
@@ -419,12 +427,12 @@ func emitImportSummary(w io.Writer, s importSummary, dryRun bool) {
 	}
 	total := 0
 	for _, r := range s.Repos {
-		total += len(r.Created) + len(r.Updated) + len(r.Unchanged) + len(r.Skipped)
+		total += len(r.Created) + len(r.Updated) + len(r.Unchanged) + len(r.Skipped) + len(r.Failed)
 	}
 	fmt.Fprintf(w, "%d issue(s) across %d repo(s) in the dump\n", total, len(s.Repos))
 	for _, r := range s.Repos {
-		fmt.Fprintf(w, "%s (%s): created=%d updated=%d unchanged=%d skipped=%d\n",
-			r.Name, r.Path, len(r.Created), len(r.Updated), len(r.Unchanged), len(r.Skipped))
+		fmt.Fprintf(w, "%s (%s): created=%d updated=%d unchanged=%d skipped=%d failed=%d\n",
+			r.Name, r.Path, len(r.Created), len(r.Updated), len(r.Unchanged), len(r.Skipped), len(r.Failed))
 		if r.Err != "" {
 			fmt.Fprintln(w, "  error:", r.Err)
 		}
