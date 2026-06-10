@@ -443,6 +443,11 @@ func (m Model) updateOutput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.outputVP.SetContent("")
 		return m, nil
 	}
+	if keyHit(msg, m.keys.Mouse) {
+		// Same global toggle as the list and detail views — copying
+		// a chunk of `:bd` output is a prime click-drag use case.
+		return m.toggleMouse()
+	}
 	// Anything else (j/k/PgUp/PgDn/g/G/d/u/ctrl+f/ctrl+b) flows
 	// to the viewport, which has its own KeyMap for vim-style +
 	// half-page scrolling.
