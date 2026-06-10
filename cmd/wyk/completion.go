@@ -8,13 +8,12 @@ import (
 )
 
 // wykSubcommands is the user-facing subcommand list that ships in
-// the generated shell completion scripts. Parity with main.go's
+// the generated shell completion scripts. Set parity with main.go's
 // subcommandHandlers dispatch map is enforced by
-// TestWykSubcommandsMatchDispatch — drift fails the build, it isn't
-// a convention.
-//
-// Ordering mirrors the dispatch map's declaration order in main.go
-// (not the prose order in printTopLevelUsage).
+// TestWykSubcommandsMatchDispatch — drift fails `go test`, it isn't
+// a convention. Ordering here is the source of truth for the
+// completion scripts' output; only set membership is enforced (a Go
+// map has no declaration order to compare against).
 //
 // Intentionally excluded: `hook`. It's invoked by the installed
 // git post-commit hook, not by humans on the command line, and
