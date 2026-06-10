@@ -274,11 +274,12 @@ func TestInit_HonorsMousePreference(t *testing.T) {
 	}
 }
 
-func TestRowsStartY_CountsSoftWrappedChrome(t *testing.T) {
-	// The setup hint (and chips) render unclamped, so on a pane
-	// narrower than the hint the terminal soft-wraps it across
-	// several rows and every row below shifts down. rowsStartY must
-	// count those wrapped rows or clicks land above their target.
+func TestRowsStartY_OverwideChromeStaysOneRow(t *testing.T) {
+	// bubbletea's standard renderer TRUNCATES lines wider than the
+	// window — it never lets the terminal soft-wrap them — so an
+	// over-wide setup hint occupies exactly one screen row and must
+	// count as exactly one in the click hit-test. Counting soft wrap
+	// here overcounted and skewed clicks downward (roborev #2035).
 	src := &stubSource{issues: manyIssues(5)}
 	m := New(src)
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 30})
@@ -286,15 +287,17 @@ func TestRowsStartY_CountsSoftWrappedChrome(t *testing.T) {
 	m = applyFetched(m, src)
 	base := m.rowsStartY()
 
-	// A 100-visual-column single-line hint on a 40-column pane
-	// occupies ceil(100/40) = 3 rows.
+	// A 100-visual-column single-line hint on a 40-column pane is
+	// truncated to one row by the renderer.
 	m.setupHint = strings.Repeat("x", 100)
-	hinted := m.rowsStartY()
-	if got, want := hinted-base, m.chromeRows(setupHintStyle.Render(m.setupHint)); got != want {
-		t.Errorf("soft-wrapped hint should add %d rows to rowsStartY; added %d", want, got)
+	if got := m.rowsStartY() - base; got != 1 {
+		t.Errorf("over-wide single-line hint must add exactly 1 row (renderer truncates); added %d", got)
 	}
-	if hinted-base < 3 {
-		t.Errorf("100-col hint on a 40-col pane must add at least 3 rows; added %d", hinted-base)
+
+	// Explicit newlines DO consume rows.
+	m.setupHint = "line one\nline two"
+	if got := m.rowsStartY() - base; got != 2 {
+		t.Errorf("two-line hint must add 2 rows; added %d", got)
 	}
 }
 
@@ -332,5 +335,16 @@ func TestToggleMouse_ReachableFromDetailAndOutput(t *testing.T) {
 	}
 	if m.mode != modeOutput {
 		t.Errorf("toggle must not close the output overlay; mode is %v", m.mode)
+	}
+
+	// Help overlay — the screen that advertises the binding.
+	m.mode = modeHelp
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = model.(Model)
+	if !m.mouseOff {
+		t.Error("m in the help overlay should toggle capture off")
+	}
+	if m.mode != modeHelp {
+		t.Errorf("toggle must not close the help overlay; mode is %v", m.mode)
 	}
 }
