@@ -56,8 +56,8 @@ go vet ./...
 make lint                     # golangci-lint at the CI-pinned version
 ```
 
-Two CI workflows currently run per push: `CI` (build/vet/test) and `test`
-(the full gate above). They overlap; `test` is the authoritative one.
+One CI workflow (`test`) runs per push — the full gate above, on both
+ubuntu and macOS (static gates run once, on Linux).
 
 Most bd-shelling code uses a swappable runner field so tests can
 inject a stub command without needing a real `bd` binary on PATH —
