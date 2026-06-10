@@ -8,11 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Go toolchain bumped to 1.26.4** — closes two standard-library
-  vulnerabilities (`GO-2026-5039` in `net/textproto`, `GO-2026-5037` in
-  `crypto/x509`) that CI's `govulncheck` step was failing on. The
-  `go.mod` `go` directive drives the version CI installs via
-  `go-version-file`, so the bump re-greens the build.
+- **Go standard-library vulnerabilities `GO-2026-5039` (`net/textproto`)
+  and `GO-2026-5037` (`crypto/x509`)** — CI's `govulncheck` step was
+  failing on these (fixed upstream in go1.26.4). CI installs Go via
+  `go-version-file: go.mod`, and with the `go 1.26` directive (see
+  _Changed_) it pulls the latest patched 1.26.x, which carries both
+  fixes — so the build is green again without pinning users to a
+  specific patch.
 
 ### Added
 
