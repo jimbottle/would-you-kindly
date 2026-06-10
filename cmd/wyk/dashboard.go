@@ -28,6 +28,7 @@ import (
 //	64 usage error
 func runDashboard(args []string) int {
 	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "dashboard")
 	asJSON := fs.Bool("json", false, "emit a structured JSON object instead of the table")
 	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	days := fs.Int("days", 7, "window for the closed-recently column (default 7)")

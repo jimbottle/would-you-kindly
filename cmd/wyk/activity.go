@@ -30,6 +30,7 @@ import (
 //	64 usage error
 func runActivity(args []string) int {
 	fs := flag.NewFlagSet("activity", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "activity")
 	since := fs.Duration("since", 24*time.Hour, "show issues updated within this duration (e.g. 1h, 24h, 168h)")
 	asJSON := fs.Bool("json", false, "emit a structured JSON array instead of the table")
 	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")

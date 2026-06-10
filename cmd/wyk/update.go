@@ -25,6 +25,7 @@ import (
 //	64 usage error
 func runUpdate(args []string) int {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "update")
 	yes := fs.Bool("y", false, "skip the [y/N] confirmation before running go install")
 	dryRun := fs.Bool("dry-run", false, "print the install command without executing it")
 	channel := fs.String("channel", "any", "release channel: `any` (include prereleases — default) or `stable` (skip prereleases). When omitted, the most recently used channel is reused so a stable-pinned user clicking the TUI's nudge doesn't silently jump back to prereleases.")

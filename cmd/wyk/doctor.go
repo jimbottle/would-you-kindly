@@ -100,6 +100,7 @@ func (c check) MarshalJSON() ([]byte, error) {
 // if all checks PASS or only WARN; exits 1 if any FAIL.
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "doctor")
 	asJSON := fs.Bool("json", false, "emit checks as a structured JSON object for CI / dashboard consumption")
 	fix := fs.Bool("fix", false, "install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone)")
 	dryRun := fs.Bool("dry-run", false, "with -fix, print the plan without installing")

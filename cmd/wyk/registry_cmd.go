@@ -70,6 +70,7 @@ The registry lives at ~/.config/wyk/repos.json (XDG-aware).
 
 func runRegistryList(args []string) int {
 	fs := flag.NewFlagSet("registry list", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "registry list")
 	asJSON := fs.Bool("json", false, "emit structured JSON instead of the plain-text layout")
 	if err := fs.Parse(args); err != nil {
 		return 64
@@ -138,6 +139,7 @@ func runRegistryRemove(args []string) int {
 
 func runRegistryPrune(args []string, stdin io.Reader) int {
 	fs := flag.NewFlagSet("registry prune", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "registry prune")
 	yes := fs.Bool("y", false, "skip the [y/N] confirmation prompt")
 	broken := fs.Bool("broken", false, "also drop entries whose path exists but holds no bd workspace (probes bd; only definitive 'no workspace' results qualify, not timeouts)")
 	if err := fs.Parse(args); err != nil {

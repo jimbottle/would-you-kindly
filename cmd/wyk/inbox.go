@@ -59,6 +59,7 @@ func inboxQueryFor(identity string) string {
 //	64  usage error
 func runInbox(args []string) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "inbox")
 	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
 	asJSON := fs.Bool("json", false, "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed)")
 	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata)")

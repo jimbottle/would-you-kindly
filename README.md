@@ -196,7 +196,7 @@ contract as the TUI's `H` key — see
 [`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
 [`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.
 
-### Diagnosing setup issues (`wyk doctor`)
+### Troubleshooting (`wyk doctor`)
 
 ```bash
 wyk doctor
