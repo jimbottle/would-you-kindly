@@ -146,6 +146,16 @@ func TestSubcommandHelp_LeadsWithSynopsis(t *testing.T) {
 				if !strings.Contains(out, "Usage:") && !strings.Contains(out, "Common case:") {
 					t.Errorf("%s -h should include a Usage or Common case block; got:\n%s", c.name, out)
 				}
+				// The examples half of the single-source claim: when
+				// the doc defines examples, -h must actually render
+				// them — dropping the loop in subcommandUsage would
+				// otherwise pass unnoticed (roborev #2060). init's
+				// custom layout carries its own examples inline.
+				if len(doc.Examples) > 0 && base != "init" {
+					if !strings.Contains(out, "Common case:") || !strings.Contains(out, doc.Examples[0]) {
+						t.Errorf("%s -h should render the doc's examples; got:\n%s", c.name, out)
+					}
+				}
 			} else if !strings.Contains(out, "usage: wyk "+c.name) {
 				t.Errorf("%s -h (no doc entry) should print the fallback usage line; got:\n%s", c.name, out)
 			}

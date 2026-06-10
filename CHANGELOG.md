@@ -19,16 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human view returns to the preset you came from (default `all`)
   instead of being a one-way trip.
 
-### Fixed
-
-- **Warm-start now seeds across presets** — the on-disk last-fetch
-  snapshot was silently skipped whenever the saved preset differed
-  from the restored one (quit on `all`, reopen on `human`), leaving a
-  `loading…` spinner for the entire multi-repo cold start (~9s). An
-  `all` snapshot now seeds the human/mine/blocked views through an
-  in-memory filter; `ready` still cold-starts (its blocker semantics
-  are bd's to compute).
-
 - **Every subcommand's `-h` now leads with a synopsis and common-case
   examples** — the `init -h` treatment, everywhere: `wyk <name> — 
   <summary>`, the canonical usage, then 1-3 copy-pasteable examples
@@ -49,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `state.json`; existing files default to captured.
 
 ### Fixed
+
+- **Warm-start now seeds across presets** — the on-disk last-fetch
+  snapshot was silently skipped whenever the saved preset differed
+  from the restored one (quit on `all`, reopen on `human`), leaving a
+  `loading…` spinner for the entire multi-repo cold start (~9s). An
+  `all` snapshot now seeds the human/mine/blocked views through an
+  in-memory filter (closed rows excluded — the snapshot may have been
+  saved while `C` was toggled on); `ready` still cold-starts (its
+  blocker semantics are bd's to compute).
 
 - **An unknown subcommand no longer silently launches the TUI** — `wyk
   inbx` (a typo) or `wyk -C dir handoff` (top-level flags before the

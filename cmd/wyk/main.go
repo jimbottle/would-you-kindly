@@ -490,10 +490,10 @@ func runHandoff(args []string) int {
 		fmt.Fprintln(os.Stderr, "wyk handoff: -create and a positional <issue-id> are mutually exclusive")
 		return 64
 	case *createTitle == "" && fs.NArg() != 1:
-		fmt.Fprintln(os.Stderr,
-			"usage: wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n"+
-				"   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]\n"+
-				"   or: wyk handoff -template   (print the runbook skeleton and exit)")
+		// Single-sourced from cliSubcommandDocs — a hand-written copy
+		// here was the third place the handoff usage lived, free to
+		// drift from -h and cli.md (roborev #2060).
+		fmt.Fprintln(os.Stderr, "usage: "+findCLIDoc("handoff").Usage)
 		return 64
 	}
 
