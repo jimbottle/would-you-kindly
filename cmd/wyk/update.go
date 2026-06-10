@@ -113,13 +113,9 @@ func runUpdate(args []string) int {
 	}
 	current := versionString()
 	currentTag := extractCurrentTag(current)
-	// "latest release" for -channel any (which includes prereleases);
-	// "latest stable release" for -channel stable. Avoids the awkward
-	// "latest any release" reading.
-	relDesc := "latest release"
-	if *channel == "stable" {
-		relDesc = "latest stable release"
-	}
+	// Shared with `wyk version --check` (channelDesc) so the two
+	// commands describe the channel identically.
+	relDesc := channelDesc(*channel)
 	switch classifyUpdate(currentTag, rel.TagName) {
 	case updateBuildAhead:
 		// The running build sorts NEWER than the latest release — a
