@@ -24,7 +24,7 @@ type cliSubcommandDoc struct {
 type cliFlag struct {
 	Name        string // include the leading "-" (e.g. "-since")
 	Default     string // empty string ⇒ rendered as "(empty)" in markdown
-	Description string // same WORDS as the flag.String/Bool/Int call; see quoting note below
+	Description string // same substance as the flag.String/Bool/Int call; see the parity note below
 }
 
 // cliSubcommandDocs is the canonical inventory. Order is the
@@ -37,7 +37,9 @@ type cliFlag struct {
 // phrases — Go's flag package takes the first backquoted token as
 // the flag's value placeholder, mangling -h output (enforced by
 // TestSubcommandHelp_NoMultiwordFlagPlaceholders). So an entry here
-// matches its FlagSet twin word-for-word but may differ in quoting.
+// carries the same SUBSTANCE as its FlagSet twin, but quoting — and
+// occasionally phrasing — may differ; only the FlagSet side is
+// machine-checked, so verify against -h when syncing an entry.
 var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "handoff",
