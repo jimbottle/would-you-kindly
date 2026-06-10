@@ -33,6 +33,7 @@ import (
 // 2 bd missing or no workspace, 64 usage error.
 func runStats(args []string) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "stats")
 	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
 	asJSON := fs.Bool("json", false, "emit a JSON object suitable for scripting")
 	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")

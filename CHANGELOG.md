@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every subcommand's `-h` now leads with a synopsis and common-case
+  examples** — the `init -h` treatment, everywhere: `wyk <name> — 
+  <summary>`, the canonical usage, then 1-3 copy-pasteable examples
+  before the flag table, instead of Go's bare flag dump. Content comes
+  from the same source as the generated CLI reference (which now also
+  shows the examples), so `-h` and the published docs can't drift on
+  the synopsis. `wyk handoff -h` finally advertises `-template`. The
+  README's doctor section is retitled "Troubleshooting" so the heading
+  matches what a stuck user searches for.
+
 - **Mouse navigation, with an `m` toggle** — the wheel moves the list
   cursor (and scrolls the detail/output views) and a left-click lands
   the cursor on the clicked row. Mouse capture had been dropped

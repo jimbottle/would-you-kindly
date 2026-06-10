@@ -248,6 +248,7 @@ func conventionsStructured() conventionsJSON {
 // not project state. Always exits 0.
 func runConventions(args []string) int {
 	fs := flag.NewFlagSet("conventions", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "conventions")
 	asJSON := fs.Bool("json", false, "emit a stable structured JSON schema instead of the human-readable block")
 	if err := fs.Parse(args); err != nil {
 		return 64

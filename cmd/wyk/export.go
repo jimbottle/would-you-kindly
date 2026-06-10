@@ -28,6 +28,7 @@ import (
 //	64 usage error
 func runExport(args []string) int {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "export")
 	// -since accepts any duration parsable by time.ParseDuration
 	// ("24h", "7d" via 168h, "30m"). Empty (the default) emits
 	// the full dump, matching the historical behavior.

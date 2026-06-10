@@ -24,6 +24,7 @@ import (
 //	64 usage error
 func runVersion(args []string) int {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "version")
 	check := fs.Bool("check", false, "poll the release feed and exit 0 (current) / 1 (newer available) / 2 (network failure)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {

@@ -434,6 +434,7 @@ URL in a constant, a decision recorded here — so the next agent can resume.>
 
 func runHandoff(args []string) int {
 	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "handoff")
 	dir := fs.String("C", "", "run as if bd had been started in this directory")
 	file := fs.String("file", "", "read the runbook from this file (default: stdin)")
 	allowEmpty := fs.Bool("allow-empty", false,

@@ -213,6 +213,7 @@ func skillStateAt(s skills.Skill, dir string) (skillState, error) {
 
 func runSkillsList(args []string) int {
 	fs := flag.NewFlagSet("skills list", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "skills list")
 	userFlag := fs.Bool("user", false, "show state at the user target (~/.claude/skills) — the default")
 	projectFlag := fs.Bool("project", false, "show state at the project target (./.claude/skills)")
 	if err := fs.Parse(args); err != nil {
@@ -255,6 +256,7 @@ func truncForList(s string) string {
 
 func runSkillsInstall(args []string, stdin io.Reader) int {
 	fs := flag.NewFlagSet("skills install", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "skills install")
 	userFlag := fs.Bool("user", false, "install to ~/.claude/skills (the default)")
 	projectFlag := fs.Bool("project", false, "install to ./.claude/skills instead")
 	force := fs.Bool("force", false, "overwrite a locally-modified skill (default leaves modified copies untouched)")
@@ -351,6 +353,7 @@ func runSkillsInstall(args []string, stdin io.Reader) int {
 
 func runSkillsUninstall(args []string, stdin io.Reader) int {
 	fs := flag.NewFlagSet("skills uninstall", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "skills uninstall")
 	userFlag := fs.Bool("user", false, "uninstall from ~/.claude/skills (the default)")
 	projectFlag := fs.Bool("project", false, "uninstall from ./.claude/skills instead")
 	dryRun := fs.Bool("dry-run", false, "print what would be removed without touching disk")

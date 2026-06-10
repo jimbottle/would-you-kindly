@@ -32,6 +32,7 @@ import (
 //	64 usage error
 func runImport(args []string) int {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "import")
 	filePath := fs.String("file", "", "path to JSON dump (default: read from stdin)")
 	dryRun := fs.Bool("dry-run", false, "print the plan without touching bd")
 	repoName := fs.String("repo", "", "restrict the reconcile to the dump entry with this name (empty = every entry)")

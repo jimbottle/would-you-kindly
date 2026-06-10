@@ -1,5 +1,12 @@
 package main
 
+import (
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+)
+
 // cliSubcommandDoc captures one row of the user-facing CLI
 // reference emitted by `wyk help --cli-markdown`. Hand-maintained
 // because Go's flag package doesn't carry the "intended usage
@@ -14,10 +21,15 @@ package main
 //  2. Add or update the matching entry below.
 //  3. Run `make docs-snapshot` and commit docs/generated/cli.md.
 type cliSubcommandDoc struct {
-	Name    string    // subcommand name, no "wyk " prefix
-	Summary string    // one-line description; sentence case, no trailing period
-	Usage   string    // canonical usage line, including "wyk <name>" prefix
-	Flags   []cliFlag // ordered as they appear in the runX
+	Name    string // subcommand name, no "wyk " prefix
+	Summary string // one-line description; sentence case, no trailing period
+	Usage   string // canonical usage line, including "wyk <name>" prefix
+	// Examples are common-case invocations ("command   # gloss"),
+	// rendered in both `-h` (via subcommandUsage) and the generated
+	// cli.md — the init -h treatment, for every subcommand
+	// (would-you-kindly-rnjg).
+	Examples []string
+	Flags    []cliFlag // ordered as they appear in the runX
 }
 
 // cliFlag is one flag row in the per-subcommand table.
@@ -45,6 +57,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "handoff",
 		Summary: "Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file.",
 		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]\n   or: wyk handoff -template",
+		Examples: []string{
+			"cat runbook.md | wyk handoff -create \"Rotate the staging DB password\" -priority 1",
+			"wyk handoff wyk-42 < runbook.md",
+			"wyk handoff -template > runbook.md   # print the runbook skeleton to fill in",
+		},
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "run as if bd had been started in this directory"},
 			{Name: "-file", Default: "", Description: "read the runbook from this file (default: stdin)"},
@@ -62,12 +79,19 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "create",
 		Summary: "File a bd issue (forwarding every flag to `bd create`) and stamp it with the Claude session that created it, so the TUI's Session column can trace work back to a conversation.",
 		Usage:   "wyk create <bd create args...>",
-		Flags:   nil, // every flag is forwarded verbatim to `bd create`; see `bd create --help`
+		Examples: []string{
+			"wyk create --title=\"Fix the flaky retry test\" --type=bug -p 2   # bd create + Claude session stamp",
+		},
+		Flags: nil, // every flag is forwarded verbatim to `bd create`; see `bd create --help`
 	},
 	{
 		Name:    "init",
 		Summary: "Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.",
 		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-claude-md] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]",
+		Examples: []string{
+			"wyk init                  # bootstrap this repo (idempotent)",
+			"wyk init -scan ~/Projects # register every bd workspace under a tree",
+		},
 		Flags: []cliFlag{
 			{Name: "-force", Default: "false", Description: "overwrite an existing post-commit hook (destructive — drops the existing hook entirely)"},
 			{Name: "-chain", Default: "false", Description: "preserve an existing post-commit hook and chain wyk's logic after it (preferred over -force when the existing hook is from another tool like roborev)"},
@@ -85,6 +109,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "inbox",
 		Summary: "Agent inbox: issues filed with `src:agent` that a human has bounced back.",
 		Usage:   "wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]",
+		Examples: []string{
+			"wyk inbox          # what did the human bounce back to me?",
+			"wyk inbox -json    # structured, for agent ingestion",
+		},
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
 			{Name: "-json", Default: "false", Description: "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated)"},
@@ -101,6 +129,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "stats",
 		Summary: "Aggregate snapshot across registered repos: counts by status, human-flagged splits, time-to-close.",
 		Usage:   "wyk stats [-C <dir>] [-json] [-compact] [-repo name]",
+		Examples: []string{
+			"wyk stats          # handoff-loop heartbeat across registered repos",
+			"wyk stats -json",
+		},
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is every registered repo"},
 			{Name: "-json", Default: "false", Description: "emit a JSON object suitable for scripting"},
@@ -112,6 +144,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "doctor",
 		Summary: "Checks bd / wyk on PATH, $EDITOR, audit-trail actor, XDG paths, agent skills, and per-repo .git / .beads / hook state.",
 		Usage:   "wyk doctor [-json] [-fix [-dry-run]]",
+		Examples: []string{
+			"wyk doctor         # diagnose bd/wyk/hook/registry wiring",
+			"wyk doctor -fix    # install missing hooks + skills",
+		},
 		Flags: []cliFlag{
 			{Name: "-json", Default: "false", Description: "emit checks as a structured JSON object for CI / dashboard consumption"},
 			{Name: "-fix", Default: "false", Description: "install wyk's post-commit hook in every registered repo whose hook is missing (foreign / wyk / chained hooks are left alone), and install any missing wyk agent skills into ~/.claude/skills"},
@@ -122,6 +158,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "registry",
 		Summary: "List, remove, or prune entries in the wyk repo registry (~/.config/wyk/repos.json).",
 		Usage:   "wyk registry <list | remove <name> | prune> [-broken] [-y] [-json]",
+		Examples: []string{
+			"wyk registry list",
+			"wyk registry prune -y   # drop entries whose repo is gone",
+		},
 		Flags: []cliFlag{
 			{Name: "-y", Default: "false", Description: "skip the [y/N] confirmation prompt on prune (for scripts)"},
 			{Name: "-broken", Default: "false", Description: "on prune, also drop entries whose path exists but holds no bd workspace (probes bd; only definitive 'no workspace' results qualify, not timeouts)"},
@@ -132,6 +172,9 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "conventions",
 		Summary: "Print the agent-facing label convention (human, src:agent, inbox query).",
 		Usage:   "wyk conventions [-json]",
+		Examples: []string{
+			"wyk conventions    # agents: run this before writing to bd here",
+		},
 		Flags: []cliFlag{
 			{Name: "-json", Default: "false", Description: "emit a structured JSON object instead of the prose tip"},
 		},
@@ -140,6 +183,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "update",
 		Summary: "Check for and install a newer wyk release. Live-fetches every invocation (no cache).",
 		Usage:   "wyk update [-y] [-dry-run] [-channel any|stable]",
+		Examples: []string{
+			"wyk update                  # check + install the latest release",
+			"wyk update -channel stable  # skip prereleases",
+		},
 		Flags: []cliFlag{
 			{Name: "-y", Default: "false", Description: "skip the [y/N] confirmation before running go install"},
 			{Name: "-dry-run", Default: "false", Description: "print the install command without executing it"},
@@ -150,6 +197,9 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "dashboard",
 		Summary: "Per-repo rollup of open / human-flagged / recently-closed counts.",
 		Usage:   "wyk dashboard [-json] [-compact] [-days N] [-repo name] [-priority N]",
+		Examples: []string{
+			"wyk dashboard      # per-repo open/human/closed-this-week table",
+		},
 		Flags: []cliFlag{
 			{Name: "-json", Default: "false", Description: "emit a structured JSON object instead of the table"},
 			{Name: "-compact", Default: "false", Description: "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)"},
@@ -162,6 +212,9 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "export",
 		Summary: "JSON dump of every registered repo's open issue list + ready IDs (-closed for full history).",
 		Usage:   "wyk export [-since 24h] [-compact] [-slim] [-closed] [-repo name]",
+		Examples: []string{
+			"wyk export > wyk-backup.json",
+		},
 		Flags: []cliFlag{
 			{Name: "-since", Default: "", Description: "filter issues to those updated within this duration (e.g. 24h, 168h)"},
 			{Name: "-compact", Default: "false", Description: "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)"},
@@ -174,6 +227,9 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "import",
 		Summary: "Restore from a `wyk export` dump: closed-in-dump skipped; open issues create-if-missing or diff-apply-if-existing.",
 		Usage:   "wyk import [-file path] [-dry-run] [-repo name]",
+		Examples: []string{
+			"wyk import -file wyk-backup.json -dry-run   # preview the reconcile",
+		},
 		Flags: []cliFlag{
 			{Name: "-file", Default: "", Description: "path to JSON dump (default: read from stdin)"},
 			{Name: "-dry-run", Default: "false", Description: "print the plan without touching bd"},
@@ -184,6 +240,9 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "activity",
 		Summary: "Recently-touched issues across registered repos (chronological merged stream).",
 		Usage:   "wyk activity [-since 24h] [-json] [-compact] [-priority N] [-repo name] [-status open|closed|all] [-limit N]",
+		Examples: []string{
+			"wyk activity -since 24h   # what changed across repos today?",
+		},
 		Flags: []cliFlag{
 			{Name: "-since", Default: "24h", Description: "show issues updated within this duration (e.g. 1h, 24h, 168h)"},
 			{Name: "-json", Default: "false", Description: "emit a structured JSON array instead of the table"},
@@ -198,6 +257,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "depgraph",
 		Summary: "Cross-repo dependency graph between bd issues: text tree (default), Graphviz DOT, or {nodes,edges} JSON.",
 		Usage:   "wyk depgraph [-dot | -json] [-compact] [-repo name] [-priority N] [-closed]",
+		Examples: []string{
+			"wyk depgraph                          # cross-repo dependency tree",
+			"wyk depgraph -dot | dot -Tsvg > deps.svg",
+		},
 		Flags: []cliFlag{
 			{Name: "-dot", Default: "false", Description: "emit Graphviz DOT (pipe into `dot -Tsvg`)"},
 			{Name: "-json", Default: "false", Description: "emit {nodes, edges} JSON for tooling consumers"},
@@ -211,6 +274,9 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "skills",
 		Summary: "Install the wyk agent skills (wyk / wyk-handoff / wyk-project-review) into ~/.claude/skills so a harness loads them on demand.",
 		Usage:   "wyk skills <list | install | uninstall | print <name>> [-user | -project] [-force] [-dry-run] [-y]",
+		Examples: []string{
+			"wyk skills install   # put the wyk agent skills in ~/.claude/skills",
+		},
 		Flags: []cliFlag{
 			{Name: "-user", Default: "false", Description: "target the user skills dir ~/.claude/skills (the default; honors $CLAUDE_CONFIG_DIR)"},
 			{Name: "-project", Default: "false", Description: "target the project skills dir ./.claude/skills instead of the user dir"},
@@ -223,6 +289,9 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "help",
 		Summary: "Pointer at the in-TUI `?` overlay; opt-in flags emit markdown references for the docs site.",
 		Usage:   "wyk help [--markdown] [--cli-markdown]",
+		Examples: []string{
+			"wyk help --markdown > keymap.md   # the TUI keymap as markdown",
+		},
 		Flags: []cliFlag{
 			{Name: "--markdown", Default: "false", Description: "emit a markdown keymap reference (single source of truth: internal/tui.DocsKeymap)"},
 			{Name: "--cli-markdown", Default: "false", Description: "emit a markdown CLI-flag reference for every subcommand (single source of truth: cliSubcommandDocs)"},
@@ -232,14 +301,67 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		Name:    "completion",
 		Summary: "Emit a shell completion script for bash, zsh, or fish.",
 		Usage:   "wyk completion <bash|zsh|fish>",
-		Flags:   nil,
+		Examples: []string{
+			"eval \"$(wyk completion bash)\"",
+		},
+		Flags: nil,
 	},
 	{
 		Name:    "version",
 		Summary: "Print the version line. With --check, polls the release feed and exits 0/1/2/64.",
 		Usage:   "wyk version [--check]",
+		Examples: []string{
+			"wyk version --check   # exit 1 when a newer release exists",
+		},
 		Flags: []cliFlag{
 			{Name: "--check", Default: "false", Description: "poll the release feed and exit 0 (current) / 1 (newer available) / 2 (network failure)"},
 		},
 	},
+}
+
+// findCLIDoc returns the cliSubcommandDocs entry for name, or nil.
+// Nested dispatchers (registry list, skills install, ...) look up
+// their parent's entry — the doc covers every subform.
+func findCLIDoc(name string) *cliSubcommandDoc {
+	if base, _, ok := strings.Cut(name, " "); ok {
+		name = base
+	}
+	for i := range cliSubcommandDocs {
+		if cliSubcommandDocs[i].Name == name {
+			return &cliSubcommandDocs[i]
+		}
+	}
+	return nil
+}
+
+// subcommandUsage returns the fs.Usage hook that gives a subcommand's
+// -h the init -h treatment (would-you-kindly-rnjg): a one-line
+// summary, the canonical usage, common-case examples, then the flag
+// table — instead of Go's bare "Usage of <name>:" flag dump. Content
+// comes from cliSubcommandDocs, the same source the generated cli.md
+// uses, so -h and the published reference cannot drift on the
+// synopsis. A subcommand with no doc entry (the internal `hook`)
+// falls back to a plain usage line.
+func subcommandUsage(fs *flag.FlagSet, name string) func() {
+	return func() {
+		w := os.Stderr
+		doc := findCLIDoc(name)
+		if doc == nil {
+			fmt.Fprintf(w, "usage: wyk %s [flags]\n\nFlags:\n", name)
+			fs.PrintDefaults()
+			return
+		}
+		fmt.Fprintf(w, "wyk %s — %s\n\nUsage:\n", doc.Name, doc.Summary)
+		for _, line := range strings.Split(doc.Usage, "\n") {
+			fmt.Fprintf(w, "  %s\n", line)
+		}
+		if len(doc.Examples) > 0 {
+			fmt.Fprint(w, "\nCommon case:\n")
+			for _, e := range doc.Examples {
+				fmt.Fprintf(w, "  %s\n", e)
+			}
+		}
+		fmt.Fprint(w, "\nFlags:\n")
+		fs.PrintDefaults()
+	}
 }

@@ -123,3 +123,35 @@ func TestSweepCoversEveryFlagSet(t *testing.T) {
 		}
 	}
 }
+
+func TestSubcommandHelp_LeadsWithSynopsis(t *testing.T) {
+	// Every FlagSet-backed subcommand's -h gets the init -h treatment
+	// (would-you-kindly-rnjg): a "wyk <name> — <summary>" lead and a
+	// Usage block sourced from cliSubcommandDocs (so -h can't drift
+	// from the generated cli.md). Commands without a doc entry (the
+	// internal hook) fall back to a plain usage line — still no bare
+	// "Usage of <name>:" flag dump anywhere.
+	for _, c := range sweptFlagSets {
+		t.Run(c.name, func(t *testing.T) {
+			stdout, stderr := captureOutErr(t, func() { c.run(c.args) })
+			out := stdout + stderr
+			base, _, _ := strings.Cut(c.name, " ")
+			if doc := findCLIDoc(c.name); doc != nil {
+				if !strings.Contains(out, "wyk "+base+" — ") {
+					t.Errorf("%s -h should lead with the summary line; got:\n%s", c.name, out)
+				}
+				// init keeps its richer hand-written layout (the
+				// template this treatment copies) — "Common case:"
+				// without a "Usage:" header is fine there.
+				if !strings.Contains(out, "Usage:") && !strings.Contains(out, "Common case:") {
+					t.Errorf("%s -h should include a Usage or Common case block; got:\n%s", c.name, out)
+				}
+			} else if !strings.Contains(out, "usage: wyk "+c.name) {
+				t.Errorf("%s -h (no doc entry) should print the fallback usage line; got:\n%s", c.name, out)
+			}
+			if strings.Contains(out, "Usage of ") {
+				t.Errorf("%s -h still shows Go's bare flag-dump header; got:\n%s", c.name, out)
+			}
+		})
+	}
+}

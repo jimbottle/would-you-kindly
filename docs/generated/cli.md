@@ -13,6 +13,14 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity n
    or: wyk handoff -template
 ```
 
+Common case:
+
+```
+cat runbook.md | wyk handoff -create "Rotate the staging DB password" -priority 1
+wyk handoff wyk-42 < runbook.md
+wyk handoff -template > runbook.md   # print the runbook skeleton to fill in
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | run as if bd had been started in this directory |
@@ -34,6 +42,12 @@ File a bd issue (forwarding every flag to `bd create`) and stamp it with the Cla
 wyk create <bd create args...>
 ```
 
+Common case:
+
+```
+wyk create --title="Fix the flaky retry test" --type=bug -p 2   # bd create + Claude session stamp
+```
+
 _no flags_
 
 ## `wyk init`
@@ -42,6 +56,13 @@ Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trail
 
 ```
 wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-claude-md] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]
+```
+
+Common case:
+
+```
+wyk init                  # bootstrap this repo (idempotent)
+wyk init -scan ~/Projects # register every bd workspace under a tree
 ```
 
 | Flag | Default | Description |
@@ -65,6 +86,13 @@ Agent inbox: issues filed with `src:agent` that a human has bounced back.
 wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]
 ```
 
+Common case:
+
+```
+wyk inbox          # what did the human bounce back to me?
+wyk inbox -json    # structured, for agent ingestion
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
@@ -85,6 +113,13 @@ Aggregate snapshot across registered repos: counts by status, human-flagged spli
 wyk stats [-C <dir>] [-json] [-compact] [-repo name]
 ```
 
+Common case:
+
+```
+wyk stats          # handoff-loop heartbeat across registered repos
+wyk stats -json
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
@@ -98,6 +133,13 @@ Checks bd / wyk on PATH, $EDITOR, audit-trail actor, XDG paths, agent skills, an
 
 ```
 wyk doctor [-json] [-fix [-dry-run]]
+```
+
+Common case:
+
+```
+wyk doctor         # diagnose bd/wyk/hook/registry wiring
+wyk doctor -fix    # install missing hooks + skills
 ```
 
 | Flag | Default | Description |
@@ -114,6 +156,13 @@ List, remove, or prune entries in the wyk repo registry (~/.config/wyk/repos.jso
 wyk registry <list | remove <name> | prune> [-broken] [-y] [-json]
 ```
 
+Common case:
+
+```
+wyk registry list
+wyk registry prune -y   # drop entries whose repo is gone
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-y` | `false` | skip the [y/N] confirmation prompt on prune (for scripts) |
@@ -128,6 +177,12 @@ Print the agent-facing label convention (human, src:agent, inbox query).
 wyk conventions [-json]
 ```
 
+Common case:
+
+```
+wyk conventions    # agents: run this before writing to bd here
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-json` | `false` | emit a structured JSON object instead of the prose tip |
@@ -138,6 +193,13 @@ Check for and install a newer wyk release. Live-fetches every invocation (no cac
 
 ```
 wyk update [-y] [-dry-run] [-channel any|stable]
+```
+
+Common case:
+
+```
+wyk update                  # check + install the latest release
+wyk update -channel stable  # skip prereleases
 ```
 
 | Flag | Default | Description |
@@ -152,6 +214,12 @@ Per-repo rollup of open / human-flagged / recently-closed counts.
 
 ```
 wyk dashboard [-json] [-compact] [-days N] [-repo name] [-priority N]
+```
+
+Common case:
+
+```
+wyk dashboard      # per-repo open/human/closed-this-week table
 ```
 
 | Flag | Default | Description |
@@ -170,6 +238,12 @@ JSON dump of every registered repo's open issue list + ready IDs (-closed for fu
 wyk export [-since 24h] [-compact] [-slim] [-closed] [-repo name]
 ```
 
+Common case:
+
+```
+wyk export > wyk-backup.json
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-since` | `_(empty)_` | filter issues to those updated within this duration (e.g. 24h, 168h) |
@@ -186,6 +260,12 @@ Restore from a `wyk export` dump: closed-in-dump skipped; open issues create-if-
 wyk import [-file path] [-dry-run] [-repo name]
 ```
 
+Common case:
+
+```
+wyk import -file wyk-backup.json -dry-run   # preview the reconcile
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-file` | `_(empty)_` | path to JSON dump (default: read from stdin) |
@@ -198,6 +278,12 @@ Recently-touched issues across registered repos (chronological merged stream).
 
 ```
 wyk activity [-since 24h] [-json] [-compact] [-priority N] [-repo name] [-status open|closed|all] [-limit N]
+```
+
+Common case:
+
+```
+wyk activity -since 24h   # what changed across repos today?
 ```
 
 | Flag | Default | Description |
@@ -218,6 +304,13 @@ Cross-repo dependency graph between bd issues: text tree (default), Graphviz DOT
 wyk depgraph [-dot | -json] [-compact] [-repo name] [-priority N] [-closed]
 ```
 
+Common case:
+
+```
+wyk depgraph                          # cross-repo dependency tree
+wyk depgraph -dot | dot -Tsvg > deps.svg
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-dot` | `false` | emit Graphviz DOT (pipe into `dot -Tsvg`) |
@@ -233,6 +326,12 @@ Install the wyk agent skills (wyk / wyk-handoff / wyk-project-review) into ~/.cl
 
 ```
 wyk skills <list | install | uninstall | print <name>> [-user | -project] [-force] [-dry-run] [-y]
+```
+
+Common case:
+
+```
+wyk skills install   # put the wyk agent skills in ~/.claude/skills
 ```
 
 | Flag | Default | Description |
@@ -251,6 +350,12 @@ Pointer at the in-TUI `?` overlay; opt-in flags emit markdown references for the
 wyk help [--markdown] [--cli-markdown]
 ```
 
+Common case:
+
+```
+wyk help --markdown > keymap.md   # the TUI keymap as markdown
+```
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--markdown` | `false` | emit a markdown keymap reference (single source of truth: internal/tui.DocsKeymap) |
@@ -264,6 +369,12 @@ Emit a shell completion script for bash, zsh, or fish.
 wyk completion <bash|zsh|fish>
 ```
 
+Common case:
+
+```
+eval "$(wyk completion bash)"
+```
+
 _no flags_
 
 ## `wyk version`
@@ -272,6 +383,12 @@ Print the version line. With --check, polls the release feed and exits 0/1/2/64.
 
 ```
 wyk version [--check]
+```
+
+Common case:
+
+```
+wyk version --check   # exit 1 when a newer release exists
 ```
 
 | Flag | Default | Description |

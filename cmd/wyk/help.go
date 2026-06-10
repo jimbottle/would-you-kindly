@@ -29,6 +29,7 @@ import (
 //	64 usage error
 func runHelp(args []string) int {
 	fs := flag.NewFlagSet("help", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "help")
 	asMarkdown := fs.Bool("markdown", false, "emit a markdown keymap reference (single source of truth: internal/tui.DocsKeymap)")
 	asCLIMarkdown := fs.Bool("cli-markdown", false, "emit a markdown CLI-flag reference for every subcommand (single source of truth: cliSubcommandDocs)")
 	fs.SetOutput(os.Stderr)
@@ -80,6 +81,16 @@ func emitCLIMarkdown(w io.Writer, docs []cliSubcommandDoc) {
 		fmt.Fprintln(w, d.Usage)
 		fmt.Fprintln(w, "```")
 		fmt.Fprintln(w)
+		if len(d.Examples) > 0 {
+			fmt.Fprintln(w, "Common case:")
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "```")
+			for _, e := range d.Examples {
+				fmt.Fprintln(w, e)
+			}
+			fmt.Fprintln(w, "```")
+			fmt.Fprintln(w)
+		}
 		if len(d.Flags) == 0 {
 			fmt.Fprintln(w, "_no flags_")
 			fmt.Fprintln(w)
