@@ -88,8 +88,8 @@ Check what version you're running:
 
 ```bash
 wyk --version
-# Tagged install (go install ...@vX.Y.Z): wyk v0.7.0
-# Pseudoversion (go install ...@latest):  wyk v0.7.1-0.YYYYMMDD-<sha>
+# Tagged install (go install ...@vX.Y.Z): wyk vX.Y.Z
+# Pseudoversion (go install ...@latest):  wyk vX.Y.(Z+1)-0.YYYYMMDD-<sha>
 # From-checkout build (go build):         wyk (devel) (commit <sha>)
 ```
 

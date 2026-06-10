@@ -83,10 +83,17 @@ func runVersionCheck() int {
 		fmt.Printf("wyk %s → %s available — run `wyk update`\n", current, rel.TagName)
 		return 1
 	}
-	channelDesc := "release (including prereleases)"
-	if channel == "stable" {
-		channelDesc = "stable release"
-	}
-	fmt.Printf("wyk %s is current (latest %s is %s)\n", current, channelDesc, rel.TagName)
+	fmt.Printf("wyk %s is current (%s is %s)\n", current, channelDesc(channel), rel.TagName)
 	return 0
+}
+
+// channelDesc maps an update-channel value to the user-facing phrase
+// shared by `wyk update` and `wyk version --check`, so the two
+// commands can't drift on how they describe the same concept (the
+// raw channel name "any" is internal jargon).
+func channelDesc(channel string) string {
+	if channel == "stable" {
+		return "latest stable release"
+	}
+	return "latest release (including prereleases)"
 }

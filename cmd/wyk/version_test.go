@@ -127,6 +127,40 @@ func TestRunVersionCheck_UpToDateReturns0(t *testing.T) {
 	if !strings.Contains(out, "is current") {
 		t.Errorf("expected 'is current' message; got %q", out)
 	}
+	// The default (any) channel must be described in user words, not
+	// the internal channel name (roborev #2040 / the v7fz wording fix).
+	if !strings.Contains(out, "including prereleases") {
+		t.Errorf("any-channel up-to-date message should say 'including prereleases'; got %q", out)
+	}
+}
+
+func TestRunVersionCheck_StableChannelUpToDateWording(t *testing.T) {
+	// The stable-channel branch of channelDesc: an up-to-date check on
+	// a stable-pinned cache must say "latest stable release" — a
+	// regression to the raw channel name would otherwise pass the
+	// suite (roborev #2040).
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if err := updater.PersistLatest([]updater.Release{
+		{TagName: "v1.0.0", Prerelease: false},
+	}, "stable"); err != nil {
+		t.Fatalf("PersistLatest: %v", err)
+	}
+	prev := liveFetcher
+	prevTag := currentTagForCheck
+	liveFetcher = func(_ context.Context) ([]updater.Release, error) {
+		return []updater.Release{{TagName: "v1.0.0", Prerelease: false}}, nil
+	}
+	currentTagForCheck = func() string { return "v1.0.0" }
+	defer func() { liveFetcher = prev; currentTagForCheck = prevTag }()
+
+	out := captureStdout(t, func() {
+		if code := runVersionCheck(); code != 0 {
+			t.Errorf("up-to-date exit %d, want 0", code)
+		}
+	})
+	if !strings.Contains(out, "latest stable release") {
+		t.Errorf("stable-channel up-to-date message should say 'latest stable release'; got %q", out)
+	}
 }
 
 func TestRunVersionCheck_StableChannelPrereleaseOnlyFeedReturns0(t *testing.T) {
