@@ -199,3 +199,23 @@ func TestWithCacheSnapshot_MinePresetAndClosedRows(t *testing.T) {
 		t.Errorf("a closed human row must not seed the human view; got %v", idsOf(m.all))
 	}
 }
+
+func TestWithCacheSnapshot_SamePresetStripsClosedRows(t *testing.T) {
+	// Quit on all with C (show-closed) toggled on, relaunch on all:
+	// the snapshot carries closed rows but the relaunch is always
+	// closed-excluded (SessionState doesn't persist the toggle), so
+	// the same-preset seed must strip them just like the cross-preset
+	// predicates do (roborev #2063).
+	snap := Cache{
+		Preset:  string(filter.PresetAll),
+		SavedAt: time.Now(),
+		Issues: []beads.Issue{
+			{ID: "open-1", Status: "open"},
+			{ID: "closed-1", Status: "closed"},
+		},
+	}
+	m := New(&stubSource{}).WithCacheSnapshot(snap, "")
+	if len(m.all) != 1 || m.all[0].ID != "open-1" {
+		t.Errorf("same-preset seed must exclude closed rows; got %v", idsOf(m.all))
+	}
+}

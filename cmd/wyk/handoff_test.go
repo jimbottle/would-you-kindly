@@ -233,3 +233,21 @@ func TestHandoff_DryRunBannerPrintsCanonicalPriority(t *testing.T) {
 		t.Errorf("banner must print the canonicalized priority (P2); got:\n%s", out)
 	}
 }
+
+func TestRunHandoff_WrongArityPrintsCanonicalUsage(t *testing.T) {
+	// The wrong-arity error prints the cliSubcommandDocs usage — this
+	// pins both the exit code and the doc entry's existence (the
+	// single-source lookup would otherwise degrade to the terse
+	// fallback if "handoff" were renamed; roborev #2063).
+	var code int
+	_, stderr := captureOutErr(t, func() { code = runHandoff(nil) })
+	if code != 64 {
+		t.Errorf("wrong arity exit = %d, want 64", code)
+	}
+	if !strings.Contains(stderr, "usage: wyk handoff [-C <dir>]") {
+		t.Errorf("wrong-arity error should print the canonical doc usage; got %q", stderr)
+	}
+	if !strings.Contains(stderr, "wyk handoff -template") {
+		t.Errorf("usage should include the -template form; got %q", stderr)
+	}
+}

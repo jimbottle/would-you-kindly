@@ -492,8 +492,15 @@ func runHandoff(args []string) int {
 	case *createTitle == "" && fs.NArg() != 1:
 		// Single-sourced from cliSubcommandDocs — a hand-written copy
 		// here was the third place the handoff usage lived, free to
-		// drift from -h and cli.md (roborev #2060).
-		fmt.Fprintln(os.Stderr, "usage: "+findCLIDoc("handoff").Usage)
+		// drift from -h and cli.md (roborev #2060). Nil-guarded so a
+		// renamed doc entry degrades to a terse line instead of a
+		// panic on the error path (roborev #2063); the test pins the
+		// entry's existence.
+		if doc := findCLIDoc("handoff"); doc != nil {
+			fmt.Fprintln(os.Stderr, "usage: "+doc.Usage)
+		} else {
+			fmt.Fprintln(os.Stderr, "usage: wyk handoff [flags] <issue-id>")
+		}
 		return 64
 	}
 

@@ -714,9 +714,24 @@ func (m Model) WithCacheSnapshot(c Cache, path string) Model {
 	if len(c.Issues) == 0 {
 		return m
 	}
-	issues := c.Issues
+	// Strip closed rows up front, whatever the preset: the snapshot
+	// may have been saved while showClosed was on, but SessionState
+	// doesn't persist that toggle, so a relaunch is always
+	// closed-excluded — seeding raw would paint closed rows into a
+	// closed-excluded view until the live fetch lands
+	// (roborev #2063; the cross-preset predicates were hardened the
+	// same way one round earlier).
+	issues := make([]beads.Issue, 0, len(c.Issues))
+	for _, i := range c.Issues {
+		if i.Status != "closed" {
+			issues = append(issues, i)
+		}
+	}
+	if len(issues) == 0 {
+		return m
+	}
 	if filter.Preset(c.Preset) != m.preset {
-		filtered, ok := issuesMatchingPreset(c.Issues, filter.Preset(c.Preset), m.preset, m.me)
+		filtered, ok := issuesMatchingPreset(issues, filter.Preset(c.Preset), m.preset, m.me)
 		if !ok || len(filtered) == 0 {
 			// Can't approximate this view — or the approximation is
 			// empty, and pre-painting an empty list has no value
@@ -1105,16 +1120,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.all = msg.issues
 			// Remember this preset's result so a later switch back to
-			// it paints instantly from cache (see switchPreset). CLONED:
-			// the optimistic write paths mutate m.all in place (the
-			// close path shifts elements out of the backing array), so
-			// a cache entry aliasing msg.issues would corrupt — a
-			// duplicated last row on the next instant paint
-			// (roborev #2062).
+			// it paints instantly from cache (see switchPreset). CLONED
+			// synchronously, here in Update: the optimistic write paths
+			// mutate m.all in place (the close path shifts elements out
+			// of the backing array), so anything aliasing msg.issues
+			// would corrupt — the cache entry on its next instant paint
+			// (roborev #2062), and the async cache save below in a
+			// straight data race that could PERSIST the corruption into
+			// the next launch's warm-start (roborev #2063). One clone
+			// serves both; cache and save only read it.
+			snap := cloneIssues(msg.issues)
 			if m.presetCache == nil {
 				m.presetCache = make(map[filter.Preset][]beads.Issue)
 			}
-			m.presetCache[msg.preset] = cloneIssues(msg.issues)
+			m.presetCache[msg.preset] = snap
 			m.commonPrefix = commonIDPrefix(m.all)
 			// Freshen cached detail-view dependency rows from the new
 			// list so a status that drifted (an external write, or a
@@ -1152,7 +1171,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// would stutter input handling on slow disks, which
 			// would defeat the warm-start latency win.
 			if m.cachePath != "" {
-				cacheCmd = saveCacheCmd(m.cachePath, string(m.preset), msg.issues)
+				cacheCmd = saveCacheCmd(m.cachePath, string(m.preset), snap)
 			}
 		}
 		// Per-sub fetch errors travel on the msg itself so they
