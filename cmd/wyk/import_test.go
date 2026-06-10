@@ -393,3 +393,61 @@ func TestEmitImportSummary_AlwaysPrintsTotals(t *testing.T) {
 		t.Errorf("totals line wrong: %q", b.String())
 	}
 }
+
+// fakeImportClientPriErr fails the FIRST update write (SetPriority) so
+// changed stays false with a non-nil error — the no-bucket path that
+// used to vanish from the totals (roborev #2048).
+type fakeImportClientPriErr struct {
+	*fakeImportClient
+	priErr error
+}
+
+func (f *fakeImportClientPriErr) SetPriority(_ context.Context, _ string, _ int) error {
+	return f.priErr
+}
+
+func TestRunImportPlan_WriteFailuresLandInFailedBucket(t *testing.T) {
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "repo-a", Path: "/tmp/a"}}}
+
+	t.Run("create failure", func(t *testing.T) {
+		dump := exportDump{Repos: []exportRepo{{
+			Name:   "repo-a",
+			Issues: []beads.Issue{{ID: "a-new", Status: "open", Title: "fresh"}},
+		}}}
+		mk := func(_ string) importClient {
+			return &fakeImportClient{CreateErr: errors.New("bd exploded")}
+		}
+		s := runImportPlan(reg, dump, false, mk)
+		if got := s.Repos[0].Failed; len(got) != 1 || got[0] != "a-new" {
+			t.Errorf("Failed = %v, want [a-new]", got)
+		}
+		var b strings.Builder
+		emitImportSummary(&b, s, false)
+		if !strings.Contains(b.String(), "1 issue(s) across 1 repo(s)") {
+			t.Errorf("totals must count the failed create; got %q", b.String())
+		}
+		if !strings.Contains(b.String(), "failed=1") {
+			t.Errorf("per-repo line must render failed=1; got %q", b.String())
+		}
+	})
+
+	t.Run("first update write fails", func(t *testing.T) {
+		dump := exportDump{Repos: []exportRepo{{
+			Name: "repo-a",
+			Issues: []beads.Issue{
+				{ID: "a-1", Status: "open", Priority: 1},
+			},
+		}}}
+		base := &fakeImportClient{existing: []beads.Issue{{ID: "a-1", Priority: 2}}}
+		mk := func(_ string) importClient {
+			return &fakeImportClientPriErr{fakeImportClient: base, priErr: errors.New("bd timeout")}
+		}
+		s := runImportPlan(reg, dump, false, mk)
+		if got := s.Repos[0].Failed; len(got) != 1 || got[0] != "a-1" {
+			t.Errorf("Failed = %v, want [a-1] (changed=false + write error)", got)
+		}
+		if len(s.Repos[0].Updated)+len(s.Repos[0].Unchanged) != 0 {
+			t.Errorf("failed-first-write must not also land in Updated/Unchanged")
+		}
+	})
+}

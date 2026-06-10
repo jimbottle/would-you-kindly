@@ -562,8 +562,12 @@ func runHandoff(args []string) int {
 	if *dryRun {
 		fmt.Println("DRY-RUN: no bd writes performed")
 		if *createTitle != "" {
+			// Canonical form, matching what the real write passes to bd —
+			// dry-run reporting the raw flag value while the write sends
+			// "P2" for "p2" would drift the very guarantee this banner
+			// exists for (roborev #2048).
 			fmt.Printf("would create: title=%q priority=%s type=%s labels=%v\n",
-				*createTitle, *priority, *issueType, createLabels)
+				*createTitle, beads.CanonicalPriority(*priority), *issueType, createLabels)
 			fmt.Println("would hand off the new issue to human (label=human added, description replaced)")
 			if ident != "" {
 				fmt.Printf("would route the new issue to identity %q (label=%s)\n", ident, identityLabel(ident))
