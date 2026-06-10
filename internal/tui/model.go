@@ -196,7 +196,28 @@ type Model struct {
 	keys   keyMap
 	mode   mode
 	preset filter.Preset
-	query  string
+
+	// humanReturnPreset is the preset the user was on when they
+	// pressed `h` to jump into the human view, so a second `h`
+	// toggles back to it instead of being a one-way trip. Empty (or
+	// itself "human") falls back to PresetAll. Recorded only on the
+	// way IN so a stray double-press can't strand the return target
+	// on "human".
+	humanReturnPreset filter.Preset
+
+	// presetCache holds the last successful fetch for each preset so
+	// switching back to a preset paints its rows INSTANTLY instead of
+	// showing the previous preset's list for the 2-3s a cold
+	// multi-repo bd round-trip takes. A switch still dispatches an
+	// authoritative fetch to reconcile (cached rows are at most one
+	// refresh-interval stale, and the refreshing indicator signals
+	// it). Entries are scoped to the current showClosed setting, so
+	// toggling C clears the map. nil until the first fetch lands — a
+	// cache miss falls back to the old keep-stale-rows-until-fetch
+	// behavior. Reworked from PR #18 onto the preset-tagged
+	// fetchedMsg architecture (would-you-kindly-tjiy).
+	presetCache map[filter.Preset][]beads.Issue
+	query       string
 
 	all     []beads.Issue // last full fetch result
 	visible []beads.Issue // after fuzzy filter
@@ -618,6 +639,50 @@ func (m Model) WithPriorityEmphasis(on bool) Model {
 	return m
 }
 
+// issuesMatchingPreset approximates, in memory, what a bd fetch for
+// `want` would return, given a snapshot taken under `have`. Only an
+// "all" snapshot can seed a different view (it's the superset), and
+// only for the presets that are plain field predicates:
+//
+//	human   -> carries the human label
+//	blocked -> status == blocked
+//	mine    -> assignee == me (or just non-closed when me is empty,
+//	           matching filter.QueryWithClosed's degradation)
+//
+// "ready" is excluded — bd computes dependency-readiness and a field
+// predicate would silently show blocked-by-open-deps rows. ok=false
+// means "can't approximate; cold-start instead". The "all" snapshot
+// is saved under the default closed-excluded scope, so the
+// status!=closed clause is already satisfied by construction.
+func issuesMatchingPreset(snapshot []beads.Issue, have, want filter.Preset, me string) ([]beads.Issue, bool) {
+	if have != filter.PresetAll {
+		return nil, false
+	}
+	var keep func(beads.Issue) bool
+	switch want {
+	case filter.PresetHuman:
+		keep = beads.Issue.IsHuman
+	case filter.PresetBlocked:
+		keep = func(i beads.Issue) bool { return i.Status == "blocked" }
+	case filter.PresetMine:
+		if me == "" {
+			// QueryWithClosed degrades `mine` with no identity to
+			// the non-closed set — the snapshot already is that.
+			return snapshot, true
+		}
+		keep = func(i beads.Issue) bool { return i.Assignee == me }
+	default:
+		return nil, false
+	}
+	out := make([]beads.Issue, 0, len(snapshot))
+	for _, i := range snapshot {
+		if keep(i) {
+			out = append(out, i)
+		}
+	}
+	return out, true
+}
+
 // WithCacheSnapshot seeds m.all from a previously-saved Cache so
 // the first paint shows rows immediately instead of the empty
 // "loading…" stand-in. The live fetch dispatched by Init still
@@ -628,18 +693,36 @@ func (m Model) WithPriorityEmphasis(on bool) Model {
 // passes this through so the model can call SaveCache after each
 // fetchedMsg lands. Empty path disables persistence.
 //
-// The cache is only honored if c.Preset matches the model's
-// current preset — a snapshot of the "all" view isn't useful when
-// the user launched with -preset human. The snapshot is also
-// dropped when it carries zero issues (no value in pre-painting
-// an empty list); the loading branch still shows the spinner so
-// first-run users don't see a confusing dead screen.
+// The snapshot seeds directly when c.Preset matches the model's
+// current preset. When it doesn't — the common case being "quit on
+// all, reopen restoring human", which used to stare at the loading
+// spinner for the whole multi-repo cold start — an "all" snapshot
+// is filtered in memory to approximate the current preset
+// (issuesMatchingPreset), since human/mine/blocked are plain field
+// predicates over the all-superset. A non-"all" snapshot can't
+// reconstruct a different view (a subset has no superset), and
+// "ready" has blocker semantics only bd can compute; both fall
+// through to the cold start. The snapshot is also dropped when it
+// carries zero issues (no value in pre-painting an empty list).
+// Reworked from PR #18 (would-you-kindly-tjiy).
 func (m Model) WithCacheSnapshot(c Cache, path string) Model {
 	m.cachePath = path
-	if len(c.Issues) == 0 || filter.Preset(c.Preset) != m.preset {
+	if len(c.Issues) == 0 {
 		return m
 	}
-	m.all = c.Issues
+	issues := c.Issues
+	if filter.Preset(c.Preset) != m.preset {
+		filtered, ok := issuesMatchingPreset(c.Issues, filter.Preset(c.Preset), m.preset, m.me)
+		if !ok || len(filtered) == 0 {
+			// Can't approximate this view — or the approximation is
+			// empty, and pre-painting an empty list has no value
+			// (same rationale as the zero-issue guard above). Cold
+			// start instead.
+			return m
+		}
+		issues = filtered
+	}
+	m.all = issues
 	m.commonPrefix = commonIDPrefix(m.all)
 	m.recomputeVisible()
 	// Warm-start seeded the visible set, so a session-restored cursor
@@ -1017,6 +1100,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cacheCmd, depsCmd tea.Cmd
 		if msg.err == nil {
 			m.all = msg.issues
+			// Remember this preset's result so a later switch back to
+			// it paints instantly from cache (see switchPreset).
+			if m.presetCache == nil {
+				m.presetCache = make(map[filter.Preset][]beads.Issue)
+			}
+			m.presetCache[msg.preset] = msg.issues
 			m.commonPrefix = commonIDPrefix(m.all)
 			// Freshen cached detail-view dependency rows from the new
 			// list so a status that drifted (an external write, or a
@@ -1442,6 +1531,17 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible()
 		return m, textinput.Blink
 	case keyHit(msg, m.keys.Human):
+		// `h` toggles the human view: jump in from wherever you are,
+		// press again to return to the view you came from (default
+		// all).
+		if m.preset == filter.PresetHuman {
+			target := m.humanReturnPreset
+			if target == "" || target == filter.PresetHuman {
+				target = filter.PresetAll
+			}
+			return m.switchPreset(target)
+		}
+		m.humanReturnPreset = m.preset
 		return m.switchPreset(filter.PresetHuman)
 	case keyHit(msg, m.keys.Cycle):
 		return m.switchPreset(filter.NextPreset(m.preset))
@@ -2238,6 +2338,19 @@ func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
 	m.preset = p
 	m.cursor = 0
 	m.scroll = 0
+	// Instant paint: if this preset has been fetched before, swap its
+	// cached rows in NOW so the list reflects the new view on this
+	// frame instead of showing the old preset's rows for the duration
+	// of the bd round-trip. The fetch dispatched below still runs and
+	// reconciles when it lands (its fetchedMsg refreshes both m.all
+	// and the cache). A cache miss leaves the previous rows up — the
+	// pre-cache behavior — until the fetch returns.
+	if cached, ok := m.presetCache[p]; ok {
+		m.all = cached
+		m.commonPrefix = commonIDPrefix(m.all)
+		m.recomputeVisible()
+		m.ensureCursorVisible()
+	}
 	m.refreshing = true
 	return m, m.fetchCmd()
 }
@@ -3688,6 +3801,11 @@ func (m Model) toggleShowClosed() (tea.Model, tea.Cmd) {
 	if tog, ok := m.src.(ClosedToggler); ok {
 		tog.SetIncludeClosed(m.showClosed)
 	}
+	// The cached per-preset rows were fetched under the OLD
+	// showClosed scope, so they'd paint the wrong set (closed rows
+	// present/absent) on the next switch. Drop them; they repopulate
+	// from fresh fetches.
+	m.presetCache = nil
 	m.cursor = 0
 	m.refreshing = true
 	return m, m.fetchCmd()

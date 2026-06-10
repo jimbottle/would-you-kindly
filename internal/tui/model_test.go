@@ -5890,9 +5890,12 @@ func TestWithCacheSnapshot_PaintsCachedRowsImmediately(t *testing.T) {
 }
 
 func TestWithCacheSnapshot_IgnoresMismatchedPreset(t *testing.T) {
-	// A cached "all" snapshot is useless when the user launched
-	// with -preset human; seeding it would mis-paint. The check
-	// keeps the cold-path "loading…" experience for these cases.
+	// An "all" snapshot now seeds a mismatched preset through the
+	// in-memory filter (TestWithCacheSnapshot_SeedsAcrossPresets) —
+	// but when the filtered approximation is EMPTY, as here (no
+	// human-labeled rows in the snapshot), there's no value in
+	// pre-painting an empty list: the cold-path "loading…"
+	// experience stays.
 	src := &stubSource{}
 	cache := Cache{
 		Preset:  string(filter.PresetAll),

@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Preset switching is instant** — pressing `h` / `tab` (or any preset
+  change) used to fire a fresh multi-repo `bd` query and leave the
+  previous preset's rows on screen for the 2-3s a cold round-trip
+  takes. Each preset's last result is now cached and painted
+  immediately on switch, with the authoritative fetch reconciling in
+  the background (cache cleared when `C` toggles the closed-scope).
+
+- **`h` toggles the human view** — pressing `h` while already in the
+  human view returns to the preset you came from (default `all`)
+  instead of being a one-way trip.
+
+### Fixed
+
+- **Warm-start now seeds across presets** — the on-disk last-fetch
+  snapshot was silently skipped whenever the saved preset differed
+  from the restored one (quit on `all`, reopen on `human`), leaving a
+  `loading…` spinner for the entire multi-repo cold start (~9s). An
+  `all` snapshot now seeds the human/mine/blocked views through an
+  in-memory filter; `ready` still cold-starts (its blocker semantics
+  are bd's to compute).
+
 - **Every subcommand's `-h` now leads with a synopsis and common-case
   examples** — the `init -h` treatment, everywhere: `wyk <name> — 
   <summary>`, the canonical usage, then 1-3 copy-pasteable examples
