@@ -53,7 +53,7 @@ If you remember one thing: an issue with the `human` label is waiting on
 
 ## Install
 
-You'll need Go 1.24.5+ (matching `go.mod`) and the **`bd` (beads)** binary on
+You'll need Go 1.26+ (matching `go.mod`) and the **`bd` (beads)** binary on
 your `PATH` — wyk shells out to it for all storage. Install bd first by
 following the instructions in its repo:
 [github.com/gastownhall/beads](https://github.com/gastownhall/beads). wyk is
