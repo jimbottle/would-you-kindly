@@ -65,7 +65,10 @@ func runStats(args []string) int {
 	// sentinels to the documented exit codes; other total failures
 	// (code 1) still emit a parseable (zero) stats object carrying the
 	// errors so an agent isn't left with nothing.
-	if code, total := classifyTotalFetchFailure(len(subs), subErrs); total {
+	if code, msg, total := classifyTotalFetchFailure(len(subs), subErrs); total {
+		if msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+		}
 		if code == 1 {
 			if *asJSON {
 				s := computeStats(nil, time.Now())
