@@ -83,6 +83,10 @@ func runVersionCheck() int {
 		fmt.Printf("wyk %s → %s available — run `wyk update`\n", current, rel.TagName)
 		return 1
 	}
-	fmt.Printf("wyk %s is current (latest %s is %s)\n", current, channel, rel.TagName)
+	channelDesc := "release (including prereleases)"
+	if channel == "stable" {
+		channelDesc = "stable release"
+	}
+	fmt.Printf("wyk %s is current (latest %s is %s)\n", current, channelDesc, rel.TagName)
 	return 0
 }
