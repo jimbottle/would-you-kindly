@@ -122,7 +122,10 @@ func runInbox(args []string) int {
 	// the documented exit codes; for other total failures (code 1) we
 	// still emit the envelope in -json (empty issues + the errors
 	// array) so an agent gets parseable output rather than nothing.
-	if code, total := classifyTotalFetchFailure(len(subs), subErrs); total {
+	if code, msg, total := classifyTotalFetchFailure(len(subs), subErrs); total {
+		if msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+		}
 		if code == 1 {
 			if *asJSON {
 				emitInboxJSON(nil, subErrs, *compact)

@@ -636,17 +636,12 @@ func runHandoff(args []string) int {
 // the create step and the BounceToHuman step report the same
 // friendly messages for the two well-known sentinels.
 func handoffErrExit(err error, prefix string) int {
-	switch {
-	case errors.Is(err, beads.ErrBDNotFound):
-		fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
-		return 2
-	case errors.Is(err, beads.ErrNoWorkspace):
-		fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
-		return 2
-	default:
-		fmt.Fprintln(os.Stderr, prefix, err)
-		return 1
+	if code, msg, ok := classifyBDSentinel(err); ok {
+		fmt.Fprintln(os.Stderr, msg)
+		return code
 	}
+	fmt.Fprintln(os.Stderr, prefix, err)
+	return 1
 }
 
 // runProbe fetches the human preset and prints a one-line summary
@@ -673,17 +668,12 @@ func runProbe(src tui.Source) int {
 		issues, err = src.Fetch(ctx, filter.PresetHuman)
 	}
 	if err != nil {
-		switch {
-		case errors.Is(err, beads.ErrBDNotFound):
-			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
-			return 2
-		case errors.Is(err, beads.ErrNoWorkspace):
-			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
-			return 2
-		default:
-			fmt.Fprintln(os.Stderr, "wyk:", err)
-			return 1
+		if code, msg, ok := classifyBDSentinel(err); ok {
+			fmt.Fprintln(os.Stderr, msg)
+			return code
 		}
+		fmt.Fprintln(os.Stderr, "wyk:", err)
+		return 1
 	}
 	fmt.Printf("%d issue(s) flagged for human:\n", len(issues))
 	for _, i := range issues {
