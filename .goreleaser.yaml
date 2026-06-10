@@ -1,0 +1,80 @@
+# goreleaser config — builds prebuilt binaries and updates the Homebrew
+# tap on each vX.Y.Z tag. Additive: `go install …@<tag>` still works and
+# stays the documented default; this just adds binaries + `brew install`.
+#
+# IMPORTANT: the release.yml goreleaser step needs HOMEBREW_TAP_GITHUB_TOKEN
+# (a fine-grained PAT with contents:write on jimbottle/homebrew-wyk) and the
+# tap repo to exist, or `brews:` publishing fails the release. Do not tag
+# until both are in place. Validate locally with:
+#   goreleaser check
+#   goreleaser release --snapshot --clean
+version: 2
+
+project_name: wyk
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/wyk
+    binary: wyk
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # Windows is omitted: the README marks it untested, so shipping a
+    # Windows archive would over-promise. Honest scope > broad scope.
+    #
+    # wyk's --version reads debug.ReadBuildInfo, which reports "(devel)"
+    # under goreleaser's clean `go build`. Stamp the tag into
+    # main.injectedVersion so prebuilt binaries carry their real version.
+    ldflags:
+      - -s -w -X main.injectedVersion={{ .Tag }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+# goreleaser deprecated `brews` (formulae) in favour of casks for binary
+# tools — Homebrew's own direction. `brew install jimbottle/wyk/wyk` works
+# the same for the user.
+homebrew_casks:
+  - name: wyk
+    binaries:
+      - wyk
+    repository:
+      owner: jimbottle
+      name: homebrew-wyk
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/jimbottle/would-you-kindly
+    description: Terminal UI over the bd issue tracker with an agent/human handoff convention
+    # bd is wyk's backing tracker but not a hard dependency (wyk degrades
+    # to a clear error without it), so surface it as a caveat rather than
+    # force-installing it.
+    caveats: |
+      wyk drives the `bd` (beads) issue tracker and needs it on your PATH.
+      Install bd separately: https://github.com/gastownhall/beads
+    # The binaries are unsigned, so macOS Gatekeeper quarantines them and
+    # the first run is blocked. Strip the quarantine attribute on install.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/wyk"]
+          end
+
+# goreleaser creates the GitHub release itself; release.yml passes
+# `--release-notes notes.md` so the CHANGELOG section stays the single
+# source of truth (same notes.md the old gh-release step produced).
+release:
+  prerelease: auto

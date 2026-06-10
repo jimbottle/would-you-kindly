@@ -59,17 +59,22 @@ following the instructions in its repo:
 [github.com/gastownhall/beads](https://github.com/gastownhall/beads). wyk is
 tested against **bd 1.0.4 or newer**; `wyk doctor` warns if your bd is older.
 
-Then install wyk:
+Then install wyk one of these ways:
 
 ```bash
-# Latest tagged release:
+# Homebrew (macOS/Linux) — also installs prebuilt, no Go toolchain needed:
+brew install jimbottle/wyk/wyk
+
+# With Go, latest tagged release:
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest
 
 # Or tip of main:
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@main
 ```
 
-Or from a checkout:
+You can also grab a prebuilt linux/darwin (amd64/arm64) binary straight
+from the [Releases page](https://github.com/jimbottle/would-you-kindly/releases),
+or build from a checkout:
 
 ```bash
 go build -o ./bin/wyk ./cmd/wyk
@@ -89,13 +94,16 @@ Check what version you're running:
 ```bash
 wyk --version
 # Tagged install (go install ...@vX.Y.Z): wyk vX.Y.Z
+# Homebrew / prebuilt binary (goreleaser): wyk vX.Y.Z (commit <sha>)
 # Pseudoversion (go install ...@latest):  wyk vX.Y.(Z+1)-0.YYYYMMDD-<sha>
 # From-checkout build (go build):         wyk (devel) (commit <sha>)
 ```
 
-The `(commit …)` suffix and `-dirty` marker only appear for builds
-produced inside this repo's working tree — Go's module-proxy builds
-don't carry VCS stamps.
+The `(commit …)` suffix and `-dirty` marker appear for builds produced
+from a git working tree — that includes the goreleaser-built Homebrew and
+prebuilt binaries (which also get their tag stamped in via `-ldflags`).
+Go's module-proxy builds (`go install`) don't carry VCS stamps, so they
+show just the version.
 
 ### Platform support
 

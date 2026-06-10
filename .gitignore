@@ -8,6 +8,9 @@
 /bin/
 /wyk
 
+# goreleaser output (snapshot/release builds)
+/dist/
+
 
 # macOS
 .DS_Store

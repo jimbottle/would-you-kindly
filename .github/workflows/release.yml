@@ -1,10 +1,16 @@
 name: release
 
 # Cut a GitHub release when a vX.Y.Z tag is pushed. `wyk update` and
-# `wyk version --check` read the GitHub releases feed and install via
-# `go install …@<tag>`, so a tagged release is all that's needed — no
-# binary artifacts. The release notes come straight from the matching
-# CHANGELOG.md section, so the changelog stays the single source of truth.
+# `wyk version --check` read the GitHub releases feed; `go install …@<tag>`
+# remains the documented default install path. goreleaser additionally
+# attaches prebuilt linux/darwin (amd64/arm64) archives + checksums and
+# updates the Homebrew tap (jimbottle/homebrew-wyk). The release notes come
+# straight from the matching CHANGELOG.md section, so the changelog stays
+# the single source of truth.
+#
+# Requires the HOMEBREW_TAP_GITHUB_TOKEN secret (a fine-grained PAT with
+# contents:write on jimbottle/homebrew-wyk) and that tap repo to exist —
+# otherwise the cask-publish step fails the release. See .goreleaser.yaml.
 on:
   push:
     # Match the documented vX.Y.Z contract — require a digit after the `v`
@@ -21,14 +27,15 @@ jobs:
     steps:
       # SHA-pinned for supply-chain safety (version in the trailing comment);
       # both run on the Node 24 runtime. Keep in sync with test.yml.
+      # fetch-depth: 0 — goreleaser reads the full tag history to compute
+      # the version and changelog diff; a shallow clone breaks it.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
-
-      - name: Sanity-check the tag compiles
-        run: go build ./...
 
       - name: Extract release notes from CHANGELOG
         run: |
@@ -53,11 +60,15 @@ jobs:
             echo "Release ${GITHUB_REF_NAME}. See CHANGELOG.md." > notes.md
           fi
 
-      - name: Create the GitHub release
+      # goreleaser builds the binaries, attaches the archives + checksums,
+      # creates the GitHub release with the CHANGELOG-derived notes, and
+      # pushes the updated cask to the tap. Replaces the old `gh release
+      # create` step (goreleaser's build across 4 platforms is also the
+      # compile sanity check).
+      - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          version: '~> v2'
+          args: release --clean --release-notes notes.md
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file notes.md
+          GITHUB_TOKEN: ${{ github.token }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

@@ -105,6 +105,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tested-platform statement (macOS + Linux; Windows unsupported/untested)
   and a short non-goals list, so adopters know the scope and support
   surface up front.
+- **Prebuilt binaries + Homebrew tap (goreleaser)** — tagged releases now
+  attach prebuilt `linux`/`darwin` (`amd64`/`arm64`) archives + checksums
+  and update the Homebrew tap, so `brew install jimbottle/wyk/wyk` and a
+  direct download from the Releases page join `go install` as supported
+  install paths. `wyk --version` carries the real tag on these builds via
+  an `-ldflags -X` stamp (goreleaser's clean `go build` would otherwise
+  report `(devel)`). go-install remains the documented default — this is
+  purely additive.
 
 - **`bd-create-guard` PreToolUse hook** — `wyk init` now registers a
   Claude Code hook in `.claude/settings.json` that blocks an agent's raw

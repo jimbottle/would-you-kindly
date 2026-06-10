@@ -193,3 +193,21 @@ func TestVersionString_NoDoubleDirty(t *testing.T) {
 		t.Errorf("'dirty' appears more than once in version string: %q", got)
 	}
 }
+
+func TestVersionString_PrefersInjectedVersion(t *testing.T) {
+	// goreleaser stamps injectedVersion via -ldflags -X because its
+	// `go build` from a clean tag checkout otherwise reports "(devel)".
+	// When set, the injected tag must win over the build-info version so
+	// prebuilt-binary / Homebrew installs report their real tag.
+	prev := injectedVersion
+	t.Cleanup(func() { injectedVersion = prev })
+
+	injectedVersion = "v9.9.9"
+	got := versionString()
+	if !strings.Contains(got, "v9.9.9") {
+		t.Errorf("injected version not reflected: got %q, want it to contain %q", got, "v9.9.9")
+	}
+	if strings.Contains(got, "(devel)") {
+		t.Errorf("injected version should override the (devel) marker: got %q", got)
+	}
+}
