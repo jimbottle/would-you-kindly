@@ -115,32 +115,22 @@ func runInbox(args []string) int {
 		query = inboxQueryFor(ident)
 	}
 	all, subErrs := fetchInbox(subs, query)
-	if len(subErrs) > 0 && len(subErrs) == len(subs) {
-		// Total failure = EVERY queried repo errored. Keyed off the
-		// error count (not len(all)==0) so a healthy-but-empty repo
-		// alongside a failing one is still a partial success — exit 0
-		// with the data + errors — matching the activity command.
-		// Distinguish the typed bd sentinels so the documented exit
-		// codes (2 for bd-missing / no-workspace) actually fire,
-		// matching wyk handoff's behavior.
-		first := subErrs[0].err
-		switch {
-		case errors.Is(first, beads.ErrBDNotFound):
-			fmt.Fprintln(os.Stderr, "wyk: bd is not installed (or not on PATH)")
-			return 2
-		case errors.Is(first, beads.ErrNoWorkspace):
-			fmt.Fprintln(os.Stderr, "wyk: no beads workspace here — run `bd init`")
-			return 2
+	// Total failure = EVERY queried repo errored. Keyed off the error
+	// count (not len(all)==0) so a healthy-but-empty repo alongside a
+	// failing one is still a partial success — exit 0 with the data +
+	// errors. classifyTotalFetchFailure maps the typed bd sentinels to
+	// the documented exit codes; for other total failures (code 1) we
+	// still emit the envelope in -json (empty issues + the errors
+	// array) so an agent gets parseable output rather than nothing.
+	if code, total := classifyTotalFetchFailure(len(subs), subErrs); total {
+		if code == 1 {
+			if *asJSON {
+				emitInboxJSON(nil, subErrs, *compact)
+			} else {
+				fmt.Fprintln(os.Stderr, "wyk inbox:", joinRepoErrors(subErrorsToRepoErrors(subErrs)))
+			}
 		}
-		// Other total failures: in -json still emit the envelope (empty
-		// issues + the errors array) so an agent gets parseable output
-		// rather than nothing; exit 1 to signal the failure.
-		if *asJSON {
-			emitInboxJSON(nil, subErrs, *compact)
-		} else {
-			fmt.Fprintln(os.Stderr, "wyk inbox:", joinRepoErrors(subErrorsToRepoErrors(subErrs)))
-		}
-		return 1
+		return code
 	}
 
 	// Phase-2 unclaimed sweep: when scoped to an identity without -strict,
