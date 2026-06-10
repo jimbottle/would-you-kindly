@@ -129,6 +129,14 @@ type keyMap struct {
 	// no direction).
 	SortReverse key.Binding // S — reverse sort direction
 
+	// Mouse toggles mouse capture. Captured (the default): the
+	// wheel moves the cursor and a left-click lands it on the
+	// targeted row — but the terminal's native click-drag text
+	// selection needs a Shift/Option modifier. Released: bare
+	// click-drag selection works, navigation is keyboard-only.
+	// The preference persists in state.json across sessions.
+	Mouse key.Binding // m — toggle mouse capture
+
 	// Command opens the vim-style ":" command palette. Built-in
 	// commands cover the long tail of bindings we don't want a
 	// dedicated key for (refresh, preset switch, filter save,
@@ -221,6 +229,7 @@ func defaultKeyMap() keyMap {
 		Defer:           key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "defer")),
 		Mark:            key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "mark")),
 		SortReverse:     key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse sort")),
+		Mouse:           key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mouse capture")),
 		Command:         key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command")),
 		PriorityUp:      key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "↑prio")),
 		TypeCycle:       key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "cycle type")),
@@ -286,7 +295,7 @@ func DocsKeymap() []HelpGroup {
 			k.Mark, k.Undo, k.Repeat,
 		}},
 		{"Clipboard / command", []key.Binding{k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.YankAllMarkdown, k.Command}},
-		{"Meta", []key.Binding{k.Refresh, k.Help, k.Quit}},
+		{"Meta", []key.Binding{k.Refresh, k.Mouse, k.Help, k.Quit}},
 	}
 }
 
@@ -328,6 +337,6 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
 		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.YankAllMarkdown, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.TypeCycle, k.AssignOwner, k.Label, k.Editor, k.Repeat},
-		{k.Refresh, k.Help, k.Quit, k.Command},
+		{k.Refresh, k.Mouse, k.Help, k.Quit, k.Command},
 	}
 }

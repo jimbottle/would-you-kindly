@@ -68,6 +68,7 @@ internal/tui/keymap.go (`DocsKeymap`).
 | Key | Action |
 |-----|--------|
 | `r` | refresh |
+| `m` | mouse capture |
 | `?` | help |
 | `q` | quit |
 
