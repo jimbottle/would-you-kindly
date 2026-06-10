@@ -24,12 +24,20 @@ type cliSubcommandDoc struct {
 type cliFlag struct {
 	Name        string // include the leading "-" (e.g. "-since")
 	Default     string // empty string ⇒ rendered as "(empty)" in markdown
-	Description string // verbatim from the flag.String/Bool/Int call
+	Description string // same WORDS as the flag.String/Bool/Int call; see quoting note below
 }
 
 // cliSubcommandDocs is the canonical inventory. Order is the
 // "Subcommands:" block in printTopLevelUsage so the generated
 // page reads in the same order as the top-level help.
+//
+// Quoting convention: descriptions here render as MARKDOWN, so
+// backticks around commands (`bd init`) are welcome and encouraged.
+// The live FlagSet usage strings must NOT backtick multiword
+// phrases — Go's flag package takes the first backquoted token as
+// the flag's value placeholder, mangling -h output (enforced by
+// TestSubcommandHelp_NoMultiwordFlagPlaceholders). So an entry here
+// matches its FlagSet twin word-for-word but may differ in quoting.
 var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "handoff",
@@ -43,7 +51,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-priority", Default: "1", Description: "priority for the newly-created issue (only used with -create; 0-4 or P0-P4)"},
 			{Name: "-type", Default: "task", Description: "issue type for the newly-created issue (only used with -create)"},
 			{Name: "-note", Default: "", Description: "after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook"},
-			{Name: "-identity", Default: "", Description: "route this handoff to the named agent identity (adds the src:agent:<name> label) so it lands in that identity's wyk inbox when bounced back; falls back to $WYK_AGENT_IDENTITY"},
+			{Name: "-identity", Default: "", Description: "route this handoff to the named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY"},
 			{Name: "-dry-run", Default: "false", Description: "print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it"},
 			{Name: "-template", Default: "false", Description: "print the required 3-section runbook skeleton to stdout and exit (no bd writes); fill it in, then `wyk handoff <id> < filled.md`"},
 		},

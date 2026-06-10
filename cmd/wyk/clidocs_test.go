@@ -11,40 +11,59 @@ func TestSubcommandHelp_NoMultiwordFlagPlaceholders(t *testing.T) {
 	// bools included. A multiword backquoted phrase ('wyk inbox',
 	// 'dot -Tsvg') therefore renders as a nonsense value name:
 	// "-identity wyk inbox", "-template wyk handoff <id> < filled.md"
-	// (would-you-kindly-k3fb, roborev #2041). Sweep every
-	// FlagSet-backed subcommand's -h output and reject any
-	// flag-definition line with more than two fields, so the bug
+	// (would-you-kindly-k3fb, roborev #2041/#2043). Sweep every
+	// FlagSet-backed subcommand's -h output — including the nested
+	// registry/skills/hook dispatchers — and reject any
+	// flag-definition line with a multiword placeholder, so the bug
 	// class can't quietly return on any flag.
-	cmds := map[string]func([]string) int{
-		"handoff":   runHandoff,
-		"inbox":     runInbox,
-		"init":      runInit,
-		"depgraph":  runDepgraph,
-		"update":    runUpdate,
-		"export":    runExport,
-		"import":    runImport,
-		"activity":  runActivity,
-		"stats":     runStats,
-		"dashboard": runDashboard,
-		"doctor":    runDoctor,
+	//
+	// Deliberately NOT swept (the only flag.NewFlagSet sites absent
+	// here): `create` forwards -h verbatim to a real bd binary, and
+	// the top-level TUI flags live on flag.CommandLine whose -h path
+	// os.Exits via printTopLevelUsage. `completion` has no FlagSet
+	// at all.
+	cmds := []struct {
+		name string
+		run  func([]string) int
+		args []string
+	}{
+		{"handoff", runHandoff, []string{"-h"}},
+		{"inbox", runInbox, []string{"-h"}},
+		{"init", runInit, []string{"-h"}},
+		{"depgraph", runDepgraph, []string{"-h"}},
+		{"update", runUpdate, []string{"-h"}},
+		{"export", runExport, []string{"-h"}},
+		{"import", runImport, []string{"-h"}},
+		{"activity", runActivity, []string{"-h"}},
+		{"stats", runStats, []string{"-h"}},
+		{"dashboard", runDashboard, []string{"-h"}},
+		{"doctor", runDoctor, []string{"-h"}},
+		{"conventions", runConventions, []string{"-h"}},
+		{"version", runVersion, []string{"-h"}},
+		{"help", runHelp, []string{"-h"}},
+		{"hook post-commit", runHook, []string{"post-commit", "-h"}},
+		{"registry list", runRegistry, []string{"list", "-h"}},
+		{"registry prune", runRegistry, []string{"prune", "-h"}},
+		{"skills list", runSkills, []string{"list", "-h"}},
+		{"skills install", runSkills, []string{"install", "-h"}},
+		{"skills uninstall", runSkills, []string{"uninstall", "-h"}},
 	}
-	for name, run := range cmds {
-		t.Run(name, func(t *testing.T) {
-			_, stderr := captureOutErr(t, func() { run([]string{"-h"}) })
-			for _, line := range strings.Split(stderr, "\n") {
+	for _, c := range cmds {
+		t.Run(c.name, func(t *testing.T) {
+			stdout, stderr := captureOutErr(t, func() { c.run(c.args) })
+			for _, line := range strings.Split(stdout+"\n"+stderr, "\n") {
 				// PrintDefaults flag lines: two spaces, the flag,
-				// then at most a one-word value placeholder.
-				// Description continuations are tab-indented and
-				// don't match the prefix.
+				// then at most a one-word value placeholder. For
+				// one-character flags the usage text follows on the
+				// SAME line after a tab, so only the pre-tab part is
+				// the flag+placeholder. Description continuations
+				// are tab-indented and don't match the prefix.
 				if !strings.HasPrefix(line, "  -") {
 					continue
 				}
-				// One-character flags carry their usage on the SAME
-				// line after a tab; only the pre-tab part is the
-				// flag + placeholder.
 				head, _, _ := strings.Cut(line, "\t")
 				if fields := strings.Fields(head); len(fields) > 2 {
-					t.Errorf("%s -h renders a multiword value placeholder (backquoted phrase in the usage string?): %q", name, line)
+					t.Errorf("%s -h renders a multiword value placeholder (backquoted phrase in the usage string?): %q", c.name, line)
 				}
 			}
 		})
