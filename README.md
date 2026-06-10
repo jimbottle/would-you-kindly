@@ -62,7 +62,7 @@ tested against **bd 1.0.4 or newer**; `wyk doctor` warns if your bd is older.
 Then install wyk one of these ways:
 
 ```bash
-# Homebrew (macOS/Linux) — also installs prebuilt, no Go toolchain needed:
+# Homebrew (macOS) — installs a prebuilt cask, no Go toolchain needed:
 brew install jimbottle/wyk/wyk
 
 # With Go, latest tagged release:
@@ -72,9 +72,10 @@ go install github.com/jimbottle/would-you-kindly/cmd/wyk@latest
 go install github.com/jimbottle/would-you-kindly/cmd/wyk@main
 ```
 
-You can also grab a prebuilt linux/darwin (amd64/arm64) binary straight
-from the [Releases page](https://github.com/jimbottle/would-you-kindly/releases),
-or build from a checkout:
+On Linux, use `go install` above, or grab a prebuilt linux/darwin
+(amd64/arm64) binary straight from the
+[Releases page](https://github.com/jimbottle/would-you-kindly/releases)
+(the Homebrew cask is macOS-only). You can also build from a checkout:
 
 ```bash
 go build -o ./bin/wyk ./cmd/wyk
