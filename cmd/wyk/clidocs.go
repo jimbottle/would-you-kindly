@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -344,7 +343,11 @@ func findCLIDoc(name string) *cliSubcommandDoc {
 // falls back to a plain usage line.
 func subcommandUsage(fs *flag.FlagSet, name string) func() {
 	return func() {
-		w := os.Stderr
+		// The FlagSet's configured output, NOT a hardcoded stderr —
+		// PrintDefaults below writes there, and splitting the help
+		// block across two streams would be silent breakage for any
+		// future SetOutput (roborev #2060).
+		w := fs.Output()
 		doc := findCLIDoc(name)
 		if doc == nil {
 			fmt.Fprintf(w, "usage: wyk %s [flags]\n\nFlags:\n", name)

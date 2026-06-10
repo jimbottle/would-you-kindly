@@ -644,16 +644,19 @@ func (m Model) WithPriorityEmphasis(on bool) Model {
 // "all" snapshot can seed a different view (it's the superset), and
 // only for the presets that are plain field predicates:
 //
-//	human   -> carries the human label
+//	human   -> carries the human label, non-closed
 //	blocked -> status == blocked
-//	mine    -> assignee == me (or just non-closed when me is empty,
-//	           matching filter.QueryWithClosed's degradation)
+//	mine    -> assignee == me, non-closed (or just non-closed when
+//	           me is empty, matching filter.QueryWithClosed's
+//	           degradation)
 //
 // "ready" is excluded — bd computes dependency-readiness and a field
 // predicate would silently show blocked-by-open-deps rows. ok=false
-// means "can't approximate; cold-start instead". The "all" snapshot
-// is saved under the default closed-excluded scope, so the
-// status!=closed clause is already satisfied by construction.
+// means "can't approximate; cold-start instead". The predicates
+// filter closed rows EXPLICITLY: saveCacheCmd persists every
+// successful fetch, including ones taken while showClosed was on,
+// and sessions relaunch closed-excluded — so the snapshot cannot be
+// assumed closed-free (roborev #2061/#2062).
 func issuesMatchingPreset(snapshot []beads.Issue, have, want filter.Preset, me string) ([]beads.Issue, bool) {
 	if have != filter.PresetAll {
 		return nil, false
@@ -661,16 +664,17 @@ func issuesMatchingPreset(snapshot []beads.Issue, have, want filter.Preset, me s
 	var keep func(beads.Issue) bool
 	switch want {
 	case filter.PresetHuman:
-		keep = beads.Issue.IsHuman
+		keep = func(i beads.Issue) bool { return i.IsHuman() && i.Status != "closed" }
 	case filter.PresetBlocked:
 		keep = func(i beads.Issue) bool { return i.Status == "blocked" }
 	case filter.PresetMine:
 		if me == "" {
 			// QueryWithClosed degrades `mine` with no identity to
-			// the non-closed set — the snapshot already is that.
-			return snapshot, true
+			// the non-closed set.
+			keep = func(i beads.Issue) bool { return i.Status != "closed" }
+			break
 		}
-		keep = func(i beads.Issue) bool { return i.Assignee == me }
+		keep = func(i beads.Issue) bool { return i.Assignee == me && i.Status != "closed" }
 	default:
 		return nil, false
 	}
@@ -1101,11 +1105,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.all = msg.issues
 			// Remember this preset's result so a later switch back to
-			// it paints instantly from cache (see switchPreset).
+			// it paints instantly from cache (see switchPreset). CLONED:
+			// the optimistic write paths mutate m.all in place (the
+			// close path shifts elements out of the backing array), so
+			// a cache entry aliasing msg.issues would corrupt — a
+			// duplicated last row on the next instant paint
+			// (roborev #2062).
 			if m.presetCache == nil {
 				m.presetCache = make(map[filter.Preset][]beads.Issue)
 			}
-			m.presetCache[msg.preset] = msg.issues
+			m.presetCache[msg.preset] = cloneIssues(msg.issues)
 			m.commonPrefix = commonIDPrefix(m.all)
 			// Freshen cached detail-view dependency rows from the new
 			// list so a status that drifted (an external write, or a
@@ -1541,7 +1550,6 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m.switchPreset(target)
 		}
-		m.humanReturnPreset = m.preset
 		return m.switchPreset(filter.PresetHuman)
 	case keyHit(msg, m.keys.Cycle):
 		return m.switchPreset(filter.NextPreset(m.preset))
@@ -2335,6 +2343,15 @@ func (m *Model) setStatus(s string) {
 // the new view as soon as data arrives. Any pending fuzzy filter
 // stays — it re-applies once the new data arrives.
 func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
+	// Record the h-toggle's return target on ANY transition into the
+	// human view — h, tab, the :preset palette — not just the h key,
+	// so toggling out always returns to where the user actually came
+	// from rather than a target recorded on an older h trip
+	// (roborev #2061/#2062). Still only on the way IN, so a stray
+	// double-h can't strand the target on "human".
+	if p == filter.PresetHuman && m.preset != filter.PresetHuman {
+		m.humanReturnPreset = m.preset
+	}
 	m.preset = p
 	m.cursor = 0
 	m.scroll = 0
@@ -2346,7 +2363,10 @@ func (m Model) switchPreset(p filter.Preset) (tea.Model, tea.Cmd) {
 	// and the cache). A cache miss leaves the previous rows up — the
 	// pre-cache behavior — until the fetch returns.
 	if cached, ok := m.presetCache[p]; ok {
-		m.all = cached
+		// Clone for the same aliasing reason the store side clones:
+		// once painted, m.all is fair game for in-place optimistic
+		// mutations that must not reach back into the cache.
+		m.all = cloneIssues(cached)
 		m.commonPrefix = commonIDPrefix(m.all)
 		m.recomputeVisible()
 		m.ensureCursorVisible()

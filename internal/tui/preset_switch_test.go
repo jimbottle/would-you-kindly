@@ -130,3 +130,72 @@ func TestWithCacheSnapshot_SeedsAcrossPresets(t *testing.T) {
 		t.Errorf("a subset snapshot must not seed the all view; got %v", idsOf(m.all))
 	}
 }
+
+func TestPresetCache_ImmuneToOptimisticMutation(t *testing.T) {
+	// The cache must hold its own copies: optimisticListUpdate's close
+	// path shifts m.all's backing array in place, and a cache entry
+	// aliasing it would replay a corrupted slice (duplicated last row)
+	// on the next instant paint (roborev #2062). fetch → optimistic
+	// close → switch away and back → exactly the un-closed rows, no
+	// duplicates.
+	src := &stubSource{issues: manyIssues(4)}
+	m := applyFetched(New(src), src) // caches the 4 all-rows
+
+	victim := m.all[1]
+	m.optimisticListUpdate("close", victim)
+	if len(m.all) != 3 {
+		t.Fatalf("setup: optimistic close should drop the row from m.all; len=%d", len(m.all))
+	}
+
+	// Away and back: the instant paint must be the pristine 4-row
+	// fetch result, not the shifted array.
+	model, _ := m.switchPreset(filter.PresetHuman)
+	m = model.(Model)
+	model, _ = m.switchPreset(filter.PresetAll)
+	m = model.(Model)
+	seen := map[string]int{}
+	for _, i := range m.all {
+		seen[i.ID]++
+		if seen[i.ID] > 1 {
+			t.Fatalf("duplicated row %q after cache paint — cache aliased the mutated array; rows: %v", i.ID, idsOf(m.all))
+		}
+	}
+	if len(m.all) != 4 {
+		t.Errorf("cache paint should restore the pristine 4-row fetch; got %v", idsOf(m.all))
+	}
+}
+
+func TestWithCacheSnapshot_MinePresetAndClosedRows(t *testing.T) {
+	// The mine predicate's two branches, both closed-filtered: the
+	// snapshot may have been saved while showClosed was on, and
+	// sessions relaunch closed-excluded (roborev #2061/#2062).
+	snap := Cache{
+		Preset:  string(filter.PresetAll),
+		SavedAt: time.Now(),
+		Issues: []beads.Issue{
+			{ID: "m-1", Assignee: "ev", Status: "open"},
+			{ID: "m-2", Assignee: "ev", Status: "closed"}, // closed: must not seed
+			{ID: "o-1", Assignee: "someone-else", Status: "open"},
+			{ID: "h-c", Status: "closed", Labels: []string{"human"}}, // closed human
+		},
+	}
+	src := &stubSource{}
+
+	// Identity set: only the open row assigned to me.
+	m := New(src).WithMe("ev").WithPreset(filter.PresetMine).WithCacheSnapshot(snap, "")
+	if len(m.all) != 1 || m.all[0].ID != "m-1" {
+		t.Errorf("mine with identity should seed open assignee=ev rows only; got %v", idsOf(m.all))
+	}
+
+	// No identity: degrades to the non-closed set (the two open rows).
+	m = New(src).WithPreset(filter.PresetMine).WithCacheSnapshot(snap, "")
+	if len(m.all) != 2 {
+		t.Errorf("mine without identity should seed the non-closed rows; got %v", idsOf(m.all))
+	}
+
+	// And the human predicate excludes the closed human row.
+	m = New(src).WithPreset(filter.PresetHuman).WithCacheSnapshot(snap, "")
+	if len(m.all) != 0 {
+		t.Errorf("a closed human row must not seed the human view; got %v", idsOf(m.all))
+	}
+}
