@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Go toolchain bumped to 1.26.4** — closes two standard-library
+  vulnerabilities (`GO-2026-5039` in `net/textproto`, `GO-2026-5037` in
+  `crypto/x509`) that CI's `govulncheck` step was failing on. The
+  `go.mod` `go` directive drives the version CI installs via
+  `go-version-file`, so the bump re-greens the build.
+
 ### Added
 
 - **`bd-create-guard` PreToolUse hook** — `wyk init` now registers a
