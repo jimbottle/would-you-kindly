@@ -2522,6 +2522,12 @@ func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m.quitNow()
 	}
+	if keyHit(msg, m.keys.Mouse) {
+		// The help overlay is where the binding is advertised — and
+		// copying a keybinding line out of it is a plausible
+		// click-drag case — so the toggle works here too.
+		return m.toggleMouse()
+	}
 	switch msg.String() {
 	case "esc", "?", "q":
 		m.mode = m.helpReturnMode
@@ -3859,8 +3865,7 @@ func (m Model) viewList() string {
 	m.cw = m.computeColWidths(m.visible)
 	m.autoHidden = m.computeAutoHidden()
 
-	header := titleStyle.Render("would-you-kindly")
-	b.WriteString(header)
+	b.WriteString(renderListTitle())
 	b.WriteString("\n")
 	if m.setupHint != "" {
 		b.WriteString(setupHintStyle.Render(m.setupHint))
@@ -5360,37 +5365,36 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// renderListTitle renders the list view's title line. Shared by
+// viewList and rowsStartY so the hit-test chrome math can't drift
+// from the render if the title ever gains dynamic content — same
+// drift protection the chip strip gets from sharing renderFilterChips.
+func renderListTitle() string {
+	return titleStyle.Render("would-you-kindly")
+}
+
 // chromeRows returns how many terminal rows a rendered chrome string
-// occupies at the current width: its hard newlines plus the soft wrap
-// the terminal applies to any line wider than the pane. Table rows and
-// the header never need this — they're truncated to fit by the column
-// sizing — but the title/setupHint/chip chrome renders unclamped, so
-// on a narrow pane it wraps and shifts everything below it down.
+// occupies: one per hard newline-separated line, regardless of how
+// wide the line is. That matches bubbletea's standard renderer, which
+// TRUNCATES any line wider than the window rather than letting the
+// terminal soft-wrap it (standard_renderer.go: `ansi.Truncate(line,
+// r.width, "")` whenever the width is known) — so an over-wide
+// setupHint or chip strip still occupies exactly one screen row.
+// Counting soft wrap here would overcount and skew clicks downward
+// (roborev #2035).
 func (m Model) chromeRows(rendered string) int {
-	rows := 0
-	for _, line := range strings.Split(rendered, "\n") {
-		r := 1
-		if m.width > 0 {
-			if w := lipgloss.Width(line); w > m.width {
-				r = (w + m.width - 1) / m.width
-			}
-		}
-		rows += r
-	}
-	return rows
+	return 1 + strings.Count(rendered, "\n")
 }
 
 // rowsStartY returns the Y-coordinate (zero-indexed from the top
 // of the rendered output) at which the first table row lands.
 // Mirrors the viewList chrome ordering — bumping any conditional
-// chrome there means bumping it here too (the chip-strip check
-// calls the SAME renderFilterChips so the two can't disagree on
-// when the strip renders, and each line is measured through
-// chromeRows so soft wrap on a narrow pane is counted, not just
-// explicit newlines). We use this to map a click's msg.Y back to
-// a row index.
+// chrome there means bumping it here too (the title and chip-strip
+// lines come from the SAME render helpers viewList uses, so the two
+// can't disagree on content or on when the strip renders). We use
+// this to map a click's msg.Y back to a row index.
 func (m Model) rowsStartY() int {
-	y := m.chromeRows(titleStyle.Render("would-you-kindly"))
+	y := m.chromeRows(renderListTitle())
 	if m.setupHint != "" {
 		y += m.chromeRows(setupHintStyle.Render(m.setupHint))
 	}
@@ -5398,7 +5402,7 @@ func (m Model) rowsStartY() int {
 		y += m.chromeRows(chips)
 	}
 	y++ // blank line between header chrome and table header
-	y++ // table header (width-clamped by column sizing; never wraps)
+	y++ // table header
 	return y
 }
 
