@@ -456,7 +456,7 @@ func runHandoff(args []string) int {
 	dryRun := fs.Bool("dry-run", false,
 		"print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it")
 	template := fs.Bool("template", false,
-		"print the required 3-section runbook skeleton to stdout and exit (no bd writes); pipe it into your editor, fill it in, then `wyk handoff <id> < filled.md`")
+		"print the required 3-section runbook skeleton to stdout and exit (no bd writes); pipe it into your editor, fill it in, then run: wyk handoff <id> < filled.md")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

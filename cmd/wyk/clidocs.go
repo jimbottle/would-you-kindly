@@ -43,7 +43,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-priority", Default: "1", Description: "priority for the newly-created issue (only used with -create; 0-4 or P0-P4)"},
 			{Name: "-type", Default: "task", Description: "issue type for the newly-created issue (only used with -create)"},
 			{Name: "-note", Default: "", Description: "after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook"},
-			{Name: "-identity", Default: "", Description: "route this handoff to a named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY"},
+			{Name: "-identity", Default: "", Description: "route this handoff to the named agent identity (adds the src:agent:<name> label) so it lands in that identity's wyk inbox when bounced back; falls back to $WYK_AGENT_IDENTITY"},
 			{Name: "-dry-run", Default: "false", Description: "print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it"},
 			{Name: "-template", Default: "false", Description: "print the required 3-section runbook skeleton to stdout and exit (no bd writes); fill it in, then `wyk handoff <id> < filled.md`"},
 		},
