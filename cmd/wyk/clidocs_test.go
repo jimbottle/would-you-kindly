@@ -86,6 +86,9 @@ func TestSweepCoversEveryFlagSet(t *testing.T) {
 	// #2044). Identity matching (not a bare count) so an add+remove
 	// in one change can't cancel out, and the string-literal anchor
 	// keeps a mention in a comment from miscounting (roborev #2045).
+	// Literal names only: a FlagSet named via a variable or
+	// expression escapes this guard (roborev #2046) — the package
+	// convention is uniformly literal names, so keep it that way.
 	// Tests run with the package dir as CWD.
 	files, err := filepath.Glob("*.go")
 	if err != nil {
