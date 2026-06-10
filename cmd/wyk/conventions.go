@@ -13,7 +13,7 @@ import (
 // form (conventionsStructured) interpolate the SAME string —
 // previously the two forms duplicated the literal query text and
 // could silently drift.
-const agentInboxQuery = "label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed"
+const agentInboxQuery = "label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked"
 const humanTasksQuery = "label=human AND status!=closed"
 
 // conventionsBody is the agent-ready tip printed by `wyk conventions`.

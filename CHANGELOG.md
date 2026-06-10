@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The agent inbox no longer surfaces blocked tasks** — `wyk inbox`'s
+  query excluded closed but not `status=blocked`, so a task whose
+  tracked blocker was still outstanding presented as "work this now"
+  and sent the agent chasing an unblocker that hadn't arrived (found
+  live: a blocked task sat in the inbox for a full session). The
+  query — and `wyk stats`' inbox count, the conventions output, the
+  seeded agent memory, and the contract doc, which had also drifted —
+  now exclude `blocked`, mirroring how `bd ready` treats it.
+
 - **Warm-start now seeds across presets** — the on-disk last-fetch
   snapshot was silently skipped whenever the saved preset differed
   from the restored one (quit on `all`, reopen on `human`), leaving a
