@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -77,17 +78,21 @@ func TestSubcommandHelp_NoMultiwordFlagPlaceholders(t *testing.T) {
 }
 
 func TestSweepCoversEveryFlagSet(t *testing.T) {
-	// Self-enforcement for the sweep above: count flag.NewFlagSet call
-	// sites in the package source and require the table to match, so a
-	// 21st FlagSet fails here until it's added to sweptFlagSets (or
-	// deliberately documented) instead of rotting unswept — the same
-	// drift mode that previously left the sweep at 11/20
-	// (roborev #2044). Tests run with the package dir as CWD.
+	// Self-enforcement for the sweep above: extract the NAME of every
+	// flag.NewFlagSet("...") call site in the package source and
+	// require the set to equal the sweep table's names, so a new
+	// FlagSet fails here until it's added to sweptFlagSets — the
+	// drift mode that previously left the sweep at 11/20 (roborev
+	// #2044). Identity matching (not a bare count) so an add+remove
+	// in one change can't cancel out, and the string-literal anchor
+	// keeps a mention in a comment from miscounting (roborev #2045).
+	// Tests run with the package dir as CWD.
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sites := 0
+	siteRE := regexp.MustCompile(`flag\.NewFlagSet\("([^"]+)"`)
+	inSource := map[string]bool{}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -96,10 +101,22 @@ func TestSweepCoversEveryFlagSet(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sites += strings.Count(string(b), "flag.NewFlagSet(")
+		for _, m := range siteRE.FindAllStringSubmatch(string(b), -1) {
+			inSource[m[1]] = true
+		}
 	}
-	if sites != len(sweptFlagSets) {
-		t.Errorf("package has %d flag.NewFlagSet call sites but sweptFlagSets lists %d — add the new FlagSet's -h invocation to the sweep (or document a deliberate exclusion here)",
-			sites, len(sweptFlagSets))
+	inTable := map[string]bool{}
+	for _, c := range sweptFlagSets {
+		inTable[c.name] = true
+	}
+	for name := range inSource {
+		if !inTable[name] {
+			t.Errorf("FlagSet %q exists in the source but is not swept — add its -h invocation to sweptFlagSets (or document a deliberate exclusion)", name)
+		}
+	}
+	for name := range inTable {
+		if !inSource[name] {
+			t.Errorf("sweptFlagSets lists %q but no flag.NewFlagSet(%q) exists — remove the stale entry", name, name)
+		}
 	}
 }
