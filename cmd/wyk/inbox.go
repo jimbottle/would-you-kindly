@@ -22,7 +22,7 @@ import (
 // owns them and a human orchestrates, so the "work it" imperative must
 // not fire here. Kept in lockstep with cmd/wyk.agentInboxQuery. See
 // docs/CONTRACT.md.
-const inboxQuery = `label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed`
+const inboxQuery = `label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked`
 
 // inboxQueryFor builds the agent-inbox query for an optional identity.
 // With no identity it returns the collective umbrella query above
@@ -38,7 +38,7 @@ func inboxQueryFor(identity string) string {
 		return inboxQuery
 	}
 	return `label=` + identityLabel(identity) +
-		` AND NOT label=human AND NOT label=agent-handoff AND status!=closed`
+		` AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked`
 }
 
 // runInbox implements `wyk inbox`: the agent-side view of the

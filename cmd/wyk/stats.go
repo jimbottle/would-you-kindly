@@ -242,8 +242,11 @@ func computeStats(all []beads.Issue, now time.Time) Stats {
 				s.HumanFromHuman++
 			}
 		}
-		// Inbox: src:agent that has lost its human label and isn't closed.
-		if i.HasLabel("src:agent") && !human && !closed {
+		// Inbox: src:agent that has lost its human label and isn't
+		// closed or blocked — mirrors inboxQuery, which excludes
+		// blocked so a tracked-blocker task doesn't read as
+		// actionable (would-you-kindly-5ib7).
+		if i.HasLabel("src:agent") && !human && !closed && i.Status != "blocked" {
 			s.InboxCount++
 		}
 		if closed && !i.ClosedAt.IsZero() {
@@ -310,7 +313,7 @@ func renderStatsText(s Stats, subCount int) {
 	fmt.Printf("  src:human      %d  (self-filed)\n", s.HumanFromHuman)
 	fmt.Println()
 
-	fmt.Printf("Agent inbox:     %d  (src:agent without human, not closed)\n", s.InboxCount)
+	fmt.Printf("Agent inbox:     %d  (src:agent without human, not closed/blocked)\n", s.InboxCount)
 	fmt.Println()
 
 	fmt.Println("Recent activity:")

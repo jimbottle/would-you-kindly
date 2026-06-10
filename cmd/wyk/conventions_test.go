@@ -43,7 +43,7 @@ func TestConventions_StructuredHasFixedSchema(t *testing.T) {
 			t.Errorf("structured form missing key %s in:\n%s", want, s)
 		}
 	}
-	if c.Queries.AgentInbox != "label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed" {
+	if c.Queries.AgentInbox != "label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked" {
 		t.Errorf("agent inbox query drifted: %q", c.Queries.AgentInbox)
 	}
 }

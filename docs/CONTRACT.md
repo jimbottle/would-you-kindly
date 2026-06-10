@@ -49,13 +49,18 @@ wyk inbox -json    # structured output for LLM ingestion
 `wyk inbox` runs the canonical query
 
 ```
-label=src:agent AND NOT label=human AND status!=closed
+label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked
 ```
 
 across every registered workspace. The intent: an issue an agent
-filed (`src:agent`) that no longer carries `human` and isn't closed
-is sitting in the agent's lap — the human acted on it but left
-follow-up work. The agent picks it up, either closes it (work is
+filed (`src:agent`) that no longer carries `human`, isn't closed,
+and isn't blocked on another tracked issue is sitting in the
+agent's lap — the human acted on it but left follow-up work.
+`status=blocked` is excluded for the same reason `bd ready`
+excludes it: a task whose blocker is still outstanding isn't
+actionable, and surfacing it as "work this now" sends the agent
+chasing an unblocker that hasn't arrived (it reappears the moment
+its status returns to open). The agent picks it up, either closes it (work is
 done) or re-applies `human` after another step (back to the human
 for another round). The label flips trace the conversation.
 
@@ -92,7 +97,7 @@ colon — labels are colon-namespaced — no space, no uppercase).
 
   ```
   # -strict — bd-expressible, routed work only:
-  label=src:agent:<name> AND NOT label=human AND NOT label=agent-handoff AND status!=closed
+  label=src:agent:<name> AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked
 
   # default — the routed set above UNION the un-routed collective set.
   # bd 1.0.4 can't express `NOT label=src:agent:*`, so wyk fetches the
@@ -167,8 +172,9 @@ consuming the CLI's exit codes should check stderr too.
 ## Acting on the inbox
 
 The inbox query (`label=src:agent AND NOT label=human AND NOT
-label=agent-handoff AND status!=closed`) returns issues an agent filed
-that the human is no longer blocking. The convention is to **work them**, not just note
+label=agent-handoff AND status!=closed AND status!=blocked`) returns
+issues an agent filed that nothing is blocking — neither the human
+nor another tracked issue. The convention is to **work them**, not just note
 them. If `wyk inbox` returns items, the agent's default next move
 is to pick up the highest-priority one and resume — that's the loop
 the round-trip is designed to enable. Letting inbox items
