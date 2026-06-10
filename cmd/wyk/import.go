@@ -223,8 +223,8 @@ func runImportPlan(reg *registry.Registry, dump exportDump, dryRun bool, mk func
 				changed, perr := applyImportUpdate(c, existing, in, dryRun)
 				// Count the issue in Updated whenever at least one
 				// write fired, even on partial failure, so the
-				// summary's create+update+unchanged+skipped still
-				// adds up to the input total. The error string
+				// summary's created+updated+unchanged+skipped+failed
+				// still adds up to the input total. The error string
 				// names the ID separately so an operator can
 				// reconcile per-row.
 				switch {
