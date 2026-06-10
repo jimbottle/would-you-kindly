@@ -2260,6 +2260,11 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// `d` defers the issue. This shadows the viewport's
 		// half-page-down; j/k, pgdn, space and g/G still scroll.
 		return m.beginDeferDetail()
+	case keyHit(msg, m.keys.Mouse):
+		// The toggle matters MOST here: releasing capture to
+		// click-drag-copy a long runbook shouldn't require backing
+		// out to the list first.
+		return m.toggleMouse()
 	case keyHit(msg, m.keys.AddNote):
 		// `n` appends a note. This reclaims the old `n`/`p` link-cycle
 		// aliases — Tab/Shift-Tab remain the link-selection axis.
@@ -5355,25 +5360,45 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// chromeRows returns how many terminal rows a rendered chrome string
+// occupies at the current width: its hard newlines plus the soft wrap
+// the terminal applies to any line wider than the pane. Table rows and
+// the header never need this — they're truncated to fit by the column
+// sizing — but the title/setupHint/chip chrome renders unclamped, so
+// on a narrow pane it wraps and shifts everything below it down.
+func (m Model) chromeRows(rendered string) int {
+	rows := 0
+	for _, line := range strings.Split(rendered, "\n") {
+		r := 1
+		if m.width > 0 {
+			if w := lipgloss.Width(line); w > m.width {
+				r = (w + m.width - 1) / m.width
+			}
+		}
+		rows += r
+	}
+	return rows
+}
+
 // rowsStartY returns the Y-coordinate (zero-indexed from the top
 // of the rendered output) at which the first table row lands.
 // Mirrors the viewList chrome ordering — bumping any conditional
 // chrome there means bumping it here too (the chip-strip check
 // calls the SAME renderFilterChips so the two can't disagree on
-// when the strip renders). We use this to map a click's msg.Y back
-// to a row index.
+// when the strip renders, and each line is measured through
+// chromeRows so soft wrap on a narrow pane is counted, not just
+// explicit newlines). We use this to map a click's msg.Y back to
+// a row index.
 func (m Model) rowsStartY() int {
-	y := 1 // title line
+	y := m.chromeRows(titleStyle.Render("would-you-kindly"))
 	if m.setupHint != "" {
-		// setupHint can wrap; count newlines + 1 to match the
-		// vertical real estate it actually consumes.
-		y += 1 + strings.Count(m.setupHint, "\n")
+		y += m.chromeRows(setupHintStyle.Render(m.setupHint))
 	}
-	if renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed) != "" {
-		y++ // chip strip
+	if chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed); chips != "" {
+		y += m.chromeRows(chips)
 	}
 	y++ // blank line between header chrome and table header
-	y++ // table header
+	y++ // table header (width-clamped by column sizing; never wraps)
 	return y
 }
 

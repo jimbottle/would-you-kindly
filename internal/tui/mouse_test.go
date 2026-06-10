@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -236,5 +237,100 @@ func TestMousePreference_PersistsAcrossSessions(t *testing.T) {
 	m2 := New(src).WithSession(st, path)
 	if !m2.mouseOff {
 		t.Error("restored session should keep mouse capture OFF")
+	}
+}
+
+func TestInit_HonorsMousePreference(t *testing.T) {
+	// The Init half of the toggle: capture is requested at launch only
+	// when the (possibly session-restored) preference allows it. A
+	// regression that unconditionally appends tea.EnableMouseCellMotion
+	// would re-capture the mouse for users who turned it off. The
+	// returned batch's sub-cmds are compared by function identity
+	// rather than executed — executing them would run fetches and
+	// sleep through tickCmd.
+	requestsCapture := func(m Model) bool {
+		t.Helper()
+		msg := m.Init()()
+		batch, ok := msg.(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("Init should return a batch; got %T", msg)
+		}
+		want := reflect.ValueOf(tea.EnableMouseCellMotion).Pointer()
+		for _, c := range batch {
+			if c != nil && reflect.ValueOf(c).Pointer() == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	src := &stubSource{issues: manyIssues(2)}
+	if !requestsCapture(New(src)) {
+		t.Error("default Init must request mouse capture")
+	}
+	restored := New(src).WithSession(SessionState{MouseOff: true}, "")
+	if requestsCapture(restored) {
+		t.Error("Init must not request capture when the restored session has mouse_off")
+	}
+}
+
+func TestRowsStartY_CountsSoftWrappedChrome(t *testing.T) {
+	// The setup hint (and chips) render unclamped, so on a pane
+	// narrower than the hint the terminal soft-wraps it across
+	// several rows and every row below shifts down. rowsStartY must
+	// count those wrapped rows or clicks land above their target.
+	src := &stubSource{issues: manyIssues(5)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 30})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	base := m.rowsStartY()
+
+	// A 100-visual-column single-line hint on a 40-column pane
+	// occupies ceil(100/40) = 3 rows.
+	m.setupHint = strings.Repeat("x", 100)
+	hinted := m.rowsStartY()
+	if got, want := hinted-base, m.chromeRows(setupHintStyle.Render(m.setupHint)); got != want {
+		t.Errorf("soft-wrapped hint should add %d rows to rowsStartY; added %d", want, got)
+	}
+	if hinted-base < 3 {
+		t.Errorf("100-col hint on a 40-col pane must add at least 3 rows; added %d", hinted-base)
+	}
+}
+
+func TestToggleMouse_ReachableFromDetailAndOutput(t *testing.T) {
+	// The toggle matters most while reading a long runbook or `:bd`
+	// output — exactly when the user wants to click-drag-copy text —
+	// so `m` must work there, not only in the list (roborev #2034).
+	src := &stubSource{issues: manyIssues(3)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+
+	// Detail view.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Fatalf("setup: expected modeDetail; got %v", m.mode)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = model.(Model)
+	if !m.mouseOff {
+		t.Error("m in detail view should toggle mouse capture off")
+	}
+	if m.mode != modeDetail {
+		t.Errorf("toggle must not leave the detail view; mode is %v", m.mode)
+	}
+
+	// Output overlay.
+	m.mode = modeOutput
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = model.(Model)
+	if m.mouseOff {
+		t.Error("m in the output overlay should toggle capture back on")
+	}
+	if m.mode != modeOutput {
+		t.Errorf("toggle must not close the output overlay; mode is %v", m.mode)
 	}
 }
