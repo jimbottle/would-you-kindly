@@ -111,8 +111,11 @@ func runUpdate(args []string) int {
 	} else {
 		rel = rels[0]
 	}
-	current := versionString()
-	currentTag := extractCurrentTag(current)
+	// Via the currentTagForCheck seam (not extractCurrentTag over
+	// versionString directly) for the same reason runVersionCheck uses
+	// it: go-test builds report "(devel)", which can never be
+	// up-to-date, so tests stub the seam to reach those branches.
+	currentTag := currentTagForCheck()
 	// Shared with `wyk version --check` (channelDesc) so the two
 	// commands describe the channel identically.
 	relDesc := channelDesc(*channel)
@@ -123,10 +126,14 @@ func runUpdate(args []string) int {
 		// built from an untagged commit after the last tag. Say so
 		// plainly instead of "already on X (latest is Y)", which reads
 		// as if the release were behind you.
-		fmt.Printf("wyk update: on a development build ahead of the %s (%s); nothing to install (run `wyk version` for the build id)\n", relDesc, rel.TagName)
+		// Colon-bind the tag rather than a second bare parenthetical:
+		// channelDesc's any-channel phrase already ends in one, and
+		// "(including prereleases) (v1.2.3)" reads as a typo
+		// (roborev #2051).
+		fmt.Printf("wyk update: on a development build ahead of the %s: %s; nothing to install (run `wyk version` for the build id)\n", relDesc, rel.TagName)
 		return 0
 	case updateUpToDate:
-		fmt.Printf("wyk update: already on the %s (%s)\n", relDesc, rel.TagName)
+		fmt.Printf("wyk update: already on the %s: %s\n", relDesc, rel.TagName)
 		return 0
 	}
 	// updateAvailable falls through to the install flow below.

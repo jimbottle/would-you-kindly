@@ -384,3 +384,26 @@ func TestClassifyUpdate(t *testing.T) {
 		})
 	}
 }
+
+func TestRunUpdate_UpToDateWordingSharedWithVersionCheck(t *testing.T) {
+	// The up-to-date message uses the shared channelDesc phrase and
+	// colon-binds the tag instead of stacking a second bare
+	// parenthetical after "(including prereleases)" (roborev #2051).
+	// Pins the update side of the shared wording — version --check's
+	// side is pinned in version_test.go.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	restore := stubLiveFetcher(t, []updater.Release{{TagName: "v0.9.0", Prerelease: false}})
+	defer restore()
+	prevTag := currentTagForCheck
+	currentTagForCheck = func() string { return "v0.9.0" }
+	defer func() { currentTagForCheck = prevTag }()
+
+	out := captureStdout(t, func() {
+		if code := runUpdate([]string{"-channel", "any"}); code != 0 {
+			t.Errorf("up-to-date exit %d, want 0", code)
+		}
+	})
+	if !strings.Contains(out, "already on the latest release (including prereleases): v0.9.0") {
+		t.Errorf("up-to-date message should be channelDesc + colon-bound tag; got:\n%s", out)
+	}
+}
