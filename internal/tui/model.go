@@ -5382,7 +5382,7 @@ func renderListTitle() string {
 // setupHint or chip strip still occupies exactly one screen row.
 // Counting soft wrap here would overcount and skew clicks downward
 // (roborev #2035).
-func (m Model) chromeRows(rendered string) int {
+func chromeRows(rendered string) int {
 	return 1 + strings.Count(rendered, "\n")
 }
 
@@ -5394,12 +5394,12 @@ func (m Model) chromeRows(rendered string) int {
 // can't disagree on content or on when the strip renders). We use
 // this to map a click's msg.Y back to a row index.
 func (m Model) rowsStartY() int {
-	y := m.chromeRows(renderListTitle())
+	y := chromeRows(renderListTitle())
 	if m.setupHint != "" {
-		y += m.chromeRows(setupHintStyle.Render(m.setupHint))
+		y += chromeRows(setupHintStyle.Render(m.setupHint))
 	}
 	if chips := renderFilterChips(m.preset, m.priorityCap, m.sortBy, m.showClosed); chips != "" {
-		y += m.chromeRows(chips)
+		y += chromeRows(chips)
 	}
 	y++ // blank line between header chrome and table header
 	y++ // table header
