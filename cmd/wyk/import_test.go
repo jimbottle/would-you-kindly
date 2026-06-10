@@ -396,7 +396,8 @@ func TestEmitImportSummary_AlwaysPrintsTotals(t *testing.T) {
 
 // fakeImportClientPriErr fails the FIRST update write (SetPriority) so
 // changed stays false with a non-nil error — the no-bucket path that
-// used to vanish from the totals (roborev #2048).
+// used to vanish from the totals (the roborev #2038 bug; #2048 asked
+// for these tests).
 type fakeImportClientPriErr struct {
 	*fakeImportClient
 	priErr error

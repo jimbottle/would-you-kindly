@@ -213,3 +213,23 @@ func TestRunHandoff_CreateRejectsInvalidAttributes(t *testing.T) {
 		})
 	}
 }
+
+func TestHandoff_DryRunBannerPrintsCanonicalPriority(t *testing.T) {
+	// 'p2' is the one spelling where the banner and the real write
+	// could drift: the write passes beads.CanonicalPriority ("P2"),
+	// so the banner must print P2 too — a revert to printing the raw
+	// flag value passes every other test (they all use already-
+	// canonical priorities) but fails this one (roborev #2054).
+	t.Setenv(sessionEnvVar, "")
+	path := writeRunbook(t, "do the thing")
+	out := captureHandoffStdout(t, func() {
+		if code := runHandoff([]string{
+			"-dry-run", "-create", "x", "-priority", "p2", "-file", path,
+		}); code != 0 {
+			t.Errorf("dry-run exit %d, want 0", code)
+		}
+	})
+	if !strings.Contains(out, "priority=P2") {
+		t.Errorf("banner must print the canonicalized priority (P2); got:\n%s", out)
+	}
+}
