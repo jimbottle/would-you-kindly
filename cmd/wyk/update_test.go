@@ -391,7 +391,6 @@ func TestRunUpdate_UpToDateWordingSharedWithVersionCheck(t *testing.T) {
 	// parenthetical after "(including prereleases)" (roborev #2051).
 	// Pins the update side of the shared wording — version --check's
 	// side is pinned in version_test.go.
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	restore := stubLiveFetcher(t, []updater.Release{{TagName: "v0.9.0", Prerelease: false}})
 	defer restore()
 	prevTag := currentTagForCheck
@@ -405,5 +404,26 @@ func TestRunUpdate_UpToDateWordingSharedWithVersionCheck(t *testing.T) {
 	})
 	if !strings.Contains(out, "already on the latest release (including prereleases): v0.9.0") {
 		t.Errorf("up-to-date message should be channelDesc + colon-bound tag; got:\n%s", out)
+	}
+}
+
+func TestRunUpdate_BuildAheadWordingColonBindsTag(t *testing.T) {
+	// The build-ahead branch changed wording alongside up-to-date but
+	// was left unpinned (roborev #2052): a local build NEWER than the
+	// latest release must use channelDesc with a colon-bound tag, not
+	// the doubled-parenthetical form.
+	restore := stubLiveFetcher(t, []updater.Release{{TagName: "v0.9.0", Prerelease: false}})
+	defer restore()
+	prevTag := currentTagForCheck
+	currentTagForCheck = func() string { return "v0.9.1-0.20260610120000-abcdef123456" }
+	defer func() { currentTagForCheck = prevTag }()
+
+	out := captureStdout(t, func() {
+		if code := runUpdate([]string{"-channel", "any"}); code != 0 {
+			t.Errorf("build-ahead exit %d, want 0", code)
+		}
+	})
+	if !strings.Contains(out, "ahead of the latest release (including prereleases): v0.9.0") {
+		t.Errorf("build-ahead message should be channelDesc + colon-bound tag; got:\n%s", out)
 	}
 }
