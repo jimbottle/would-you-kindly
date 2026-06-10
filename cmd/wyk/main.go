@@ -594,7 +594,7 @@ func runHandoff(args []string) int {
 		newID, err := client.Create(context.Background(), beads.CreateOptions{
 			Title:     *createTitle,
 			Labels:    createLabels,
-			Priority:  *priority,
+			Priority:  beads.CanonicalPriority(*priority),
 			IssueType: *issueType,
 		})
 		if err != nil {

@@ -31,3 +31,14 @@ func TestIsValidIssueType(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalPriority(t *testing.T) {
+	cases := map[string]string{
+		"p2": "P2", "P2": "P2", "3": "3", "banana": "banana", "p": "p",
+	}
+	for in, want := range cases {
+		if got := CanonicalPriority(in); got != want {
+			t.Errorf("CanonicalPriority(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -33,3 +33,17 @@ func IsValidPriority(p string) bool {
 	}
 	return len(p) == 1 && p[0] >= '0' && p[0] <= '4'
 }
+
+// CanonicalPriority uppercases a lowercase p prefix ("p2" -> "P2")
+// so a value that passed IsValidPriority can be handed to bd without
+// betting on bd's case-sensitivity — the sibling IsValidIssueType
+// comment notes bd IS case-sensitive about types, so forwarding "p2"
+// verbatim risks re-creating the dry-run-vouches-for-a-failing-write
+// bug for one spelling (roborev #2038). Non-priority-shaped input is
+// returned unchanged; validate first.
+func CanonicalPriority(p string) string {
+	if len(p) == 2 && p[0] == 'p' {
+		return "P" + p[1:]
+	}
+	return p
+}

@@ -355,6 +355,9 @@ func TestValidateDumpSchema(t *testing.T) {
 	if err := validateDumpSchema(exportDump{}); err == nil {
 		t.Error("missing schema_version must be rejected (not a wyk dump)")
 	}
+	if err := validateDumpSchema(exportDump{SchemaVersion: -1}); err == nil {
+		t.Error("negative schema_version must be rejected (roborev #2038)")
+	}
 	if err := validateDumpSchema(exportDump{SchemaVersion: exportSchemaVersion + 1}); err == nil {
 		t.Error("a newer-than-supported schema_version must be rejected")
 	}

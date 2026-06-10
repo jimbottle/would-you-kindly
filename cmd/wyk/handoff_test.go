@@ -186,3 +186,30 @@ func TestHandoff_TemplatePrintsSkeletonAndExitsZero(t *testing.T) {
 		}
 	}
 }
+
+func TestRunHandoff_CreateRejectsInvalidAttributes(t *testing.T) {
+	// The wiring half of would-you-kindly-ure8: an invalid -priority
+	// or -type with -create must exit 64 BEFORE the -dry-run branch —
+	// the original bug was -dry-run vouching for an invocation bd
+	// rejects at write time (roborev #2038 flagged the missing test).
+	cases := []struct {
+		name string
+		args []string
+		want string // substring of the stderr usage error
+	}{
+		{"bad priority", []string{"-create", "t", "-priority", "banana", "-dry-run"}, "invalid -priority"},
+		{"bad type", []string{"-create", "t", "-type", "ticket", "-dry-run"}, "invalid -type"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var code int
+			_, stderr := captureOutErr(t, func() { code = runHandoff(c.args) })
+			if code != 64 {
+				t.Errorf("exit = %d, want 64", code)
+			}
+			if !strings.Contains(stderr, c.want) {
+				t.Errorf("stderr %q should contain %q", stderr, c.want)
+			}
+		})
+	}
+}
