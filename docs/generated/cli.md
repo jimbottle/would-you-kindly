@@ -22,7 +22,7 @@ wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity n
 | `-priority` | `1` | priority for the newly-created issue (only used with -create; 0-4 or P0-P4) |
 | `-type` | `task` | issue type for the newly-created issue (only used with -create) |
 | `-note` | `_(empty)_` | after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook |
-| `-identity` | `_(empty)_` | route this handoff to a named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY |
+| `-identity` | `_(empty)_` | route this handoff to the named agent identity (adds the src:agent:<name> label) so it lands in that identity's wyk inbox when bounced back; falls back to $WYK_AGENT_IDENTITY |
 | `-dry-run` | `false` | print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it |
 | `-template` | `false` | print the required 3-section runbook skeleton to stdout and exit (no bd writes); fill it in, then `wyk handoff <id> < filled.md` |
 

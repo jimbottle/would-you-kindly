@@ -112,13 +112,13 @@ func runInit(args []string) int {
 	force := fs.Bool("force", false, "overwrite an existing post-commit hook (destructive — drops the existing hook entirely)")
 	chain := fs.Bool("chain", false, "preserve an existing post-commit hook and chain wyk's logic after it (preferred over -force when the existing hook is from another tool like roborev)")
 	dryRun := fs.Bool("dry-run", false, "print what would happen without writing the hook")
-	skipBD := fs.Bool("skip-bd-init", false, "do not run `bd init` even if .beads is missing")
+	skipBD := fs.Bool("skip-bd-init", false, "do not run 'bd init' even if .beads is missing")
 	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
-	skipClaudeMD := fs.Bool("skip-claude-md", false, "do not seed the agent enrichment: wyk's conventions block in CLAUDE.md AND the bd-create-guard PreToolUse hook in .claude/settings.json (which redirects `bd create` to `wyk create`)")
+	skipClaudeMD := fs.Bool("skip-claude-md", false, "do not seed the agent enrichment: wyk's conventions block in CLAUDE.md AND the bd-create-guard PreToolUse hook in .claude/settings.json (which redirects 'bd create' to 'wyk create')")
 	scanRoot := fs.String("scan", "", "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path")
 	uninstall := fs.Bool("uninstall", false, "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks")
 	fixForeignHooks := fs.Bool("fix-foreign-hooks", false, "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)")
-	installSkills := fs.Bool("skills", false, "also install wyk's agent skills into ~/.claude/skills (idempotent; like `wyk skills install`). Modified skills are left alone.")
+	installSkills := fs.Bool("skills", false, "also install wyk's agent skills into ~/.claude/skills (idempotent; like 'wyk skills install'). Modified skills are left alone.")
 	fs.SetOutput(os.Stderr)
 	// Lead the help with the bare happy path so the common case isn't
 	// buried under the alternate modes and the alphabetical flag dump

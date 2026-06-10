@@ -36,7 +36,7 @@ import (
 //	64 usage error
 func runDepgraph(args []string) int {
 	fs := flag.NewFlagSet("depgraph", flag.ContinueOnError)
-	asDOT := fs.Bool("dot", false, "emit Graphviz DOT (pipe into `dot -Tsvg`)")
+	asDOT := fs.Bool("dot", false, "emit Graphviz DOT (pipe into 'dot -Tsvg')")
 	asJSON := fs.Bool("json", false, "emit {nodes, edges} JSON for tooling consumers")
 	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	repoName := fs.String("repo", "", "restrict to the registered repo with this name (empty = full registry)")
