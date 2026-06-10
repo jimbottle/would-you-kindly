@@ -491,6 +491,22 @@ func runHandoff(args []string) int {
 		return 64
 	}
 
+	// Validate the -create attributes at parse time, BEFORE the dry-run
+	// branch: bd would reject these at write time, so letting them
+	// through meant -dry-run vouched for an invocation that fails for
+	// real (would-you-kindly-ure8).
+	if *createTitle != "" {
+		if !beads.IsValidPriority(*priority) {
+			fmt.Fprintf(os.Stderr, "wyk handoff: invalid -priority %q (valid: 0-4 or P0-P4)\n", *priority)
+			return 64
+		}
+		if !beads.IsValidIssueType(*issueType) {
+			fmt.Fprintf(os.Stderr, "wyk handoff: invalid -type %q (valid: %s)\n",
+				*issueType, strings.Join(beads.ValidIssueTypes, ", "))
+			return 64
+		}
+	}
+
 	// Reading from a TTY would block waiting for user input — easy to
 	// hit by accident when invoked interactively without a redirect.
 	// If the user then closes stdin with ^D, we'd silently wipe the

@@ -324,7 +324,7 @@ func TestRunImport_StdinHappyPath(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	dump := exportDump{Repos: []exportRepo{{
+	dump := exportDump{SchemaVersion: exportSchemaVersion, Repos: []exportRepo{{
 		Name:   "repo-a",
 		Issues: []beads.Issue{{ID: "a-1", Title: "fresh", Status: "open"}},
 	}}}
@@ -347,4 +347,46 @@ func TestRunImport_StdinHappyPath(t *testing.T) {
 			t.Errorf("runImport exit %d, want 0", code)
 		}
 	})
+}
+
+func TestValidateDumpSchema(t *testing.T) {
+	// Garbage dumps and future schemas used to pass silently with
+	// exit 0 (would-you-kindly-lsrx); both must be loud rejections.
+	if err := validateDumpSchema(exportDump{}); err == nil {
+		t.Error("missing schema_version must be rejected (not a wyk dump)")
+	}
+	if err := validateDumpSchema(exportDump{SchemaVersion: exportSchemaVersion + 1}); err == nil {
+		t.Error("a newer-than-supported schema_version must be rejected")
+	}
+	if err := validateDumpSchema(exportDump{SchemaVersion: exportSchemaVersion}); err != nil {
+		t.Errorf("the current schema version must validate; got %v", err)
+	}
+	if exportSchemaVersion > 1 {
+		if err := validateDumpSchema(exportDump{SchemaVersion: 1}); err != nil {
+			t.Errorf("older schema versions stay importable (additive policy); got %v", err)
+		}
+	}
+}
+
+func TestEmitImportSummary_AlwaysPrintsTotals(t *testing.T) {
+	// An empty plan must say so out loud — "0 issue(s) across 0
+	// repo(s)" — instead of printing nothing and reading as success
+	// (would-you-kindly-lsrx).
+	var b strings.Builder
+	emitImportSummary(&b, importSummary{}, true)
+	out := b.String()
+	if !strings.Contains(out, "0 issue(s) across 0 repo(s)") {
+		t.Errorf("empty dry-run plan must announce zero totals; got %q", out)
+	}
+	if !strings.Contains(out, "DRY-RUN") {
+		t.Errorf("dry-run banner missing: %q", out)
+	}
+
+	b.Reset()
+	emitImportSummary(&b, importSummary{Repos: []importRepoResult{
+		{Name: "r1", Created: []string{"a-1", "a-2"}, Unchanged: []string{"a-3"}},
+	}}, false)
+	if !strings.Contains(b.String(), "3 issue(s) across 1 repo(s)") {
+		t.Errorf("totals line wrong: %q", b.String())
+	}
 }

@@ -57,6 +57,15 @@ func runImport(args []string) int {
 		fmt.Fprintln(os.Stderr, "wyk import: parse JSON:", err)
 		return 1
 	}
+	// Reject dumps we can't trust BEFORE planning: valid JSON without
+	// our schema marker (wrong file, hand-rolled blob) or with a newer
+	// schema than this wyk reads used to sail through as "nothing to
+	// import" with exit 0 — silent success on garbage
+	// (would-you-kindly-lsrx).
+	if err := validateDumpSchema(dump); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk import:", err)
+		return 1
+	}
 
 	if *repoName != "" {
 		filtered, err := filterDumpByName(dump, *repoName)
@@ -381,15 +390,38 @@ func appendErr(prev, next string) string {
 	return prev + "; " + next
 }
 
-// emitImportSummary prints a human-readable per-repo plan: counts
-// first (so a glance shows the magnitude), then the IDs grouped
-// by action (so a careful reader can diff against expectations).
-// Dry-run prepends a banner so the output can't be mistaken for
-// an applied import.
+// validateDumpSchema rejects a parsed dump this wyk can't trust:
+// no schema_version means it isn't a wyk export at all (wrong file,
+// hand-rolled JSON), and a version newer than exportSchemaVersion
+// carries semantics this binary doesn't know how to reconcile.
+// Split from runImport so the rejection rules are unit-testable.
+func validateDumpSchema(dump exportDump) error {
+	switch {
+	case dump.SchemaVersion == 0:
+		return fmt.Errorf("not a wyk export dump (missing schema_version) — produce one with `wyk export`")
+	case dump.SchemaVersion > exportSchemaVersion:
+		return fmt.Errorf("dump is schema v%d; this wyk reads up to v%d — re-export with a matching wyk, or upgrade this one",
+			dump.SchemaVersion, exportSchemaVersion)
+	}
+	return nil
+}
+
+// emitImportSummary prints a human-readable per-repo plan: a total
+// line first — printed even when the dump is empty, so "0 issue(s)
+// across 0 repo(s)" is loud rather than silent success
+// (would-you-kindly-lsrx) — then per-repo counts, then the IDs
+// grouped by action (so a careful reader can diff against
+// expectations). Dry-run prepends a banner so the output can't be
+// mistaken for an applied import.
 func emitImportSummary(w io.Writer, s importSummary, dryRun bool) {
 	if dryRun {
 		fmt.Fprintln(w, "DRY-RUN: no bd writes performed")
 	}
+	total := 0
+	for _, r := range s.Repos {
+		total += len(r.Created) + len(r.Updated) + len(r.Unchanged) + len(r.Skipped)
+	}
+	fmt.Fprintf(w, "%d issue(s) across %d repo(s) in the dump\n", total, len(s.Repos))
 	for _, r := range s.Repos {
 		fmt.Fprintf(w, "%s (%s): created=%d updated=%d unchanged=%d skipped=%d\n",
 			r.Name, r.Path, len(r.Created), len(r.Updated), len(r.Unchanged), len(r.Skipped))
