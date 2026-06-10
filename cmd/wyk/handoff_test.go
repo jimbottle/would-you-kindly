@@ -192,6 +192,7 @@ func TestRunHandoff_CreateRejectsInvalidAttributes(t *testing.T) {
 	// or -type with -create must exit 64 BEFORE the -dry-run branch —
 	// the original bug was -dry-run vouching for an invocation bd
 	// rejects at write time (roborev #2038 flagged the missing test).
+	t.Setenv("WYK_AGENT_IDENTITY", "") // resolveIdentity runs first; stay hermetic
 	cases := []struct {
 		name string
 		args []string
@@ -239,6 +240,11 @@ func TestRunHandoff_WrongArityPrintsCanonicalUsage(t *testing.T) {
 	// pins both the exit code and the doc entry's existence (the
 	// single-source lookup would otherwise degrade to the terse
 	// fallback if "handoff" were renamed; roborev #2063).
+	// Hermetic against the environment: resolveIdentity runs before
+	// the arity switch and reads WYK_AGENT_IDENTITY when -identity is
+	// empty — a malformed ambient value would fail this test for an
+	// unrelated reason (roborev #2064).
+	t.Setenv("WYK_AGENT_IDENTITY", "")
 	var code int
 	_, stderr := captureOutErr(t, func() { code = runHandoff(nil) })
 	if code != 64 {
