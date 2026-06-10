@@ -101,3 +101,67 @@ func captureRunStdout(t *testing.T, fn func() int) string {
 	os.Stdout = old
 	return <-doneCh
 }
+
+func TestStrayArgMsg_UnknownSubcommandSuggests(t *testing.T) {
+	// The typo case (would-you-kindly-tu9t): `wyk inbx` used to silently
+	// launch the TUI. The message must name the bad word and, when a
+	// subcommand is within edit distance 2, suggest it.
+	cases := []struct {
+		arg     string
+		want    string // substring that must appear
+		suggest string // expected did-you-mean target; "" = no suggestion
+	}{
+		{"inbx", `unknown subcommand "inbx"`, "inbox"},
+		{"handof", `unknown subcommand "handof"`, "handoff"},
+		{"stat", `unknown subcommand "stat"`, "stats"},
+		{"frobnicate", `unknown subcommand "frobnicate"`, ""},
+		{"INBOX", `unknown subcommand "INBOX"`, "inbox"}, // case-insensitive match
+	}
+	for _, c := range cases {
+		got := strayArgMsg(c.arg)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("strayArgMsg(%q) = %q, want it to contain %q", c.arg, got, c.want)
+		}
+		if c.suggest != "" && !strings.Contains(got, `did you mean "`+c.suggest+`"`) {
+			t.Errorf("strayArgMsg(%q) = %q, want a did-you-mean for %q", c.arg, got, c.suggest)
+		}
+		if c.suggest == "" && strings.Contains(got, "did you mean") {
+			t.Errorf("strayArgMsg(%q) = %q, want NO suggestion for a distant word", c.arg, got)
+		}
+	}
+}
+
+func TestStrayArgMsg_FlagsBeforeSubcommand(t *testing.T) {
+	// The footgun case: `wyk -C dir handoff` parses "handoff" as a
+	// positional because dispatch only reads os.Args[1]. The message
+	// must say the subcommand goes first, not call it unknown — and
+	// `hook` (excluded from completion on purpose) still counts as known.
+	for _, sub := range []string{"handoff", "inbox", "hook"} {
+		got := strayArgMsg(sub)
+		if !strings.Contains(got, "must be the first argument") {
+			t.Errorf("strayArgMsg(%q) = %q, want the flags-before-subcommand message", sub, got)
+		}
+		if strings.Contains(got, "unknown subcommand") {
+			t.Errorf("strayArgMsg(%q) = %q, must not call a known subcommand unknown", sub, got)
+		}
+	}
+}
+
+func TestLevenshtein(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"inbx", "inbox", 1},
+		{"stat", "stats", 1},
+		{"kitten", "sitting", 3},
+	}
+	for _, c := range cases {
+		if got := levenshtein(c.a, c.b); got != c.want {
+			t.Errorf("levenshtein(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // wykSubcommands is the user-facing subcommand list that ships in
@@ -38,6 +39,62 @@ var wykSubcommands = []string{
 	"help",
 	"completion",
 	"version",
+}
+
+// strayArgMsg builds the error for a positional argument that survived
+// top-level flag parsing. Two distinct mistakes land here and deserve
+// distinct messages: a known subcommand preceded by top-level flags
+// (the subcommand must come first — each owns its own FlagSet, so
+// `wyk -C dir handoff` never reaches handoff's parser), and an unknown
+// word (a typo, with a did-you-mean when one is close enough).
+func strayArgMsg(arg string) string {
+	for _, s := range append([]string{"hook"}, wykSubcommands...) {
+		if arg == s {
+			return fmt.Sprintf("wyk: %q must be the first argument — subcommands take their own flags (try: wyk %s ...)", arg, arg)
+		}
+	}
+	msg := fmt.Sprintf("wyk: unknown subcommand %q (run `wyk --help`)", arg)
+	if s := closestSubcommand(arg); s != "" {
+		msg += fmt.Sprintf(" — did you mean %q?", s)
+	}
+	return msg
+}
+
+// closestSubcommand returns the subcommand within edit distance 2 of
+// arg, or "" when nothing is close — a wider net would turn arbitrary
+// words into confident-sounding wrong suggestions.
+func closestSubcommand(arg string) string {
+	const maxDist = 2
+	best, bestDist := "", maxDist+1
+	for _, s := range wykSubcommands {
+		if d := levenshtein(strings.ToLower(arg), s); d < bestDist {
+			best, bestDist = s, d
+		}
+	}
+	return best
+}
+
+// levenshtein is the classic two-row edit distance; the inputs are
+// short command words, so the O(len*len) cost is irrelevant.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	cur := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(cur[j-1]+1, min(prev[j]+1, prev[j-1]+cost))
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(rb)]
 }
 
 // runCompletion handles `wyk completion <shell>` — emits a

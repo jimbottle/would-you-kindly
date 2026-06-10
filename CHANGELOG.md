@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An unknown subcommand no longer silently launches the TUI** — `wyk
+  inbx` (a typo) or `wyk -C dir handoff` (top-level flags before the
+  subcommand) used to fall through the dispatcher and open the
+  full-screen TUI, hiding the mistake. Both now fail with exit 64: a
+  typo gets `unknown subcommand "inbx" — did you mean "inbox"?`, and a
+  known subcommand preceded by flags is told the subcommand must come
+  first (each owns its own flags).
+
 - **Go standard-library vulnerabilities `GO-2026-5039` (`net/textproto`)
   and `GO-2026-5037` (`crypto/x509`)** — CI's `govulncheck` step was
   failing on these (fixed upstream in go1.26.4). CI installs Go via

@@ -129,6 +129,15 @@ func main() {
 	startupPreset := flag.String("preset", "", "launch into a specific preset (all, ready, human, mine, blocked)")
 	noColor := flag.Bool("no-color", false, "disable colored output (same as NO_COLOR / WYK_NO_COLOR)")
 	flag.Parse()
+	// Anything left positional is either a subcommand typo (`wyk inbx`)
+	// or a flags-before-subcommand invocation (`wyk -C dir handoff`) —
+	// the dispatcher above only looks at os.Args[1], so both used to
+	// fall through here and silently launch the TUI. Fail loudly
+	// instead (would-you-kindly-tu9t).
+	if flag.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, strayArgMsg(flag.Arg(0)))
+		os.Exit(64)
+	}
 	// The flag is the explicit equivalent of the env opt-out. The env
 	// path already ran in applyNoColor at startup; honor the flag here,
 	// before the model is built or --probe renders, since both touch
