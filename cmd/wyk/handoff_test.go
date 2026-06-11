@@ -39,6 +39,7 @@ func clearAmbientIdentity(t *testing.T) {
 }
 
 func TestHandoff_CreateAndPositionalAreMutuallyExclusive(t *testing.T) {
+	clearAmbientIdentity(t)
 	// The two modes of `wyk handoff` are -create (file a new issue)
 	// and positional <id> (act on an existing issue). Both at once
 	// would be ambiguous — runHandoff must refuse with the usage
@@ -50,6 +51,7 @@ func TestHandoff_CreateAndPositionalAreMutuallyExclusive(t *testing.T) {
 }
 
 func TestHandoff_MissingArgsReturnsUsageCode(t *testing.T) {
+	clearAmbientIdentity(t)
 	// No -create, no positional id → usage error (64), no stdin read,
 	// no bd contact. Pure flag-parsing validation.
 	code := runHandoff([]string{})
