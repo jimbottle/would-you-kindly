@@ -370,6 +370,23 @@ func TestMouseCapture_FollowsTheView(t *testing.T) {
 		t.Errorf("a detail-overlaid prompt must not flip capture; calls = %v", rec.calls)
 	}
 
+	// help overlaid ON detail (? -> overlay -> dismiss) also keeps
+	// it released — selecting a keybinding line out of the help text
+	// is the overlay's own documented click-drag case (roborev #2111).
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m = model.(Model)
+	if m.mode != modeHelp {
+		t.Fatalf("setup: ? should open help; got %v", m.mode)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Fatalf("setup: ? should dismiss back to detail; got %v", m.mode)
+	}
+	if len(rec.calls) != 1 {
+		t.Errorf("help overlaid on detail must not flip capture; calls = %v", rec.calls)
+	}
+
 	// detail -> list: re-capture.
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = model.(Model)
