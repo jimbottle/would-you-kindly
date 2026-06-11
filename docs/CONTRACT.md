@@ -371,6 +371,12 @@ one-shot relabel command and call it out here explicitly.
 **Schema:** `wyk-contract/v3`
 
 Changelog:
+- **v3 (amended 2026-06-10)** — the inbox queries additionally exclude
+  `status=blocked`: a task whose tracked blocker is still outstanding
+  isn't actionable, and surfacing it as work-now contradicted the
+  inbox's "the unblocker has arrived" reading. Additive narrowing in
+  the same spirit as v2's `agent-handoff` exclusion; no relabeling,
+  no behavior change for issues without a blocked status.
 - **v3** — adds optional per-identity routing: the `src:agent:<name>`
   label (layered on the collective `src:agent`), `wyk inbox --identity`
   / `wyk handoff --identity`, and the `WYK_AGENT_IDENTITY` env var.

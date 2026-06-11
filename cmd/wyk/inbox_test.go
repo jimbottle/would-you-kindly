@@ -12,9 +12,10 @@ import (
 func TestInboxQuery_IsTheDocumentedString(t *testing.T) {
 	// The inbox subcommand and docs/CONTRACT.md must agree on the
 	// canonical query string — drift here means the docs lie about
-	// what wyk inbox does. The contract version (wyk-contract/v2)
-	// pins this exact string; bumping the contract version is the
-	// only license to change it (v2 added the agent-handoff exclusion).
+	// what wyk inbox does. The contract (wyk-contract/v3, amended
+	// 2026-06-10) pins this exact string; a contract changelog entry
+	// is the only license to change it (v2 added the agent-handoff
+	// exclusion; the v3 amendment added the blocked exclusion).
 	want := `label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked`
 	if inboxQuery != want {
 		t.Errorf("inboxQuery drift:\n  want: %q\n  got:  %q", want, inboxQuery)

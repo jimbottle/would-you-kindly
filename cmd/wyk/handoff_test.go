@@ -27,6 +27,17 @@ func captureHandoffStdout(t *testing.T, fn func()) string {
 	return <-done
 }
 
+// clearAmbientIdentity makes a runHandoff-driving test hermetic
+// against the caller's environment: resolveIdentity reads
+// WYK_AGENT_IDENTITY before most of runHandoff's branches, so an
+// ambient value — malformed OR valid — changes exit codes and the
+// stamped label set (roborev #2064/#2065). Every test that calls
+// runHandoff without an explicit -identity should start here.
+func clearAmbientIdentity(t *testing.T) {
+	t.Helper()
+	t.Setenv(identityEnvVar, "")
+}
+
 func TestHandoff_CreateAndPositionalAreMutuallyExclusive(t *testing.T) {
 	// The two modes of `wyk handoff` are -create (file a new issue)
 	// and positional <id> (act on an existing issue). Both at once
@@ -62,6 +73,7 @@ func writeRunbook(t *testing.T, body string) string {
 }
 
 func TestHandoff_DryRunBareIDPrintsPlanWithoutWriting(t *testing.T) {
+	clearAmbientIdentity(t)
 	path := writeRunbook(t, "1. step one\n2. step two")
 	out := captureHandoffStdout(t, func() {
 		if code := runHandoff([]string{"-dry-run", "-file", path, "wyk-42"}); code != 0 {
@@ -132,6 +144,7 @@ func TestHandoff_MalformedIdentityIsUsageError(t *testing.T) {
 }
 
 func TestHandoff_DryRunCreatePrintsCreatePlanWithoutWriting(t *testing.T) {
+	clearAmbientIdentity(t)
 	t.Setenv(sessionEnvVar, "") // deterministic labels (no session stamp)
 	path := writeRunbook(t, "do the thing")
 	out := captureHandoffStdout(t, func() {
@@ -155,6 +168,7 @@ func TestHandoff_DryRunCreatePrintsCreatePlanWithoutWriting(t *testing.T) {
 }
 
 func TestHandoff_CreateStampsSessionLabel(t *testing.T) {
+	clearAmbientIdentity(t)
 	// `wyk handoff -create` records the Claude session like `wyk create`,
 	// so handoff-filed issues populate the TUI's Session column too.
 	t.Setenv(sessionEnvVar, "sess-9999")
@@ -192,7 +206,7 @@ func TestRunHandoff_CreateRejectsInvalidAttributes(t *testing.T) {
 	// or -type with -create must exit 64 BEFORE the -dry-run branch —
 	// the original bug was -dry-run vouching for an invocation bd
 	// rejects at write time (roborev #2038 flagged the missing test).
-	t.Setenv("WYK_AGENT_IDENTITY", "") // resolveIdentity runs first; stay hermetic
+	clearAmbientIdentity(t)
 	cases := []struct {
 		name string
 		args []string
@@ -216,6 +230,7 @@ func TestRunHandoff_CreateRejectsInvalidAttributes(t *testing.T) {
 }
 
 func TestHandoff_DryRunBannerPrintsCanonicalPriority(t *testing.T) {
+	clearAmbientIdentity(t)
 	// 'p2' is the one spelling where the banner and the real write
 	// could drift: the write passes beads.CanonicalPriority ("P2"),
 	// so the banner must print P2 too — a revert to printing the raw
@@ -240,11 +255,7 @@ func TestRunHandoff_WrongArityPrintsCanonicalUsage(t *testing.T) {
 	// pins both the exit code and the doc entry's existence (the
 	// single-source lookup would otherwise degrade to the terse
 	// fallback if "handoff" were renamed; roborev #2063).
-	// Hermetic against the environment: resolveIdentity runs before
-	// the arity switch and reads WYK_AGENT_IDENTITY when -identity is
-	// empty — a malformed ambient value would fail this test for an
-	// unrelated reason (roborev #2064).
-	t.Setenv("WYK_AGENT_IDENTITY", "")
+	clearAmbientIdentity(t)
 	var code int
 	_, stderr := captureOutErr(t, func() { code = runHandoff(nil) })
 	if code != 64 {
