@@ -291,7 +291,19 @@ func main() {
 			fmt.Fprintf(os.Stderr, "wyk: could not open debug log %q: %v\n", logPath, err)
 		}
 	}
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	// Mouse capture: the startup state rides a Program option (which
+	// also latches SGR coordinate encoding); runtime view-switching
+	// goes through the late-bound ProgramMouse controller — direct
+	// program calls, never tea.Cmds, which get delayed/dropped when
+	// batched (the PR #24 live finding; would-you-kindly-5i0e).
+	pm := &tui.ProgramMouse{}
+	model = model.WithMouseController(pm)
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if model.StartWithMouseCapture() {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(model, opts...)
+	pm.SetProgram(p)
 	// Kick a best-effort live check in the background. We don't
 	// post the result back into the running TUI — the snapshot
 	// lands on disk and the NEXT wyk invocation reads it. This
