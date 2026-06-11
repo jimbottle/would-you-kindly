@@ -301,6 +301,18 @@ func main() {
 	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	if model.StartWithMouseCapture() {
 		opts = append(opts, tea.WithMouseCellMotion())
+	} else {
+		// Latch SGR mouse encoding (1006) even when starting
+		// released: bubbletea's runtime Program.EnableMouseCellMotion
+		// — the re-capture path ProgramMouse uses — writes only the
+		// tracking mode (1002h), and without 1006 the terminal falls
+		// back to legacy X10 encoding, which cannot report
+		// coordinates past column/row 223 (roborev #2111). The
+		// captured-start path latches 1006 via the program option;
+		// this covers the released start. SGR alone is inert — no
+		// events are reported until tracking is enabled — and tea's
+		// exit teardown clears it.
+		fmt.Print("\x1b[?1006h")
 	}
 	p := tea.NewProgram(model, opts...)
 	pm.SetProgram(p)

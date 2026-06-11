@@ -1069,17 +1069,6 @@ func isTerminalErr(err error) bool {
 	return errors.Is(err, beads.ErrBDNotFound) || errors.Is(err, beads.ErrNoWorkspace)
 }
 
-// Update is the main event router.
-// desiredMouseCapture derives whether the terminal mouse should be
-// captured right now: never when the user toggled it off (m), and —
-// even when on — not in the detail view. The list and :bd output are
-// NAVIGATION surfaces (wheel moves the cursor, click selects a row);
-// the detail view is a READING surface where click-drag text
-// selection of the runbook is the primary mouse use, so capture
-// auto-releases there and re-engages on the way out
-// (would-you-kindly-5i0e). Wheel-scrolling the detail body still
-// works in most terminals via alternate-scroll (the wheel becomes
-// arrow keys while reporting is off).
 // MouseController is the slice of *tea.Program the model needs to
 // switch terminal mouse capture synchronously. ProgramMouse adapts
 // the chicken-and-egg construction order (the model exists before
@@ -1132,6 +1121,17 @@ func (m Model) StartWithMouseCapture() bool {
 	return m.desiredMouseCapture()
 }
 
+// desiredMouseCapture derives whether the terminal mouse should be
+// captured right now: never when the user toggled it off (m), and —
+// even when on — not on the reading surface. The list and :bd output
+// are NAVIGATION surfaces (wheel moves the cursor, click selects a
+// row); the detail view — including the prompts and the help overlay
+// opened ON TOP of it — is a READING surface where click-drag text
+// selection of the runbook is the primary mouse use, so capture
+// auto-releases there and re-engages on the way out
+// (would-you-kindly-5i0e). Wheel-scrolling the detail body still
+// works in most terminals via alternate-scroll (the wheel becomes
+// arrow keys while reporting is off).
 func (m Model) desiredMouseCapture() bool {
 	if m.mouseOff {
 		return false
@@ -1139,13 +1139,17 @@ func (m Model) desiredMouseCapture() bool {
 	if m.mode == modeDetail {
 		return false
 	}
-	// Prompts overlaid ON the detail view (confirm-close, defer,
-	// note) keep rendering the reading surface underneath — flipping
-	// capture for the prompt's lifetime would flicker terminal modes
-	// mid-read and re-capture text the user may be selecting.
+	// Prompts and the help overlay opened ON TOP of the detail view
+	// keep rendering the reading surface underneath — flipping
+	// capture for the overlay's lifetime would flicker terminal
+	// modes mid-read and re-capture text the user may be selecting
+	// (the help overlay's own copy calls selecting a keybinding line
+	// a plausible click-drag case; roborev #2111).
 	switch m.mode {
 	case modeConfirmClose, modeDefer, modeNote:
 		return m.promptReturn != modeDetail
+	case modeHelp:
+		return m.helpReturnMode != modeDetail
 	}
 	return true
 }
@@ -1175,6 +1179,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return next, cmd
 }
 
+// update is the main event router; the exported Update wraps it to
+// keep terminal mouse capture in sync with the mode.
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
