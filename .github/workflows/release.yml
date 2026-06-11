@@ -38,6 +38,11 @@ jobs:
           go-version-file: go.mod
 
       - name: Extract release notes from CHANGELOG
+        # Written to $RUNNER_TEMP, NOT the work tree: goreleaser
+        # hard-fails a release from a dirty tree, and an untracked
+        # notes.md counts as dirt (first v0.7.0 attempt died on this;
+        # --snapshot validation skips the git-state check, which is
+        # why local testing never caught it).
         run: |
           ver="${GITHUB_REF_NAME#v}"
           # Pull the lines between "## [<ver>]" and the next "## [" header,
@@ -54,10 +59,10 @@ jobs:
               e = n; while (e >= s && lines[e] ~ /^[[:space:]]*$/) e--
               for (i = s; i <= e; i++) print lines[i]
             }
-          ' CHANGELOG.md > notes.md
-          if [ ! -s notes.md ]; then
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
             echo "No CHANGELOG.md section for $ver — using a placeholder." >&2
-            echo "Release ${GITHUB_REF_NAME}. See CHANGELOG.md." > notes.md
+            echo "Release ${GITHUB_REF_NAME}. See CHANGELOG.md." > "$RUNNER_TEMP/notes.md"
           fi
 
       # goreleaser builds the binaries, attaches the archives + checksums,
@@ -68,7 +73,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           version: '~> v2'
-          args: release --clean --release-notes notes.md
+          args: release --clean --release-notes ${{ runner.temp }}/notes.md
         env:
           GITHUB_TOKEN: ${{ github.token }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
