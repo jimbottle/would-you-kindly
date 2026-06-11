@@ -99,14 +99,22 @@ func TestComputeStats_BasicAggregations(t *testing.T) {
 		// In-progress: counts in by_status only.
 		{ID: "w-1", Status: "in_progress", Labels: nil,
 			CreatedAt: now.Add(-1 * day)},
+		// NOT inbox: fenced off for another agent — mirrors
+		// inboxQuery's agent-handoff exclusion (roborev #2067).
+		{ID: "x-1", Status: "open", Labels: []string{"src:agent", "agent-handoff"},
+			CreatedAt: now.Add(-1 * day)},
+		// NOT inbox: blocked on another tracked issue — mirrors
+		// inboxQuery's status!=blocked exclusion.
+		{ID: "x-2", Status: "blocked", Labels: []string{"src:agent"},
+			CreatedAt: now.Add(-1 * day)},
 	}
 
 	s := computeStats(all, now)
 
-	if s.TotalIssues != 7 {
-		t.Errorf("TotalIssues = %d, want 7", s.TotalIssues)
+	if s.TotalIssues != 9 {
+		t.Errorf("TotalIssues = %d, want 9", s.TotalIssues)
 	}
-	if s.ByStatus["open"] != 3 || s.ByStatus["closed"] != 3 || s.ByStatus["in_progress"] != 1 {
+	if s.ByStatus["open"] != 4 || s.ByStatus["closed"] != 3 || s.ByStatus["in_progress"] != 1 || s.ByStatus["blocked"] != 1 {
 		t.Errorf("ByStatus mismatch: %+v", s.ByStatus)
 	}
 	if s.HumanFlagged != 2 {
@@ -116,7 +124,7 @@ func TestComputeStats_BasicAggregations(t *testing.T) {
 		t.Errorf("HumanFromAgent=%d HumanFromHuman=%d; want 1/1", s.HumanFromAgent, s.HumanFromHuman)
 	}
 	if s.InboxCount != 1 {
-		t.Errorf("InboxCount = %d, want 1 (a-3: src:agent without human, not closed)", s.InboxCount)
+		t.Errorf("InboxCount = %d, want 1 (a-3 only — x-1 is agent-handoff-fenced, x-2 is blocked)", s.InboxCount)
 	}
 	if s.ClosedLast7d != 2 {
 		t.Errorf("ClosedLast7d = %d, want 2", s.ClosedLast7d)
