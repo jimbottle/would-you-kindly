@@ -186,6 +186,10 @@ func TestHandoff_CreateStampsSessionLabel(t *testing.T) {
 }
 
 func TestHandoff_TemplatePrintsSkeletonAndExitsZero(t *testing.T) {
+	// Today -template short-circuits before resolveIdentity, but the
+	// test shouldn't pin that ordering implicitly — hermetic like every
+	// other runHandoff test (roborev #2068).
+	clearAmbientIdentity(t)
 	out := captureHandoffStdout(t, func() {
 		if code := runHandoff([]string{"-template"}); code != 0 {
 			t.Errorf("handoff -template exit %d, want 0", code)

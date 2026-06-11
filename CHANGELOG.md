@@ -40,57 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captured), press it again to re-capture. The preference persists in
   `state.json`; existing files default to captured.
 
-### Fixed
-
-- **The agent inbox no longer surfaces blocked tasks** — `wyk inbox`'s
-  query excluded closed but not `status=blocked`, so a task whose
-  tracked blocker was still outstanding presented as "work this now"
-  and sent the agent chasing an unblocker that hadn't arrived (found
-  live: a blocked task sat in the inbox for a full session). The
-  query — and `wyk stats`' inbox count, the conventions output, the
-  seeded agent memory, and the contract doc, which had also drifted —
-  now exclude `blocked`, mirroring how `bd ready` treats it.
-
-- **Warm-start now seeds across presets** — the on-disk last-fetch
-  snapshot was silently skipped whenever the saved preset differed
-  from the restored one (quit on `all`, reopen on `human`), leaving a
-  `loading…` spinner for the entire multi-repo cold start (~9s). An
-  `all` snapshot now seeds the human/mine/blocked views through an
-  in-memory filter (closed rows excluded — the snapshot may have been
-  saved while `C` was toggled on); `ready` still cold-starts (its
-  blocker semantics are bd's to compute).
-
-- **An unknown subcommand no longer silently launches the TUI** — `wyk
-  inbx` (a typo) or `wyk -C dir handoff` (top-level flags before the
-  subcommand) used to fall through the dispatcher and open the
-  full-screen TUI, hiding the mistake. Both now fail with exit 64: a
-  typo gets `unknown subcommand "inbx" — did you mean "inbox"?`, and a
-  known subcommand preceded by flags is told the subcommand must come
-  first (each owns its own flags).
-- **`wyk handoff -create` validates `-priority` / `-type` at parse
-  time** — `-priority banana` used to sail through `-dry-run` ("would
-  create: … priority=banana") and only fail when bd rejected the real
-  write, defeating dry-run's purpose. Both flags are now checked
-  against bd's accepted values (0-4 / P0-P4; the nine issue types)
-  with a usage error naming the valid set.
-
-- **`wyk import` rejects dumps it can't trust and always reports
-  totals** — valid JSON without a `schema_version` (wrong file,
-  hand-rolled blob) or with a newer schema than this wyk reads used to
-  pass silently with exit 0; both now fail loudly. The plan summary
-  always leads with "N issue(s) across M repo(s) in the dump", so an
-  empty dump reads as the warning it is rather than silent success.
-
-- **Go standard-library vulnerabilities `GO-2026-5039` (`net/textproto`)
-  and `GO-2026-5037` (`crypto/x509`)** — CI's `govulncheck` step was
-  failing on these (fixed upstream in go1.26.4). CI installs Go via
-  `go-version-file: go.mod`, and with the `go 1.26` directive (see
-  _Changed_) it pulls the latest patched 1.26.x, which carries both
-  fixes — so the build is green again without pinning users to a
-  specific patch.
-
-### Added
-
 - **`wyk doctor` bd version-compatibility check** — a new check
   alongside "bd binary on PATH" that parses `bd --version` and verifies
   it's within the range wyk is known to work against. FAILs only on a bd
@@ -220,6 +169,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-run-init nudge. Surfaces repos init'd before the seed existed.
 
 ### Fixed
+
+- **The agent inbox no longer surfaces blocked tasks** — `wyk inbox`'s
+  query excluded closed but not `status=blocked`, so a task whose
+  tracked blocker was still outstanding presented as "work this now"
+  and sent the agent chasing an unblocker that hadn't arrived (found
+  live: a blocked task sat in the inbox for a full session). The
+  query — and `wyk stats`' inbox count, the conventions output, the
+  seeded agent memory, and the contract doc, which had also drifted —
+  now exclude `blocked`, mirroring how `bd ready` treats it.
+
+- **Warm-start now seeds across presets** — the on-disk last-fetch
+  snapshot was silently skipped whenever the saved preset differed
+  from the restored one (quit on `all`, reopen on `human`), leaving a
+  `loading…` spinner for the entire multi-repo cold start (~9s). An
+  `all` snapshot now seeds the human/mine/blocked views through an
+  in-memory filter (closed rows excluded — the snapshot may have been
+  saved while `C` was toggled on); `ready` still cold-starts (its
+  blocker semantics are bd's to compute).
+
+- **An unknown subcommand no longer silently launches the TUI** — `wyk
+  inbx` (a typo) or `wyk -C dir handoff` (top-level flags before the
+  subcommand) used to fall through the dispatcher and open the
+  full-screen TUI, hiding the mistake. Both now fail with exit 64: a
+  typo gets `unknown subcommand "inbx" — did you mean "inbox"?`, and a
+  known subcommand preceded by flags is told the subcommand must come
+  first (each owns its own flags).
+- **`wyk handoff -create` validates `-priority` / `-type` at parse
+  time** — `-priority banana` used to sail through `-dry-run` ("would
+  create: … priority=banana") and only fail when bd rejected the real
+  write, defeating dry-run's purpose. Both flags are now checked
+  against bd's accepted values (0-4 / P0-P4; the nine issue types)
+  with a usage error naming the valid set.
+
+- **`wyk import` rejects dumps it can't trust and always reports
+  totals** — valid JSON without a `schema_version` (wrong file,
+  hand-rolled blob) or with a newer schema than this wyk reads used to
+  pass silently with exit 0; both now fail loudly. The plan summary
+  always leads with "N issue(s) across M repo(s) in the dump", so an
+  empty dump reads as the warning it is rather than silent success.
+
+- **Go standard-library vulnerabilities `GO-2026-5039` (`net/textproto`)
+  and `GO-2026-5037` (`crypto/x509`)** — CI's `govulncheck` step was
+  failing on these (fixed upstream in go1.26.4). CI installs Go via
+  `go-version-file: go.mod`, and with the `go 1.26` directive (see
+  _Changed_) it pulls the latest patched 1.26.x, which carries both
+  fixes — so the build is green again without pinning users to a
+  specific patch.
 
 - **`wyk --probe` surfaces partial multi-repo failures on stderr** — in
   multi-repo mode probe now uses `MultiSource.FetchWithSubErrors` (rather
@@ -1347,7 +1343,10 @@ through multiple roborev rounds.
   real bd issues.
 - Any background daemon.
 
-[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jimbottle/would-you-kindly/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.7.0
+[0.6.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.6.1
+[0.6.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.6.0
 [0.5.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.5.0
 [0.4.1]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.4.1
 [0.4.0]: https://github.com/jimbottle/would-you-kindly/releases/tag/v0.4.0
