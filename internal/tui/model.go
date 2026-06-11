@@ -340,6 +340,15 @@ type Model struct {
 	// or the data set changes shape.
 	scroll int
 
+	// mouse drives the terminal's mouse-capture state directly —
+	// *tea.Program satisfies it. Direct calls instead of
+	// tea.EnableMouseCellMotion/DisableMouse cmds because batching
+	// those with other cmds delays or drops the terminal write (the
+	// PR #24 live finding); a synchronous method call cannot be
+	// reordered or dropped. nil (tests, or before main wires the
+	// program) = no-op.
+	mouse MouseController
+
 	// mouseOff disables mouse capture: no wheel/click navigation,
 	// but the terminal's native click-drag text selection works
 	// without a Shift/Option modifier. Toggled with `m`, restored
@@ -897,12 +906,6 @@ func (m Model) Init() tea.Cmd {
 	if m.fsEvents != nil {
 		cmds = append(cmds, waitFSEvent(m.fsEvents))
 	}
-	// Mouse capture is requested here rather than as a Program
-	// option so the session-restored preference (mouseOff) decides
-	// it and the toggle logic lives in one package.
-	if !m.mouseOff {
-		cmds = append(cmds, tea.EnableMouseCellMotion)
-	}
 	return tea.Batch(cmds...)
 }
 
@@ -1067,7 +1070,112 @@ func isTerminalErr(err error) bool {
 }
 
 // Update is the main event router.
+// desiredMouseCapture derives whether the terminal mouse should be
+// captured right now: never when the user toggled it off (m), and —
+// even when on — not in the detail view. The list and :bd output are
+// NAVIGATION surfaces (wheel moves the cursor, click selects a row);
+// the detail view is a READING surface where click-drag text
+// selection of the runbook is the primary mouse use, so capture
+// auto-releases there and re-engages on the way out
+// (would-you-kindly-5i0e). Wheel-scrolling the detail body still
+// works in most terminals via alternate-scroll (the wheel becomes
+// arrow keys while reporting is off).
+// MouseController is the slice of *tea.Program the model needs to
+// switch terminal mouse capture synchronously. ProgramMouse adapts
+// the chicken-and-egg construction order (the model exists before
+// the program does).
+type MouseController interface {
+	EnableMouseCellMotion()
+	DisableMouse()
+}
+
+// ProgramMouse is a late-bound MouseController: main constructs the
+// model with an empty one, builds the tea.Program around that model,
+// then SetProgram binds it. Calls before binding are no-ops (the
+// startup state is handled by the WithMouseCellMotion program option
+// instead — see StartWithMouseCapture).
+type ProgramMouse struct{ p *tea.Program }
+
+func (pm *ProgramMouse) SetProgram(p *tea.Program) { pm.p = p }
+func (pm *ProgramMouse) EnableMouseCellMotion() {
+	if pm.p != nil {
+		// Deprecated upstream in favor of the startup OPTION — which
+		// main does use for launch; this is the runtime half the
+		// deprecation note doesn't cover (see DisableMouse below).
+		pm.p.EnableMouseCellMotion() //nolint:staticcheck // runtime view-switching, not startup
+	}
+}
+func (pm *ProgramMouse) DisableMouse() {
+	if pm.p != nil {
+		// Marked deprecated upstream ("the mouse is disabled
+		// automatically on exit") but it is the only exported
+		// program-level disable, and runtime view-switching is
+		// exactly the non-exit use the deprecation note doesn't
+		// cover. SGR encoding (1006) stays latched from startup —
+		// inert without tracking — so the re-enable resumes
+		// SGR-encoded reporting.
+		pm.p.DisableMouseCellMotion() //nolint:staticcheck // runtime view-switching, not program exit
+	}
+}
+
+// WithMouseController wires the capture switch; main passes a
+// ProgramMouse it later binds to the program.
+func (m Model) WithMouseController(mc MouseController) Model {
+	m.mouse = mc
+	return m
+}
+
+// StartWithMouseCapture reports whether main should start the
+// program with tea.WithMouseCellMotion — the launch-time half of
+// desiredMouseCapture (the model starts in the list view).
+func (m Model) StartWithMouseCapture() bool {
+	return m.desiredMouseCapture()
+}
+
+func (m Model) desiredMouseCapture() bool {
+	if m.mouseOff {
+		return false
+	}
+	if m.mode == modeDetail {
+		return false
+	}
+	// Prompts overlaid ON the detail view (confirm-close, defer,
+	// note) keep rendering the reading surface underneath — flipping
+	// capture for the prompt's lifetime would flicker terminal modes
+	// mid-read and re-capture text the user may be selecting.
+	switch m.mode {
+	case modeConfirmClose, modeDefer, modeNote:
+		return m.promptReturn != modeDetail
+	}
+	return true
+}
+
+// Update wraps the real handler (update) to keep terminal mouse
+// capture in sync with the mode, CENTRALLY: per-transition
+// Enable/Disable cmds scattered across every mode change is the
+// drift pattern that ships missed paths, so the one wrapper derives
+// the desired state before and after each message and emits the
+// switch only on a boundary crossing.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.desiredMouseCapture()
+	nm, cmd := m.update(msg)
+	next, ok := nm.(Model)
+	if !ok {
+		return nm, cmd
+	}
+	after := next.desiredMouseCapture()
+	if next.mouse != nil {
+		switch {
+		case after && !before:
+			next.mouse.EnableMouseCellMotion()
+		case before && !after:
+			next.mouse.DisableMouse()
+		}
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -3939,9 +4047,10 @@ func (m Model) viewHelp() string {
 	b.WriteString(helpStyle.Render("  IDs in the table are shown without the repeated workspace prefix\n"))
 	b.WriteString(helpStyle.Render("  (e.g. \"ma5.2.1\" stands for \"" + exampleFullID(m) + "ma5.2.1\").\n"))
 	b.WriteString(helpStyle.Render("  Press ⏎ to expand a row and see the full ID in the detail view.\n"))
-	b.WriteString(helpStyle.Render("  Mouse: wheel scrolls, click selects a row; press m to release\n"))
-	b.WriteString(helpStyle.Render("  the mouse for click-drag text selection (most terminals also\n"))
-	b.WriteString(helpStyle.Render("  pass shift- or option-drag through to selection while captured).\n"))
+	b.WriteString(helpStyle.Render("  Mouse: in the list, the wheel scrolls and a click selects a row.\n"))
+	b.WriteString(helpStyle.Render("  The detail view releases the mouse automatically so click-drag\n"))
+	b.WriteString(helpStyle.Render("  selects text; m toggles capture everywhere (shift/option-drag\n"))
+	b.WriteString(helpStyle.Render("  also reaches native selection while captured).\n"))
 	b.WriteString(helpStyle.Render("  Yank (y) uses OSC 52 so the copy reaches your local clipboard\n"))
 	b.WriteString(helpStyle.Render("  even over SSH; in tmux, enable `set -g allow-passthrough on`.\n"))
 	b.WriteString("\n")
@@ -5455,17 +5564,15 @@ func (m Model) toggleMouse() (tea.Model, tea.Cmd) {
 	m.mouseOff = !m.mouseOff
 	if m.mouseOff {
 		m.setStatus("mouse capture off — click-drag selects text; m to re-enable mouse nav")
-		// Returned BARE, not batched with flashClearCmd like other
-		// banners: batching the mouse-mode cmd was observed (live,
-		// under a PTY) to delay or drop the terminal mode-switch
-		// write, while the bare cmd applies instantly. The banner
-		// still clears on the next keystroke via modeList's
-		// status-reset, which is arguably better here anyway — the
-		// mode reminder lingers while the user is mousing.
-		return m, tea.DisableMouse
+	} else {
+		m.setStatus("mouse capture on — wheel scrolls, click selects; the detail view still releases it for text selection (m to disable)")
 	}
-	m.setStatus("mouse capture on — wheel scrolls, click selects; hold shift/option to select text, m to disable")
-	return m, tea.EnableMouseCellMotion
+	// The terminal write happens through the MouseController in the
+	// Update wrapper (the desiredMouseCapture boundary fires on the
+	// mouseOff flip) — synchronously, never as a tea.Cmd: batching
+	// those cmds was observed live to delay or drop the mode-switch
+	// write (PR #24).
+	return m, nil
 }
 
 // handleMouse interprets a tea.MouseMsg against the list view:

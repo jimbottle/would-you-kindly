@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Click-drag text selection works in the detail view again** — the
+  mouse-navigation feature captured the mouse globally, so selecting
+  text in an issue's instructions (the reading view's primary mouse
+  use) silently stopped working. Capture now follows the view: the
+  list and `:bd` output stay captured for wheel/click navigation; the
+  detail view — including prompts overlaid on it — releases the mouse
+  automatically and re-captures on the way out. The `m` master toggle
+  still works everywhere. Mouse-mode switching now goes through
+  direct program calls instead of tea commands, whose batched
+  delivery was observed to drop the terminal write.
+
+
 ## [0.7.0] — 2026-06-10
 
 ### Added

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -240,39 +239,12 @@ func TestMousePreference_PersistsAcrossSessions(t *testing.T) {
 	}
 }
 
-func TestInit_HonorsMousePreference(t *testing.T) {
-	// The Init half of the toggle: capture is requested at launch only
-	// when the (possibly session-restored) preference allows it. A
-	// regression that unconditionally appends tea.EnableMouseCellMotion
-	// would re-capture the mouse for users who turned it off. The
-	// returned batch's sub-cmds are compared by function identity
-	// rather than executed — executing them would run fetches and
-	// sleep through tickCmd.
-	requestsCapture := func(m Model) bool {
-		t.Helper()
-		msg := m.Init()()
-		batch, ok := msg.(tea.BatchMsg)
-		if !ok {
-			t.Fatalf("Init should return a batch; got %T", msg)
-		}
-		want := reflect.ValueOf(tea.EnableMouseCellMotion).Pointer()
-		for _, c := range batch {
-			if c != nil && reflect.ValueOf(c).Pointer() == want {
-				return true
-			}
-		}
-		return false
-	}
-
-	src := &stubSource{issues: manyIssues(2)}
-	if !requestsCapture(New(src)) {
-		t.Error("default Init must request mouse capture")
-	}
-	restored := New(src).WithSession(SessionState{MouseOff: true}, "")
-	if requestsCapture(restored) {
-		t.Error("Init must not request capture when the restored session has mouse_off")
-	}
-}
+// Init no longer requests mouse capture: the launch-time state rides
+// main's tea.WithMouseCellMotion option (pinned by
+// TestStartWithMouseCapture) and runtime switching goes through the
+// MouseController (pinned by the TestMouseCapture_* suite) — cmds
+// were dropped entirely after the batched-mouse-cmd delivery proved
+// lossy live (PR #24, would-you-kindly-5i0e).
 
 func TestRowsStartY_OverwideChromeStaysOneRow(t *testing.T) {
 	// bubbletea's standard renderer TRUNCATES lines wider than the
@@ -346,5 +318,150 @@ func TestToggleMouse_ReachableFromDetailAndOutput(t *testing.T) {
 	}
 	if m.mode != modeHelp {
 		t.Errorf("toggle must not close the help overlay; mode is %v", m.mode)
+	}
+}
+
+// recordingMouse is a fake MouseController logging the switch calls
+// the Update wrapper makes, so tests assert the actual terminal-state
+// transitions without executing tea cmds.
+type recordingMouse struct{ calls []string }
+
+func (r *recordingMouse) EnableMouseCellMotion() { r.calls = append(r.calls, "enable") }
+func (r *recordingMouse) DisableMouse()          { r.calls = append(r.calls, "disable") }
+
+func TestMouseCapture_FollowsTheView(t *testing.T) {
+	// The detail view is a reading surface: entering it must release
+	// the mouse so click-drag selects runbook text bare, and leaving
+	// must re-capture for list navigation (would-you-kindly-5i0e).
+	// Derived centrally — the Update wrapper switches on any boundary
+	// crossing, whatever caused it — and delivered as direct
+	// controller calls, never cmds (batched mouse cmds get
+	// delayed/dropped; the PR #24 live finding).
+	rec := &recordingMouse{}
+	src := &stubMutator{stubSource: stubSource{issues: manyIssues(3)}}
+	m := New(src).WithMouseController(rec)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, &src.stubSource)
+	rec.calls = nil
+
+	// list -> detail: release.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Fatalf("setup: enter should open detail; got %v", m.mode)
+	}
+	if len(rec.calls) != 1 || rec.calls[0] != "disable" {
+		t.Errorf("entering detail must release capture; calls = %v", rec.calls)
+	}
+
+	// prompts overlaid ON detail (a -> confirm-close) keep it released.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	if m.mode != modeConfirmClose {
+		t.Fatalf("setup: a should open confirm-close; got %v", m.mode)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Fatalf("setup: n should cancel back to detail; got %v", m.mode)
+	}
+	if len(rec.calls) != 1 {
+		t.Errorf("a detail-overlaid prompt must not flip capture; calls = %v", rec.calls)
+	}
+
+	// detail -> list: re-capture.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Fatalf("esc should return to the list; got %v", m.mode)
+	}
+	if len(rec.calls) != 2 || rec.calls[1] != "enable" {
+		t.Errorf("leaving detail must re-capture; calls = %v", rec.calls)
+	}
+}
+
+func TestMouseCapture_MasterSwitchOffMeansNoSwitching(t *testing.T) {
+	// With the persisted toggle off, view boundaries must not touch
+	// terminal mouse state in either direction.
+	rec := &recordingMouse{}
+	src := &stubSource{issues: manyIssues(3)}
+	m := New(src).WithSession(SessionState{MouseOff: true}, "").WithMouseController(rec)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	rec.calls = nil
+
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if len(rec.calls) != 0 {
+		t.Errorf("mouseOff: view boundaries must not switch; calls = %v", rec.calls)
+	}
+}
+
+func TestToggleMouse_InDetailDoesNotCaptureTheReadingView(t *testing.T) {
+	// m inside the detail view flips the master switch but must not
+	// capture the mouse THERE — the reading view stays released; the
+	// list re-captures on the way out.
+	rec := &recordingMouse{}
+	src := &stubSource{issues: manyIssues(3)}
+	m := New(src).WithMouseController(rec)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	rec.calls = nil
+
+	// off… (already released in detail: no switch call)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = model.(Model)
+	if !m.mouseOff {
+		t.Fatal("first m should turn the master switch off")
+	}
+	// …and back on, still inside detail: still no capture.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = model.(Model)
+	if m.mouseOff {
+		t.Fatal("second m should turn the master switch back on")
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("toggling the master switch inside detail must not write mouse state; calls = %v", rec.calls)
+	}
+	// leaving detail then re-captures.
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if len(rec.calls) != 1 || rec.calls[0] != "enable" {
+		t.Errorf("leaving detail with the switch on must re-capture; calls = %v", rec.calls)
+	}
+}
+
+func TestToggleMouse_InListSwitchesImmediately(t *testing.T) {
+	// In the list (a navigation surface) the m toggle takes effect on
+	// the spot, both directions.
+	rec := &recordingMouse{}
+	src := &stubSource{issues: manyIssues(3)}
+	m := New(src).WithMouseController(rec)
+	m = applyFetched(m, src)
+	rec.calls = nil
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = model.(Model)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	_ = model
+	if len(rec.calls) != 2 || rec.calls[0] != "disable" || rec.calls[1] != "enable" {
+		t.Errorf("list-mode m must switch immediately both ways; calls = %v", rec.calls)
+	}
+}
+
+func TestStartWithMouseCapture(t *testing.T) {
+	// The launch-time half: main passes tea.WithMouseCellMotion iff
+	// the model wants capture at start (list mode, master switch on).
+	src := &stubSource{}
+	if !New(src).StartWithMouseCapture() {
+		t.Error("default launch should start captured")
+	}
+	if New(src).WithSession(SessionState{MouseOff: true}, "").StartWithMouseCapture() {
+		t.Error("restored mouse_off must start released")
 	}
 }
