@@ -540,6 +540,13 @@ window into it; `wyk handoff` and `wyk inbox` are the agent's.
 
 ## Screenshots
 
+![wyk handoff round-trip](docs/screenshots/wyk-demo.gif)
+
+The agent↔human round-trip: an agent files a runbook with `wyk handoff`,
+the human jumps to the **human view** (`h`), reads the runbook (`enter`),
+and closes it (`a`) — the queue clears. Regenerate the cast with
+`bash docs/screenshots/render-demo.sh`.
+
 ![wyk multi-repo view](docs/screenshots/wyk-tui.png)
 
 The default `all` preset across registered repos. The **Owner** column
