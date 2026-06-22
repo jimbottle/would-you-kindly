@@ -6,11 +6,14 @@
 # disposable workspace so the recording never touches real registered repos.
 # Re-runnable: it nukes and rebuilds the target dir each time.
 #
-#   bash docs/screenshots/wyk-demo-seed.sh [target-dir]   # default: $TMPDIR/wyk-demo
+#   bash docs/screenshots/wyk-demo-seed.sh [target-dir]   # default: /tmp/wyk-demo
 #
 set -euo pipefail
 
-DEMO_DIR="${1:-${TMPDIR:-/tmp}/wyk-demo}"
+# Default to /tmp/wyk-demo — NOT $TMPDIR (which is /var/folders/... on macOS) —
+# because wyk-demo.tape hardcodes /tmp/wyk-demo. A bare standalone run must seed
+# the same dir the tape reads from. render-demo.sh passes this explicitly.
+DEMO_DIR="${1:-/tmp/wyk-demo}"
 
 # The bd-create guard (wyk hook) only blocks `wyk create`; we call bd
 # directly here, but set this so the script is safe under any wrapper.

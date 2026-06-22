@@ -25,6 +25,9 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 55ms
 
 # --- Hidden setup: scope the shell to the pre-seeded demo workspace ---
+# These literal paths must match DEMO_DIR / DEMO_CFG in render-demo.sh and the
+# seed script's default — VHS tapes can't read shell variables, so keep them in
+# sync if you ever change the demo location.
 Hide
 Type "export XDG_CONFIG_HOME=/tmp/wyk-demo-cfg"
 Enter
