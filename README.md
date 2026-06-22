@@ -147,9 +147,11 @@ wyk -preset human    # all/ready/human/mine/blocked/review
 The `review` preset filters to issues labelled `roborev` — the work
 [roborev](https://www.roborev.io)'s beads hook files from review
 failures — giving the roborev → beads → wyk loop a dedicated triage
-view. A `N review` count also rides the status bar in every preset, so
-review-sourced work is visible at a glance without leaving your current
-view.
+view. Review-sourced rows also carry a `◆` marker in the title and a
+`N review` count rides the status bar in every preset, so they're
+distinguishable at a glance without leaving your current view. (The
+marker is provenance, kept separate from the Owner column's ownership
+badge — a review issue is still agent-owned work to fix.)
 
 ### Managing the registry
 

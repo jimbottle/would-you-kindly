@@ -4316,6 +4316,14 @@ const (
 	colSession = 8 // first 8 chars of the Claude session UUID that filed the issue (via `wyk create`); enough to recognise/disambiguate sessions at a glance. Header "Session" is 7.
 )
 
+// reviewMarkGlyph + reviewMarkWidth are the per-row provenance marker for
+// review-sourced (label=roborev) titles: a ◆ glyph plus a trailing space,
+// two display cells wide. See renderRow.
+const (
+	reviewMarkGlyph = "◆"
+	reviewMarkWidth = 2
+)
+
 // colWidths holds the per-paint display width of each fixed column,
 // sized to the wider of the header and the widest value in the current
 // list (clamped to sane bounds) so columns scale to content instead of
@@ -4625,9 +4633,21 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	// (would-you-kindly-waub).
 	title := sanitizeInline(i.Title)
 	origLen := utf8.RuneCountInString(title)
-	if avail := m.titleBudget(); avail > 0 {
+	// Review-sourced rows (label=roborev) get a leading ◆ glyph so they're
+	// distinguishable per-row in any preset — a provenance marker kept out of
+	// the owner column's ownership axis. It costs reviewMarkWidth cells of the
+	// title budget so the right edge stays aligned with unmarked rows, and is
+	// added only when the budget can spare them.
+	reviewPrefix := ""
+	prefixWidth := 0
+	if i.HasLabel(filter.ReviewLabel) && m.titleBudget() > reviewMarkWidth {
+		reviewPrefix = reviewMarkStyle.Render(reviewMarkGlyph) + " "
+		prefixWidth = reviewMarkWidth
+	}
+	if avail := m.titleBudget() - prefixWidth; avail > 0 {
 		title = trunc(title, avail)
 	}
+	b.WriteString(reviewPrefix)
 	// Apply fuzzy-match highlighting after truncation. When trunc
 	// inserts an ellipsis (`runes[:n-1] + "…"`, taken when n >= 2
 	// AND the string was longer than n), drop any match at or

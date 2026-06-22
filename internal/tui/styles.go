@@ -84,6 +84,12 @@ var (
 				Bold(true).
 				Padding(0, 1)
 
+	// reviewMarkStyle renders the ◆ glyph prefixed to review-sourced
+	// (label=roborev) titles — a per-row provenance marker, deliberately
+	// separate from the owner column's ownership badges. Amber reads as "a
+	// finding wants attention" and is theme-adaptive via cWarn.
+	reviewMarkStyle = lipgloss.NewStyle().Foreground(cWarn)
+
 	cursorStyle = lipgloss.NewStyle().
 			Foreground(cAccent).
 			Bold(true)
