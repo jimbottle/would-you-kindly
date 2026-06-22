@@ -4316,13 +4316,11 @@ const (
 	colSession = 8 // first 8 chars of the Claude session UUID that filed the issue (via `wyk create`); enough to recognise/disambiguate sessions at a glance. Header "Session" is 7.
 )
 
-// reviewMarkGlyph + reviewMarkWidth are the per-row provenance marker for
-// review-sourced (label=roborev) titles: a ◆ glyph plus a trailing space,
-// two display cells wide. See renderRow.
-const (
-	reviewMarkGlyph = "◆"
-	reviewMarkWidth = 2
-)
+// reviewMarkGlyph is the per-row provenance marker prefixed (with a trailing
+// space) to review-sourced (label=roborev) titles. Its display width is
+// MEASURED via dispWidth at the call site, not assumed — ◆ is East-Asian
+// *ambiguous*, so it isn't reliably one cell. See renderRow.
+const reviewMarkGlyph = "◆"
 
 // colWidths holds the per-paint display width of each fixed column,
 // sized to the wider of the header and the widest value in the current
@@ -4635,14 +4633,18 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 	origLen := utf8.RuneCountInString(title)
 	// Review-sourced rows (label=roborev) get a leading ◆ glyph so they're
 	// distinguishable per-row in any preset — a provenance marker kept out of
-	// the owner column's ownership axis. It costs reviewMarkWidth cells of the
-	// title budget so the right edge stays aligned with unmarked rows, and is
-	// added only when the budget can spare them.
+	// the owner column's ownership axis. The prefix charges the title budget
+	// its MEASURED width (dispWidth, not a hardcoded count): ◆ is East-Asian
+	// *ambiguous*, so it's 2 cells under ambWide and "◆ " is 3 — reserving a
+	// flat 2 would overrun the right edge by a cell on ambiguous-wide
+	// terminals. Added only when the budget can spare it.
 	reviewPrefix := ""
 	prefixWidth := 0
-	if i.HasLabel(filter.ReviewLabel) && m.titleBudget() > reviewMarkWidth {
-		reviewPrefix = reviewMarkStyle.Render(reviewMarkGlyph) + " "
-		prefixWidth = reviewMarkWidth
+	if i.HasLabel(filter.ReviewLabel) {
+		if w := dispWidth(reviewMarkGlyph + " "); m.titleBudget() > w {
+			reviewPrefix = reviewMarkStyle.Render(reviewMarkGlyph) + " "
+			prefixWidth = w
+		}
 	}
 	if avail := m.titleBudget() - prefixWidth; avail > 0 {
 		title = trunc(title, avail)
