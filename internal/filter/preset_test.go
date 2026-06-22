@@ -18,6 +18,8 @@ func TestQueryWithClosed(t *testing.T) {
 		{"mine with closed without me", PresetMine, "", true, ``},
 		{"blocked stays blocked", PresetBlocked, "ev", false, `status=blocked`},
 		{"blocked with closed flag ignored", PresetBlocked, "ev", true, `status=blocked`},
+		{"review open-only", PresetReview, "ev", false, `label=roborev AND status!=closed`},
+		{"review with closed", PresetReview, "ev", true, `label=roborev`},
 		{"all returns empty", PresetAll, "ev", false, ``},
 		{"all returns empty with closed", PresetAll, "ev", true, ``},
 		{"ready returns empty", PresetReady, "ev", false, ``},
@@ -44,6 +46,7 @@ func TestIsPreset(t *testing.T) {
 		"human":   true,
 		"mine":    true,
 		"blocked": true,
+		"review":  true,
 		"":        false,
 		"bogus":   false,
 		"All":     false, // case-sensitive

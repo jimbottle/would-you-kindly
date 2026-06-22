@@ -14,7 +14,18 @@ const (
 	PresetHuman   Preset = "human"
 	PresetMine    Preset = "mine"
 	PresetBlocked Preset = "blocked"
+	PresetReview  Preset = "review"
 )
+
+// ReviewLabel is the bd label PresetReview filters on: the label
+// roborev (the continuous code-review daemon) attaches to issues its
+// hooks file from review failures — the same label it uses to exclude
+// its own issues from re-review. Issues carrying it are review-sourced
+// remediation work; the `review` preset gives them a dedicated view so
+// the roborev → beads → wyk loop has a triage surface. A roborev hook
+// configured with a custom `labels` set won't match this default; that
+// case is a documented follow-up (configurable review label).
+const ReviewLabel = "roborev"
 
 // presetOrder is the rotation order used by Tab in the TUI.
 var presetOrder = []Preset{
@@ -23,6 +34,7 @@ var presetOrder = []Preset{
 	PresetHuman,
 	PresetMine,
 	PresetBlocked,
+	PresetReview,
 }
 
 // AllPresets returns the rotation in order.
@@ -90,6 +102,11 @@ func QueryWithClosed(p Preset, me string, includeClosed bool) string {
 	case PresetBlocked:
 		// status=blocked already excludes closed by construction.
 		return `status=blocked`
+	case PresetReview:
+		if includeClosed {
+			return `label=` + ReviewLabel
+		}
+		return `label=` + ReviewLabel + ` AND status!=closed`
 	case PresetMine:
 		base := ``
 		if me != "" {

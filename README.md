@@ -141,8 +141,15 @@ Launch into a specific preset (so a shell alias can land on the human
 view, the agent inbox, etc.):
 
 ```bash
-wyk -preset human    # all/ready/human/mine/blocked
+wyk -preset human    # all/ready/human/mine/blocked/review
 ```
+
+The `review` preset filters to issues labelled `roborev` — the work
+[roborev](https://www.roborev.io)'s beads hook files from review
+failures — giving the roborev → beads → wyk loop a dedicated triage
+view. A `N review` count also rides the status bar in every preset, so
+review-sourced work is visible at a glance without leaving your current
+view.
 
 ### Managing the registry
 
@@ -402,7 +409,7 @@ to restore the original.
 | `/`       | Open the filter input (fuzzy title; substring on repo, branch, ID, body) |
 | `@name`   | Expand a saved fuzzy filter (manage via `:filter`)|
 | `h`       | Toggle the human-flagged view (press again to return)   |
-| `tab`     | Cycle preset filters (all → ready → human → mine → blocked) |
+| `tab`     | Cycle preset filters (all → ready → human → mine → blocked → review) |
 | `C`       | Toggle "show closed" across all presets           |
 | `s` / `S` | Cycle sort key / reverse the active direction     |
 | `o`       | Column-visibility overlay (persists to `ui.json`) |

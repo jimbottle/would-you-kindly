@@ -676,6 +676,8 @@ func issuesMatchingPreset(snapshot []beads.Issue, have, want filter.Preset, me s
 		keep = func(i beads.Issue) bool { return i.IsHuman() && i.Status != "closed" }
 	case filter.PresetBlocked:
 		keep = func(i beads.Issue) bool { return i.Status == "blocked" }
+	case filter.PresetReview:
+		keep = func(i beads.Issue) bool { return i.HasLabel(filter.ReviewLabel) && i.Status != "closed" }
 	case filter.PresetMine:
 		if me == "" {
 			// QueryWithClosed degrades `mine` with no identity to
@@ -5359,12 +5361,16 @@ func keyHit(msg tea.KeyMsg, b key.Binding) bool {
 func (m Model) renderStatsLine() string {
 	human := 0
 	mine := 0
+	review := 0
 	for _, i := range m.all {
 		for _, l := range i.Labels {
 			if l == "human" {
 				human++
 				break
 			}
+		}
+		if i.HasLabel(filter.ReviewLabel) {
+			review++
 		}
 		if m.me != "" && i.Owner == m.me {
 			mine++
@@ -5373,6 +5379,13 @@ func (m Model) renderStatsLine() string {
 	var parts []string
 	if human > 0 {
 		parts = append(parts, fmt.Sprintf("%d human", human))
+	}
+	if review > 0 {
+		// Surface roborev-filed review work at a glance, in any preset —
+		// distinguishing review-sourced rows without overloading the
+		// owner-column ownership axis (the dedicated `review` preset is
+		// the filtered view).
+		parts = append(parts, fmt.Sprintf("%d review", review))
 	}
 	if m.me != "" {
 		// Show the mine slot even at 0 so the user knows it's
@@ -5725,6 +5738,8 @@ func emptyMatchCopy(p filter.Preset, query string) string {
 		return "nothing assigned to you in this workspace\n  → Tab cycles presets; check `-me` if you expected rows"
 	case filter.PresetBlocked:
 		return "no blocked issues — work is flowing\n  → Tab cycles presets"
+	case filter.PresetReview:
+		return "no open review findings — roborev hasn't filed anything (or it's all handled)\n  → Tab cycles presets; this view tracks issues roborev's beads hook files"
 	default:
 		return "no issues match this view\n  → C includes closed rows; / opens a fuzzy filter; Tab cycles presets"
 	}
