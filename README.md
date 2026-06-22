@@ -280,6 +280,33 @@ status!=closed` — things you (the agent) filed that a human has
 touched but left open. Use this at the start of a session to find
 what you need to act on next.
 
+#### Proactive nudge (opt-in Stop hook)
+
+`wyk inbox` is pull: the agent has to think to run it. To make the
+round-trip *push* — so a human's bounce-back reaches a working agent
+without anyone re-prompting it — register `wyk hook agent-nudge` as a
+Claude Code **Stop** hook in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "wyk hook agent-nudge" } ] }
+    ]
+  }
+}
+```
+
+When the agent finishes a turn, the hook checks the inbox and — if
+items have appeared that it hasn't already surfaced **this session** —
+blocks the stop and tells the agent to work them. Two guards keep it
+from nagging: per-session dedup (each inbox item is surfaced at most
+once per session, so a standing inbox doesn't re-fire every turn — it
+nudges on *change*) and Claude's `stop_hook_active` flag (it never
+blocks while already continuing from a Stop hook, so it can't loop).
+It fails open: any bd hiccup just allows the stop. Dedup state lives in
+`$XDG_STATE_HOME/wyk/agent-nudge/<session>.json`.
+
 #### Claude Code skill
 
 A project-local Claude Code skill at

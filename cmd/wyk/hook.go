@@ -59,7 +59,7 @@ func parseCloseRefs(commitMessage string) []string {
 // for pre-commit / pre-push variants without renaming the public CLI.
 func runHook(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk hook <post-commit> [args]")
+		fmt.Fprintln(os.Stderr, "usage: wyk hook <post-commit|bd-create-guard|agent-nudge> [args]")
 		return 64
 	}
 	switch args[0] {
@@ -67,6 +67,8 @@ func runHook(args []string) int {
 		return runHookPostCommit(args[1:])
 	case "bd-create-guard":
 		return runHookBDCreateGuard(os.Stdin)
+	case "agent-nudge":
+		return runHookAgentNudge(os.Stdin)
 	default:
 		fmt.Fprintf(os.Stderr, "wyk hook: unknown subcommand %q\n", args[0])
 		return 64
