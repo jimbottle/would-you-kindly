@@ -217,6 +217,8 @@ wyk doctor
 #          ~/.config/wyk/repos.json — 2 repo(s) registered
 #   [PASS] repo would-you-kindly: .beads/ present
 #   [PASS] repo would-you-kindly: post-commit hook (chained)
+#   [WARN] repo would-you-kindly: handoff-contract hygiene
+#          1 human task(s) with an empty runbook [wyk-37] — the description IS the runbook; fill it via `wyk handoff <id>`
 #   ...
 #   doctor: OK
 ```
@@ -225,6 +227,12 @@ Checks the common friction points: bd and wyk on `PATH`, registry
 parseable, each registered repo has `.beads/` and `.git/`, post-
 commit hook is either wyk's (plain or chained) or flagged as foreign,
 chained hook's `.pre-wyk` preservation file is intact.
+
+It also reconciles each repo's open queue against the handoff contract
+— surfacing human tasks with an empty runbook, human tasks missing a
+`src:` provenance label, and agent tasks with no assignee (orphans) —
+all computed from the issues it already fetched, so it costs no extra
+bd calls.
 
 Exit 0 on PASS or WARN-only, exit 1 if any FAIL.
 

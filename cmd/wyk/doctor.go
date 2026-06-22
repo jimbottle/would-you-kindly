@@ -745,6 +745,65 @@ func classifyGuardHook(prefix, repoPath string, data []byte, readErr error) chec
 		detail: "bd-create-guard PreToolUse hook present in .claude/settings.json.\nNOTE: doctor verifies the FILE only — Claude Code must TRUST/approve the project's hooks to actually run it. Verify in-session with `/hooks`; an unapproved hook silently never fires."}
 }
 
+// checkContractHygiene flags handoff-contract drift bd itself can't see,
+// computed from the repo's already-fetched open issues (no extra bd call).
+// It encodes the conventions in docs/CONTRACT.md and CLAUDE.md:
+//   - a human task whose runbook (its description) is empty — the human has
+//     nothing to act on;
+//   - a human task with no src: provenance label — who filed it is lost;
+//   - an agent-owned task with no assignee — an orphan ("don't file orphan
+//     tasks ... treat a missing assignee as a defect").
+//
+// agent-handoff issues are skipped: they belong to another agent and are
+// human-orchestrated, so neither runbook nor assignee is this checker's to
+// police. Returns one PASS when the open queue is clean, or one WARN
+// summarising the offenders (IDs capped) otherwise.
+func checkContractHygiene(prefix string, issues []beads.Issue) check {
+	name := prefix + ": handoff-contract hygiene"
+	var noRunbook, noProvenance, orphan []string
+	for _, is := range issues {
+		switch {
+		case is.IsHuman():
+			if strings.TrimSpace(is.Description) == "" {
+				noRunbook = append(noRunbook, is.ID)
+			}
+			if !is.HasLabel("src:agent") && !is.HasLabel("src:human") {
+				noProvenance = append(noProvenance, is.ID)
+			}
+		case is.IsAgentHandoff():
+			// another agent's work, human-orchestrated — leave it alone
+		default:
+			if strings.TrimSpace(is.Assignee) == "" {
+				orphan = append(orphan, is.ID)
+			}
+		}
+	}
+	if len(noRunbook) == 0 && len(noProvenance) == 0 && len(orphan) == 0 {
+		return check{name: name, status: statusPass}
+	}
+	var parts []string
+	if len(noRunbook) > 0 {
+		parts = append(parts, fmt.Sprintf("%d human task(s) with an empty runbook [%s] — the description IS the runbook; fill it via `wyk handoff <id>`", len(noRunbook), capIDs(noRunbook)))
+	}
+	if len(noProvenance) > 0 {
+		parts = append(parts, fmt.Sprintf("%d human task(s) missing a src: provenance label [%s]", len(noProvenance), capIDs(noProvenance)))
+	}
+	if len(orphan) > 0 {
+		parts = append(parts, fmt.Sprintf("%d agent task(s) with no assignee [%s] — claim or assign them (`bd update <id> --claim`)", len(orphan), capIDs(orphan)))
+	}
+	return check{name: name, status: statusWarn, detail: strings.Join(parts, "; ")}
+}
+
+// capIDs renders up to five issue IDs, summarising any remainder, so a
+// noisy backlog doesn't produce an unreadable detail line.
+func capIDs(ids []string) string {
+	const max = 5
+	if len(ids) <= max {
+		return strings.Join(ids, ", ")
+	}
+	return strings.Join(ids[:max], ", ") + fmt.Sprintf(", +%d more", len(ids)-max)
+}
+
 func checkRepo(r registry.Repo) []check {
 	prefix := "repo " + r.Name
 	var out []check
@@ -792,12 +851,15 @@ func checkRepo(r registry.Repo) []check {
 		ctx, cancel := context.WithTimeout(context.Background(), doctorPerRepoTimeout)
 		c := beads.NewClient()
 		c.Dir = r.Path
-		_, qerr := c.Query(ctx, `status!=closed`)
+		issues, qerr := c.Query(ctx, `status!=closed`)
 		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()
 		switch {
 		case qerr == nil:
 			out = append(out, check{name: prefix + ": bd query responds", status: statusPass})
+			// Reuse the open-issue set we just fetched (no extra bd
+			// call) to surface handoff-contract drift bd can't see.
+			out = append(out, checkContractHygiene(prefix, issues))
 		case timedOut:
 			out = append(out, check{
 				name:   prefix + ": bd query responds",

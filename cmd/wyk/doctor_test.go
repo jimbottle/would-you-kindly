@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
@@ -696,5 +697,83 @@ func TestClaudeBlockSalienceNote(t *testing.T) {
 	// No block -> empty.
 	if note := claudeBlockSalienceNote([]byte(long)); note != "" {
 		t.Errorf("no block -> empty; got %q", note)
+	}
+}
+
+func TestCheckContractHygiene(t *testing.T) {
+	mk := func(id string, labels []string, desc, assignee string) beads.Issue {
+		return beads.Issue{ID: id, Labels: labels, Description: desc, Assignee: assignee}
+	}
+	manyOrphans := func() []beads.Issue {
+		var out []beads.Issue
+		for _, id := range []string{"n1", "n2", "n3", "n4", "n5", "n6", "n7"} {
+			out = append(out, mk(id, []string{"src:agent"}, "", ""))
+		}
+		return out
+	}
+	tests := []struct {
+		name      string
+		issues    []beads.Issue
+		want      checkStatus
+		inDetail  []string
+		notDetail []string
+	}{
+		{
+			name: "clean queue passes",
+			issues: []beads.Issue{
+				mk("a", []string{"human", "src:agent"}, "do the thing", ""), // human: runbook + provenance
+				mk("b", []string{"src:agent"}, "", "alice"),                 // agent task, assigned
+				mk("c", []string{"agent-handoff"}, "", ""),                  // another agent's, skipped
+			},
+			want: statusPass,
+		},
+		{
+			name:     "human task with whitespace-only runbook warns",
+			issues:   []beads.Issue{mk("h1", []string{"human", "src:agent"}, "   \n", "")},
+			want:     statusWarn,
+			inDetail: []string{"empty runbook", "h1"},
+		},
+		{
+			name:     "human task missing provenance warns",
+			issues:   []beads.Issue{mk("h2", []string{"human"}, "a runbook", "")},
+			want:     statusWarn,
+			inDetail: []string{"provenance", "h2"},
+		},
+		{
+			name:      "agent task without assignee is an orphan",
+			issues:    []beads.Issue{mk("o1", []string{"src:agent"}, "", "")},
+			want:      statusWarn,
+			inDetail:  []string{"no assignee", "o1"},
+			notDetail: []string{"runbook", "provenance"},
+		},
+		{
+			name:   "agent-handoff is never flagged",
+			issues: []beads.Issue{mk("ah", []string{"agent-handoff"}, "", "")},
+			want:   statusPass,
+		},
+		{
+			name:     "long offender lists are capped",
+			issues:   manyOrphans(),
+			want:     statusWarn,
+			inDetail: []string{"+2 more"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkContractHygiene("repo x", tc.issues)
+			if got.status != tc.want {
+				t.Fatalf("status = %v, want %v (detail: %q)", got.status, tc.want, got.detail)
+			}
+			for _, s := range tc.inDetail {
+				if !strings.Contains(got.detail, s) {
+					t.Errorf("detail %q missing %q", got.detail, s)
+				}
+			}
+			for _, s := range tc.notDetail {
+				if strings.Contains(got.detail, s) {
+					t.Errorf("detail %q should not contain %q", got.detail, s)
+				}
+			}
+		})
 	}
 }
