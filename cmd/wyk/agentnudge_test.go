@@ -106,3 +106,97 @@ func TestRunHookAgentNudge_EarlyReturnsAllowStop(t *testing.T) {
 		})
 	}
 }
+
+func TestRunHookInstallNudge(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	path := filepath.Join(cfg, "settings.json")
+
+	// Pre-seed an unrelated PreToolUse hook to prove preservation.
+	seed := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"wyk hook bd-create-guard"}]}]}}`
+	if err := os.WriteFile(path, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	install := func(args ...string) int {
+		var code int
+		captureStdout(t, func() { code = runHookInstallNudge(args) })
+		return code
+	}
+
+	// Install: adds the Stop hook, leaves the PreToolUse hook alone.
+	if code := install(); code != 0 {
+		t.Fatalf("install exit %d", code)
+	}
+	root := readSettingsFile(t, path)
+	if !settingsHasHookForEvent(root, "Stop", agentNudgeHookCmd) {
+		t.Error("Stop hook not installed")
+	}
+	if !settingsHasHookForEvent(root, "PreToolUse", "wyk hook bd-create-guard") {
+		t.Error("pre-existing PreToolUse hook was clobbered")
+	}
+
+	// Idempotent: a second install must not duplicate the entry.
+	if code := install(); code != 0 {
+		t.Fatalf("second install exit %d", code)
+	}
+	if n := countEventHooks(readSettingsFile(t, path), "Stop", agentNudgeHookCmd); n != 1 {
+		t.Errorf("install not idempotent: %d Stop entries, want 1", n)
+	}
+
+	// Dry-run mutates nothing.
+	before, _ := os.ReadFile(path)
+	if code := install("-uninstall", "-dry-run"); code != 0 {
+		t.Fatalf("dry-run exit %d", code)
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Error("dry-run mutated settings.json")
+	}
+
+	// Uninstall removes the Stop hook but preserves the PreToolUse hook.
+	if code := install("-uninstall"); code != 0 {
+		t.Fatalf("uninstall exit %d", code)
+	}
+	root = readSettingsFile(t, path)
+	if settingsHasHookForEvent(root, "Stop", agentNudgeHookCmd) {
+		t.Error("Stop hook not removed")
+	}
+	if !settingsHasHookForEvent(root, "PreToolUse", "wyk hook bd-create-guard") {
+		t.Error("uninstall clobbered the PreToolUse hook")
+	}
+
+	// Uninstall again is a no-op success.
+	if code := install("-uninstall"); code != 0 {
+		t.Errorf("second uninstall exit %d, want 0", code)
+	}
+}
+
+func readSettingsFile(t *testing.T, path string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(b, &root); err != nil {
+		t.Fatalf("parse settings: %v (%s)", err, b)
+	}
+	return root
+}
+
+func countEventHooks(root map[string]any, event, cmd string) int {
+	hooks, _ := root["hooks"].(map[string]any)
+	entries, _ := hooks[event].([]any)
+	n := 0
+	for _, e := range entries {
+		entry, _ := e.(map[string]any)
+		inner, _ := entry["hooks"].([]any)
+		for _, h := range inner {
+			hm, _ := h.(map[string]any)
+			if c, _ := hm["command"].(string); c == cmd {
+				n++
+			}
+		}
+	}
+	return n
+}

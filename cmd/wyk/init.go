@@ -835,11 +835,11 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-// claudeSettingsHasHook reports whether any PreToolUse hook command in the
-// parsed settings equals cmd — the idempotency check for seedClaudeSettings.
-func claudeSettingsHasHook(root map[string]any, cmd string) bool {
+// settingsHasHookForEvent reports whether any hook command under the given
+// Claude Code event (PreToolUse, Stop, …) in the parsed settings equals cmd.
+func settingsHasHookForEvent(root map[string]any, event, cmd string) bool {
 	hooks, _ := root["hooks"].(map[string]any)
-	entries, _ := hooks["PreToolUse"].([]any)
+	entries, _ := hooks[event].([]any)
 	for _, e := range entries {
 		entry, _ := e.(map[string]any)
 		inner, _ := entry["hooks"].([]any)
@@ -853,24 +853,39 @@ func claudeSettingsHasHook(root map[string]any, cmd string) bool {
 	return false
 }
 
-// addPreToolUseHook appends a Bash-matched PreToolUse entry running cmd,
-// creating the hooks / PreToolUse containers as needed. Preserves any
-// existing hook entries (e.g. bd's SessionStart/PreCompact).
-func addPreToolUseHook(root map[string]any, cmd string) {
+// claudeSettingsHasHook reports whether any PreToolUse hook command in the
+// parsed settings equals cmd — the idempotency check for seedClaudeSettings.
+func claudeSettingsHasHook(root map[string]any, cmd string) bool {
+	return settingsHasHookForEvent(root, "PreToolUse", cmd)
+}
+
+// addHookForEvent appends an entry running cmd under the given Claude Code
+// event, creating the hooks / <event> containers as needed and preserving any
+// existing entries (e.g. bd's SessionStart/PreCompact). A non-empty matcher
+// scopes the entry (tool-call events like PreToolUse); session events like
+// Stop take no matcher, so pass "" to omit the key.
+func addHookForEvent(root map[string]any, event, matcher, cmd string) {
 	hooks, _ := root["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 		root["hooks"] = hooks
 	}
-	entries, _ := hooks["PreToolUse"].([]any)
-	entries = append(entries, map[string]any{
-		"matcher": "Bash",
+	entry := map[string]any{
 		"hooks": []any{map[string]any{
 			"type":    "command",
 			"command": cmd,
 		}},
-	})
-	hooks["PreToolUse"] = entries
+	}
+	if matcher != "" {
+		entry["matcher"] = matcher
+	}
+	entries, _ := hooks[event].([]any)
+	hooks[event] = append(entries, entry)
+}
+
+// addPreToolUseHook appends a Bash-matched PreToolUse entry running cmd.
+func addPreToolUseHook(root map[string]any, cmd string) {
+	addHookForEvent(root, "PreToolUse", "Bash", cmd)
 }
 
 // resolveGitHookPath returns the absolute path to <hook> inside

@@ -292,7 +292,14 @@ what you need to act on next.
 `wyk inbox` is pull: the agent has to think to run it. To make the
 round-trip *push* — so a human's bounce-back reaches a working agent
 without anyone re-prompting it — register `wyk hook agent-nudge` as a
-Claude Code **Stop** hook in `~/.claude/settings.json`:
+Claude Code **Stop** hook. One command does it (idempotent;
+`-uninstall` to remove, `-project` to scope to this repo instead):
+
+```bash
+wyk hook install-nudge   # adds the Stop hook to ~/.claude/settings.json
+```
+
+That writes the standard hook entry — equivalent to adding this by hand:
 
 ```json
 {
