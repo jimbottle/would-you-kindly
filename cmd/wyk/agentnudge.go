@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/sanitize"
@@ -18,6 +19,26 @@ import (
 // agentNudgeHookCmd is the command `wyk hook install-nudge` registers as a
 // Claude Code Stop hook (and the runtime handler dispatched by `wyk hook`).
 const agentNudgeHookCmd = "wyk hook agent-nudge"
+
+// nudgeStateMaxAge bounds how long a per-session dedup file lingers before
+// the next nudge prunes it. Sessions are short-lived, so two weeks is far
+// past any live session while keeping the scratch dir from growing forever.
+const nudgeStateMaxAge = 14 * 24 * time.Hour
+
+// nudgeFetchInbox returns the current agent inbox across every registered
+// workspace — the same set `wyk inbox` shows. It's a swappable seam (like
+// the beads runner / probeBDFunc patterns elsewhere) so the
+// block→dedup→allow state machine in runHookAgentNudge can be unit-tested
+// without a real bd binary. An empty registry / no workspace is an error,
+// which the caller treats as "nothing to nudge about" (fail open).
+var nudgeFetchInbox = func() ([]beads.Issue, error) {
+	subs, code := inboxSubs("", "")
+	if code != 0 {
+		return nil, fmt.Errorf("no bd workspace")
+	}
+	all, _ := fetchInbox(subs, inboxQuery) // partial results are fine; ignore sub-errors
+	return all, nil
+}
 
 // runHookInstallNudge installs (or removes) the agent-nudge Stop hook in a
 // Claude Code settings.json. Defaults to the USER settings
@@ -206,18 +227,15 @@ func runHookAgentNudge(stdin io.Reader) int {
 		return 0 // already continuing from a stop hook; don't loop
 	}
 
+	all, err := nudgeFetchInbox()
+	if err != nil {
+		return 0 // no registry / no workspace / bd error → nothing to nudge about
+	}
 	// Identity-aware, mirroring `wyk inbox`'s default (collective query,
 	// then narrow to this identity's routed + un-routed work). A malformed
 	// $WYK_AGENT_IDENTITY just falls back to the collective inbox here —
 	// the nudge is advisory, not a place to hard-error.
-	ident, _ := resolveIdentity("")
-
-	subs, code := inboxSubs("", "")
-	if code != 0 {
-		return 0 // no registry / no workspace → nothing to nudge about
-	}
-	all, _ := fetchInbox(subs, inboxQuery) // partial results are fine; ignore sub-errors
-	if ident != "" {
+	if ident, _ := resolveIdentity(""); ident != "" {
 		all = filterToIdentity(all, ident)
 	}
 	if len(all) == 0 {
@@ -353,8 +371,35 @@ func saveSurfaced(path string, surfaced map[string]bool) {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
 	_ = os.WriteFile(path, data, 0o644)
+	pruneOldNudgeState(dir)
+}
+
+// pruneOldNudgeState removes dedup files in dir older than nudgeStateMaxAge,
+// so the scratch dir doesn't accumulate one file per session forever. It's
+// opportunistic (run after each write) and best-effort — any error just
+// leaves a stale file for a later pass. The just-written current-session
+// file has a fresh mtime, so it's never the one pruned.
+func pruneOldNudgeState(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-nudgeStateMaxAge)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }

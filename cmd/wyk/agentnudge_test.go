@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
@@ -199,4 +200,85 @@ func countEventHooks(root map[string]any, event, cmd string) int {
 		}
 	}
 	return n
+}
+
+func TestRunHookAgentNudge_BlockDedupAllow(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir()) // isolate dedup state
+	t.Setenv("WYK_AGENT_IDENTITY", "")      // collective inbox
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+
+	var inbox []beads.Issue
+	old := nudgeFetchInbox
+	nudgeFetchInbox = func() ([]beads.Issue, error) { return inbox, nil }
+	defer func() { nudgeFetchInbox = old }()
+
+	runCap := func(payload string) string {
+		return captureStdout(t, func() {
+			if code := runHookAgentNudge(strings.NewReader(payload)); code != 0 {
+				t.Fatalf("exit %d, want 0", code)
+			}
+		})
+	}
+
+	const turn = `{"session_id":"s1"}`
+
+	// Each ID renders as a "  - <id> [P<n>] ..." row; match that marker
+	// rather than a bare ID (which would collide with "inbox"/"wyk").
+	row := func(id string) string { return "- " + id + " [P" }
+
+	// 1. First turn with one inbox item → block + surface it.
+	inbox = []beads.Issue{{ID: "x", Priority: 1, Title: "rotate"}}
+	out := runCap(turn)
+	if !strings.Contains(out, `"decision":"block"`) || !strings.Contains(out, row("x")) {
+		t.Fatalf("first turn should block on x; got %q", out)
+	}
+
+	// 2. Same inbox next turn → already surfaced, allow stop (no output).
+	if out := runCap(turn); strings.TrimSpace(out) != "" {
+		t.Errorf("repeat turn should allow stop (no output); got %q", out)
+	}
+
+	// 3. A new item appears → block again, surfacing ONLY the new one.
+	inbox = append(inbox, beads.Issue{ID: "y", Priority: 2, Title: "approve"})
+	out = runCap(turn)
+	if !strings.Contains(out, row("y")) {
+		t.Errorf("new item y should be surfaced; got %q", out)
+	}
+	if strings.Contains(out, row("x")) {
+		t.Errorf("already-surfaced x should NOT re-appear; got %q", out)
+	}
+
+	// 4. stop_hook_active always allows the stop, even with a fresh item.
+	inbox = append(inbox, beads.Issue{ID: "z", Priority: 0, Title: "fresh"})
+	if out := runCap(`{"session_id":"s1","stop_hook_active":true}`); strings.TrimSpace(out) != "" {
+		t.Errorf("stop_hook_active must not block; got %q", out)
+	}
+
+	// 5. A different session starts fresh — the whole inbox surfaces there.
+	if out := runCap(`{"session_id":"s2"}`); !strings.Contains(out, row("z")) || !strings.Contains(out, row("x")) {
+		t.Errorf("new session should surface the whole inbox; got %q", out)
+	}
+}
+
+func TestPruneOldNudgeState(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old.json")
+	fresh := filepath.Join(dir, "fresh.json")
+	for _, p := range []string{old, fresh} {
+		if err := os.WriteFile(p, []byte("[]"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Backdate the "old" file well past the max age.
+	stale := time.Now().Add(-nudgeStateMaxAge - time.Hour)
+	if err := os.Chtimes(old, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	pruneOldNudgeState(dir)
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("stale file should be pruned; stat err = %v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh file should survive; stat err = %v", err)
+	}
 }
