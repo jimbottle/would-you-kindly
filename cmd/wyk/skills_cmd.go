@@ -108,18 +108,27 @@ func contentHash(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// userSkillsDir resolves ~/.claude/skills, honoring $CLAUDE_CONFIG_DIR
-// (the override Claude Code itself respects) before falling back to the
-// home directory.
-func userSkillsDir() (string, error) {
+// claudeConfigDir resolves Claude Code's config base — $CLAUDE_CONFIG_DIR if
+// set (the override Claude Code itself respects), else ~/.claude. Shared by
+// the skills and settings.json resolvers so they can't drift.
+func claudeConfigDir() (string, error) {
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
-		return filepath.Join(d, "skills"), nil
+		return d, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".claude", "skills"), nil
+	return filepath.Join(home, ".claude"), nil
+}
+
+// userSkillsDir resolves <claude-config>/skills.
+func userSkillsDir() (string, error) {
+	dir, err := claudeConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "skills"), nil
 }
 
 // projectSkillsDir is the repo-local target, relative to the current

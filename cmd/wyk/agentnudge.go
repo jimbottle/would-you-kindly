@@ -34,7 +34,7 @@ const nudgeStateMaxAge = 14 * 24 * time.Hour
 var nudgeFetchInbox = func() ([]beads.Issue, error) {
 	subs, code := inboxSubs("", "")
 	if code != 0 {
-		return nil, fmt.Errorf("no bd workspace")
+		return nil, errors.New("no bd workspace")
 	}
 	all, _ := fetchInbox(subs, inboxQuery) // partial results are fine; ignore sub-errors
 	return all, nil
@@ -116,85 +116,13 @@ func nudgeSettingsPath(project bool) (string, error) {
 	return userSettingsPath()
 }
 
-// userSettingsPath resolves ~/.claude/settings.json, honoring
-// $CLAUDE_CONFIG_DIR (the same override Claude Code and userSkillsDir use).
+// userSettingsPath resolves <claude-config>/settings.json.
 func userSettingsPath() (string, error) {
-	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
-		return filepath.Join(d, "settings.json"), nil
-	}
-	home, err := os.UserHomeDir()
+	dir, err := claudeConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".claude", "settings.json"), nil
-}
-
-// loadClaudeSettings parses a settings.json into a generic map, treating a
-// missing file as an empty object so callers can add to it unconditionally.
-func loadClaudeSettings(path string) (map[string]any, error) {
-	root := map[string]any{}
-	switch b, err := os.ReadFile(path); {
-	case errors.Is(err, os.ErrNotExist):
-		// fresh file
-	case err != nil:
-		return nil, err
-	default:
-		if uerr := json.Unmarshal(b, &root); uerr != nil {
-			return nil, fmt.Errorf("parse %s: %w", path, uerr)
-		}
-		if root == nil {
-			root = map[string]any{}
-		}
-	}
-	return root, nil
-}
-
-// writeClaudeSettings marshals root and writes it atomically (creating the
-// .claude dir if needed, via writeFileAtomic).
-func writeClaudeSettings(path string, root map[string]any) error {
-	out, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return err
-	}
-	out = append(out, '\n')
-	return writeFileAtomic(path, out, 0o644)
-}
-
-// removeHookForEvent drops every hook whose command equals cmd from the
-// given event, pruning entries (and the event itself) left empty. Reports
-// whether anything was removed.
-func removeHookForEvent(root map[string]any, event, cmd string) bool {
-	hooks, _ := root["hooks"].(map[string]any)
-	if hooks == nil {
-		return false
-	}
-	entries, _ := hooks[event].([]any)
-	var kept []any
-	removed := false
-	for _, e := range entries {
-		entry, _ := e.(map[string]any)
-		inner, _ := entry["hooks"].([]any)
-		var keptInner []any
-		for _, h := range inner {
-			hm, _ := h.(map[string]any)
-			if c, _ := hm["command"].(string); c == cmd {
-				removed = true
-				continue
-			}
-			keptInner = append(keptInner, h)
-		}
-		if len(keptInner) == 0 {
-			continue // entry had only our hook; drop it
-		}
-		entry["hooks"] = keptInner
-		kept = append(kept, entry)
-	}
-	if len(kept) == 0 {
-		delete(hooks, event)
-	} else {
-		hooks[event] = kept
-	}
-	return removed
+	return filepath.Join(dir, "settings.json"), nil
 }
 
 // runHookAgentNudge is the Claude Code Stop hook `wyk` can install

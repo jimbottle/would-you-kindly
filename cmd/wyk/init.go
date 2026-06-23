@@ -767,19 +767,9 @@ const claudeSettingsHook = "wyk hook bd-create-guard"
 // an error rather than overwritten.
 func seedClaudeSettings(repoRoot string, dryRun bool) (string, error) {
 	path := filepath.Join(repoRoot, ".claude", "settings.json")
-	root := map[string]any{}
-	switch b, err := os.ReadFile(path); {
-	case errors.Is(err, os.ErrNotExist):
-		// fresh file
-	case err != nil:
+	root, err := loadClaudeSettings(path)
+	if err != nil {
 		return "", err
-	default:
-		if uerr := json.Unmarshal(b, &root); uerr != nil {
-			return "", fmt.Errorf("parse %s: %w", path, uerr)
-		}
-		if root == nil {
-			root = map[string]any{}
-		}
 	}
 	if claudeSettingsHasHook(root, claudeSettingsHook) {
 		return "bd-create-guard hook already in .claude/settings.json", nil
@@ -788,15 +778,79 @@ func seedClaudeSettings(repoRoot string, dryRun bool) (string, error) {
 		return "would register the bd-create-guard PreToolUse hook in .claude/settings.json", nil
 	}
 	addPreToolUseHook(root, claudeSettingsHook)
-	out, merr := json.MarshalIndent(root, "", "  ")
-	if merr != nil {
-		return "", merr
-	}
-	out = append(out, '\n')
-	if err := writeFileAtomic(path, out, 0o644); err != nil {
+	if err := writeClaudeSettings(path, root); err != nil {
 		return "", err
 	}
 	return "registered the bd-create-guard PreToolUse hook in .claude/settings.json", nil
+}
+
+// loadClaudeSettings parses a settings.json into a generic map, treating a
+// missing file as an empty object so callers can add to it unconditionally.
+// A malformed file is an error rather than silently overwritten.
+func loadClaudeSettings(path string) (map[string]any, error) {
+	root := map[string]any{}
+	switch b, err := os.ReadFile(path); {
+	case errors.Is(err, os.ErrNotExist):
+		// fresh file
+	case err != nil:
+		return nil, err
+	default:
+		if uerr := json.Unmarshal(b, &root); uerr != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, uerr)
+		}
+		if root == nil {
+			root = map[string]any{}
+		}
+	}
+	return root, nil
+}
+
+// writeClaudeSettings marshals root and writes it atomically (creating the
+// .claude dir if needed, via writeFileAtomic).
+func writeClaudeSettings(path string, root map[string]any) error {
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	return writeFileAtomic(path, out, 0o644)
+}
+
+// removeHookForEvent drops every hook whose command equals cmd from the
+// given event, pruning entries (and the event itself) left empty. Reports
+// whether anything was removed.
+func removeHookForEvent(root map[string]any, event, cmd string) bool {
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		return false
+	}
+	entries, _ := hooks[event].([]any)
+	var kept []any
+	removed := false
+	for _, e := range entries {
+		entry, _ := e.(map[string]any)
+		inner, _ := entry["hooks"].([]any)
+		var keptInner []any
+		for _, h := range inner {
+			hm, _ := h.(map[string]any)
+			if c, _ := hm["command"].(string); c == cmd {
+				removed = true
+				continue
+			}
+			keptInner = append(keptInner, h)
+		}
+		if len(keptInner) == 0 {
+			continue // entry had only our hook; drop it
+		}
+		entry["hooks"] = keptInner
+		kept = append(kept, entry)
+	}
+	if len(kept) == 0 {
+		delete(hooks, event)
+	} else {
+		hooks[event] = kept
+	}
+	return removed
 }
 
 // writeFileAtomic writes data to path via a sibling temp file + rename so
