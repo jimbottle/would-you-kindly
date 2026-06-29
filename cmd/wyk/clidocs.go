@@ -168,6 +168,16 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		},
 	},
 	{
+		Name:    "config",
+		Summary: "Get/set machine-wide wyk settings in ~/.config/wyk/config.json (e.g. default_scope, which repos the multi-repo commands query by default).",
+		Usage:   "wyk config <list | get <key> | set <key> <value>>",
+		Examples: []string{
+			"wyk config set default_scope cwd   # scope inbox/stats/… to the cwd's repo",
+			"wyk config list",
+		},
+		Flags: nil,
+	},
+	{
 		Name:    "conventions",
 		Summary: "Print the agent-facing label convention (human, src:agent, inbox query).",
 		Usage:   "wyk conventions [-json]",

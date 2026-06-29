@@ -22,7 +22,7 @@ func TestStatsSubs_RepoNameSelectsOneRegisteredEntry(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	subs, code := statsSubs("", "beta")
+	subs, code := statsSubs("", "beta", false)
 	if code != 0 {
 		t.Errorf("statsSubs exit %d, want 0", code)
 	}
@@ -51,7 +51,7 @@ func TestStatsSubs_MissingRepoNameExits1(t *testing.T) {
 		_ = devnull.Close()
 	}()
 
-	_, code := statsSubs("", "ghost")
+	_, code := statsSubs("", "ghost", false)
 	if code != 1 {
 		t.Errorf("missing-name exit %d, want 1", code)
 	}

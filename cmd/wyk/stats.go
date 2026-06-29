@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
-	"github.com/jimbottle/would-you-kindly/internal/registry"
 )
 
 // runStats implements `wyk stats`: aggregate counts and timing
@@ -34,10 +33,11 @@ import (
 func runStats(args []string) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	fs.Usage = subcommandUsage(fs, "stats")
-	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
+	dir := fs.String("C", "", "scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config')")
 	asJSON := fs.Bool("json", false, "emit a JSON object suitable for scripting")
 	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
-	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (mutually exclusive with -C)")
+	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (mutually exclusive with -C/-all)")
+	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -46,15 +46,11 @@ func runStats(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk stats [-C <dir>] [-json] [-repo name]")
-		return 64
-	}
-	if *dir != "" && *repoName != "" {
-		fmt.Fprintln(os.Stderr, "wyk stats: -C and -repo are mutually exclusive")
+		fmt.Fprintln(os.Stderr, "usage: wyk stats [-C <dir>] [-all] [-json] [-repo name]")
 		return 64
 	}
 
-	subs, code := statsSubs(*dir, *repoName)
+	subs, code := statsSubs(*dir, *repoName, *allFlag)
 	if code != 0 {
 		return code
 	}
@@ -116,36 +112,14 @@ type statsSub struct {
 	name   string
 }
 
-func statsSubs(dir, repoName string) ([]statsSub, int) {
-	if dir != "" {
-		c := beads.NewClient()
-		c.Dir = dir
-		return []statsSub{{client: c}}, 0
-	}
-	regPath, err := registry.DefaultPath()
+func statsSubs(dir, repoName string, allFlag bool) ([]statsSub, int) {
+	repos, err := reposToQuery(dir, repoName, allFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk stats:", err)
-		return nil, 1
+		return nil, scopeErrExit(err)
 	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wyk stats:", err)
-		return nil, 1
-	}
-	if len(reg.Repos) == 0 {
-		c := beads.NewClient()
-		return []statsSub{{client: c}}, 0
-	}
-	if repoName != "" {
-		filtered, err := filterRegistryByName(reg, repoName)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "wyk stats:", err)
-			return nil, 1
-		}
-		reg = filtered
-	}
-	out := make([]statsSub, len(reg.Repos))
-	for i, r := range reg.Repos {
+	out := make([]statsSub, len(repos))
+	for i, r := range repos {
 		c := beads.NewClient()
 		c.Dir = r.Path
 		out[i] = statsSub{client: c, name: r.Name}

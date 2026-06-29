@@ -38,7 +38,8 @@ func runActivity(args []string) int {
 	// bd's convention. -1 (default) disables the cap. A user
 	// passing -priority 1 sees recent activity on P0 + P1 only.
 	maxPriority := fs.Int("priority", -1, "cap rows at priority N or higher (lower number = higher priority; -1 disables)")
-	repoName := fs.String("repo", "", "restrict the stream to the registered repo with this name (empty = every registered repo)")
+	repoName := fs.String("repo", "", "restrict the stream to the registered repo with this name (mutually exclusive with -all)")
+	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")
 	status := fs.String("status", "all", "filter rows by status: open / closed / all")
 	limit := fs.Int("limit", -1, "cap the stream at N rows (after every other filter; -1 disables)")
 	fs.SetOutput(os.Stderr)
@@ -46,7 +47,7 @@ func runActivity(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-json] [-priority N] [-repo name] [-status open|closed|all] [-limit N]")
+		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-all] [-json] [-priority N] [-repo name] [-status open|closed|all] [-limit N]")
 		return 64
 	}
 	switch *status {
@@ -60,29 +61,12 @@ func runActivity(args []string) int {
 		return 64
 	}
 
-	regPath, err := registry.DefaultPath()
+	repos, err := reposToQuery("", *repoName, *allFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk activity:", err)
-		return 1
+		return scopeErrExit(err)
 	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wyk activity: load registry:", err)
-		return 1
-	}
-	if len(reg.Repos) == 0 {
-		fmt.Fprintln(os.Stderr, "wyk activity: no repos registered. Run `wyk init` in a bd workspace first.")
-		return 1
-	}
-
-	if *repoName != "" {
-		filtered, err := filterRegistryByName(reg, *repoName)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "wyk activity:", err)
-			return 1
-		}
-		reg = filtered
-	}
+	reg := &registry.Registry{Repos: repos}
 
 	cutoff := time.Now().Add(-*since)
 	events, repoErrs := collectActivity(reg, cutoff, *maxPriority, *status, defaultActivityClient)

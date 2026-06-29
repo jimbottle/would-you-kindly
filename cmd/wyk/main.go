@@ -92,6 +92,7 @@ var subcommandHandlers = map[string]func([]string) int{
 	"stats":       runStats,
 	"doctor":      runDoctor,
 	"registry":    runRegistry,
+	"config":      runConfig,
 	"conventions": runConventions,
 	"update":      runUpdate,
 	"dashboard":   runDashboard,
@@ -855,6 +856,7 @@ Subcommands:
   help         pointer to the in-TUI overlay; --markdown emits a keymap reference
   completion   emit bash/zsh/fish completion script (run: wyk completion <shell>)
   registry     list / remove / prune registered workspaces
+  config       get/set machine-wide settings (e.g. default_scope: all|cwd)
   conventions  print the agent-facing label convention (-json for structured)
   update       check for and install a newer wyk release
   version      print the version string (--check polls the release feed)

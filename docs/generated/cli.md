@@ -169,6 +169,23 @@ wyk registry prune -y   # drop entries whose repo is gone
 | `-broken` | `false` | on prune, also drop entries whose path exists but holds no bd workspace (probes bd; only definitive 'no workspace' results qualify, not timeouts) |
 | `-json` | `false` | emit structured JSON instead of the human-readable list |
 
+## `wyk config`
+
+Get/set machine-wide wyk settings in ~/.config/wyk/config.json (e.g. default_scope, which repos the multi-repo commands query by default).
+
+```
+wyk config <list | get <key> | set <key> <value>>
+```
+
+Common case:
+
+```
+wyk config set default_scope cwd   # scope inbox/stats/… to the cwd's repo
+wyk config list
+```
+
+_no flags_
+
 ## `wyk conventions`
 
 Print the agent-facing label convention (human, src:agent, inbox query).

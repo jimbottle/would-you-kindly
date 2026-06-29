@@ -40,6 +40,12 @@ done. The agent's inbox is then anything matching:
 
 …surfaced by 'wyk inbox' (-json for structured ingest).
 
+By default 'wyk inbox' (and the other multi-repo commands: stats, activity,
+dashboard, depgraph, export) query EVERY registered repo, so a human can
+bounce work back from any checkout. Set 'wyk config set default_scope cwd'
+to default instead to the repo containing the current directory; '-all' (or
+'WYK_DEFAULT_SCOPE=all') restores the cross-repo view for a single run.
+
 Per-identity routing (multi-agent workspaces, wyk-contract/v3)
 --------------------------------------------------------------
 

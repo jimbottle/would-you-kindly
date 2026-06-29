@@ -32,7 +32,10 @@ const nudgeStateMaxAge = 14 * 24 * time.Hour
 // without a real bd binary. An empty registry / no workspace is an error,
 // which the caller treats as "nothing to nudge about" (fail open).
 var nudgeFetchInbox = func() ([]beads.Issue, error) {
-	subs, code := inboxSubs("", "")
+	// allFlag=true: the Stop-hook nudge is registry-wide by design (one
+	// nudge config covers every repo), so it must ignore a default_scope=cwd
+	// setting that would otherwise narrow it to the agent's current repo.
+	subs, code := inboxSubs("", "", true)
 	if code != 0 {
 		return nil, errors.New("no bd workspace")
 	}

@@ -157,3 +157,57 @@ func TestDefaultPath_RespectsXDG(t *testing.T) {
 		t.Errorf("DefaultPath() = %q, want /custom/xdg/wyk/repos.json", got)
 	}
 }
+
+func TestRepoForDir(t *testing.T) {
+	root := t.TempDir()
+	// Build a real on-disk tree so normalizePath (EvalSymlinks) resolves.
+	parent := filepath.Join(root, "ebay-watchlist-watch")
+	nested := filepath.Join(parent, "android")
+	other := filepath.Join(root, "would-you-kindly")
+	for _, d := range []string{parent, nested, other} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+	subdir := filepath.Join(nested, "app", "src")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", subdir, err)
+	}
+
+	reg := &Registry{Repos: []Repo{
+		{Name: "ebay-watchlist-watch", Path: parent},
+		{Name: "android", Path: nested},
+		{Name: "would-you-kindly", Path: other},
+	}}
+
+	tests := []struct {
+		name    string
+		dir     string
+		want    string // expected repo Name; "" means no match
+		wantHit bool
+	}{
+		{"exact parent", parent, "ebay-watchlist-watch", true},
+		{"exact other", other, "would-you-kindly", true},
+		{"nested wins over parent", nested, "android", true},
+		{"subdir of nested resolves to nested (longest prefix)", subdir, "android", true},
+		{"unregistered ancestor of nothing", root, "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := reg.RepoForDir(tc.dir)
+			if ok != tc.wantHit {
+				t.Fatalf("RepoForDir(%q) hit=%v, want %v (repo=%+v)", tc.dir, ok, tc.wantHit, got)
+			}
+			if ok && got.Name != tc.want {
+				t.Fatalf("RepoForDir(%q) = %q, want %q", tc.dir, got.Name, tc.want)
+			}
+		})
+	}
+}
+
+func TestRepoForDir_MissTreatedGracefully(t *testing.T) {
+	reg := &Registry{Repos: []Repo{{Name: "x", Path: t.TempDir()}}}
+	if _, ok := reg.RepoForDir(filepath.Join(t.TempDir(), "elsewhere")); ok {
+		t.Fatal("RepoForDir should miss for an unrelated dir")
+	}
+}

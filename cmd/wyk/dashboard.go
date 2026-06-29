@@ -32,14 +32,15 @@ func runDashboard(args []string) int {
 	asJSON := fs.Bool("json", false, "emit a structured JSON object instead of the table")
 	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	days := fs.Int("days", 7, "window for the closed-recently column (default 7)")
-	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (empty = every registered repo)")
+	repoName := fs.String("repo", "", "restrict the rollup to the registered repo with this name (mutually exclusive with -all)")
+	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")
 	maxPriority := fs.Int("priority", -1, "drop issues below priority N before tallying counts (lower number = higher priority; -1 disables — does NOT hide empty repo rows)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk dashboard [-json] [-days N] [-repo name] [-priority N]")
+		fmt.Fprintln(os.Stderr, "usage: wyk dashboard [-all] [-json] [-days N] [-repo name] [-priority N]")
 		return 64
 	}
 	if *days <= 0 {
@@ -47,29 +48,12 @@ func runDashboard(args []string) int {
 		return 64
 	}
 
-	regPath, err := registry.DefaultPath()
+	repos, err := reposToQuery("", *repoName, *allFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk dashboard:", err)
-		return 1
+		return scopeErrExit(err)
 	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wyk dashboard: load registry:", err)
-		return 1
-	}
-	if len(reg.Repos) == 0 {
-		fmt.Fprintln(os.Stderr, "wyk dashboard: no repos registered. Run `wyk init` in a bd workspace first.")
-		return 1
-	}
-
-	if *repoName != "" {
-		filtered, err := filterRegistryByName(reg, *repoName)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "wyk dashboard:", err)
-			return 1
-		}
-		reg = filtered
-	}
+	reg := &registry.Registry{Repos: repos}
 
 	cutoff := time.Now().Add(-time.Duration(*days) * 24 * time.Hour)
 	rows, hadError := collectDashboard(reg, cutoff, *maxPriority)

@@ -40,7 +40,8 @@ func runDepgraph(args []string) int {
 	asDOT := fs.Bool("dot", false, "emit Graphviz DOT (pipe into 'dot -Tsvg')")
 	asJSON := fs.Bool("json", false, "emit {nodes, edges} JSON for tooling consumers")
 	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
-	repoName := fs.String("repo", "", "restrict to the registered repo with this name (empty = full registry)")
+	repoName := fs.String("repo", "", "restrict to the registered repo with this name (mutually exclusive with -all)")
+	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")
 	priorityCap := fs.Int("priority", -1, "only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out")
 	includeClosed := fs.Bool("closed", false, "include closed issues (default omits them)")
 	fs.SetOutput(os.Stderr)
@@ -48,7 +49,7 @@ func runDepgraph(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk depgraph [-dot | -json] [-repo name] [-priority N] [-closed]")
+		fmt.Fprintln(os.Stderr, "usage: wyk depgraph [-all] [-dot | -json] [-repo name] [-priority N] [-closed]")
 		return 64
 	}
 	if *asDOT && *asJSON {
@@ -56,28 +57,12 @@ func runDepgraph(args []string) int {
 		return 64
 	}
 
-	regPath, err := registry.DefaultPath()
+	repos, err := reposToQuery("", *repoName, *allFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk depgraph:", err)
-		return 1
+		return scopeErrExit(err)
 	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wyk depgraph: load registry:", err)
-		return 1
-	}
-	if len(reg.Repos) == 0 {
-		fmt.Fprintln(os.Stderr, "wyk depgraph: no repos registered. Run `wyk init` in a bd workspace first.")
-		return 1
-	}
-	if *repoName != "" {
-		filtered, err := filterRegistryByName(reg, *repoName)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "wyk depgraph:", err)
-			return 1
-		}
-		reg = filtered
-	}
+	reg := &registry.Registry{Repos: repos}
 
 	raw, hadError := collectDepGraph(reg, defaultDepGraphClient, *includeClosed, *priorityCap)
 	graph := finalizeDepGraph(raw, *includeClosed, *priorityCap)

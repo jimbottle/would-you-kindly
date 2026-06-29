@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
-	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 )
 
@@ -60,7 +59,7 @@ func inboxQueryFor(identity string) string {
 func runInbox(args []string) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	fs.Usage = subcommandUsage(fs, "inbox")
-	dir := fs.String("C", "", "scope to a single workspace; default is every registered repo")
+	dir := fs.String("C", "", "scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config')")
 	asJSON := fs.Bool("json", false, "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed)")
 	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata)")
 	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
@@ -69,7 +68,8 @@ func runInbox(args []string) int {
 	// disables the cap. A user passing -priority 1 gets P0 + P1
 	// only — exactly the "what should I attack first" set.
 	maxPriority := fs.Int("priority", -1, "cap the inbox at priority N or higher (lower number = higher priority; -1 disables)")
-	repoName := fs.String("repo", "", "restrict the inbox to the registered repo with this name (mutually exclusive with -C)")
+	repoName := fs.String("repo", "", "restrict the inbox to the registered repo with this name (mutually exclusive with -C/-all)")
+	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")
 	limit := fs.Int("limit", -1, "cap the inbox at N rows (after priority/repo filtering; -1 disables)")
 	identity := fs.String("identity", "", "scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset")
 	strict := fs.Bool("strict", false, "with -identity, show ONLY work routed to that identity; default also includes un-routed collective work so it isn't stranded")
@@ -81,11 +81,7 @@ func runInbox(args []string) int {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-json] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]")
-		return 64
-	}
-	if *dir != "" && *repoName != "" {
-		fmt.Fprintln(os.Stderr, "wyk inbox: -C and -repo are mutually exclusive")
+		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-all] [-json] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]")
 		return 64
 	}
 
@@ -98,7 +94,7 @@ func runInbox(args []string) int {
 		return 64
 	}
 
-	subs, code := inboxSubs(*dir, *repoName)
+	subs, code := inboxSubs(*dir, *repoName, *allFlag)
 	if code != 0 {
 		return code
 	}
@@ -198,41 +194,18 @@ type inboxSub struct {
 	name   string
 }
 
-// inboxSubs returns one entry per repo to query. -C overrides the
-// registry; -repo selects one entry from the registry by name; an
-// empty registry falls back to cwd (matches the TUI's buildSource
-// rules). dir and repoName are mutually exclusive — that's
-// enforced by the caller.
-func inboxSubs(dir, repoName string) ([]inboxSub, int) {
-	if dir != "" {
-		c := beads.NewClient()
-		c.Dir = dir
-		return []inboxSub{{client: c, name: ""}}, 0
-	}
-	regPath, err := registry.DefaultPath()
+// inboxSubs returns one entry per repo to query, delegating the
+// scope decision to reposToQuery (the shared -C / -repo / -all / cwd
+// resolver). A scope conflict is a usage error (64); a registry / config
+// load failure is the generic error (1).
+func inboxSubs(dir, repoName string, allFlag bool) ([]inboxSub, int) {
+	repos, err := reposToQuery(dir, repoName, allFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk inbox:", err)
-		return nil, 1
+		return nil, scopeErrExit(err)
 	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wyk inbox:", err)
-		return nil, 1
-	}
-	if len(reg.Repos) == 0 {
-		c := beads.NewClient()
-		return []inboxSub{{client: c, name: ""}}, 0
-	}
-	if repoName != "" {
-		filtered, err := filterRegistryByName(reg, repoName)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "wyk inbox:", err)
-			return nil, 1
-		}
-		reg = filtered
-	}
-	out := make([]inboxSub, len(reg.Repos))
-	for i, r := range reg.Repos {
+	out := make([]inboxSub, len(repos))
+	for i, r := range repos {
 		c := beads.NewClient()
 		c.Dir = r.Path
 		out[i] = inboxSub{client: c, name: r.Name}

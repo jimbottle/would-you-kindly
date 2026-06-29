@@ -28,6 +28,7 @@ var wykSubcommands = []string{
 	"stats",
 	"doctor",
 	"registry",
+	"config",
 	"conventions",
 	"update",
 	"dashboard",

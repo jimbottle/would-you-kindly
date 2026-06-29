@@ -36,13 +36,14 @@ func runExport(args []string) int {
 	compact := fs.Bool("compact", false, "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)")
 	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels); ~75%+ smaller for an LLM scanning the backlog")
 	includeClosed := fs.Bool("closed", false, "include closed issues (default: open issues only — the actionable set)")
-	repoName := fs.String("repo", "", "restrict the dump to the registered repo with this name (empty = full registry)")
+	repoName := fs.String("repo", "", "restrict the dump to the registered repo with this name (mutually exclusive with -all)")
+	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-compact] [-slim] [-closed] [-repo name]")
+		fmt.Fprintln(os.Stderr, "usage: wyk export [-since 24h] [-all] [-compact] [-slim] [-closed] [-repo name]")
 		return 64
 	}
 	var cutoff time.Time
@@ -55,29 +56,12 @@ func runExport(args []string) int {
 		cutoff = time.Now().Add(-d)
 	}
 
-	regPath, err := registry.DefaultPath()
+	repos, err := reposToQuery("", *repoName, *allFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk export:", err)
-		return 1
+		return scopeErrExit(err)
 	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wyk export: load registry:", err)
-		return 1
-	}
-	if len(reg.Repos) == 0 {
-		fmt.Fprintln(os.Stderr, "wyk export: no repos registered. Run `wyk init` in a bd workspace first.")
-		return 1
-	}
-
-	if *repoName != "" {
-		filtered, err := filterRegistryByName(reg, *repoName)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "wyk export:", err)
-			return 1
-		}
-		reg = filtered
-	}
+	reg := &registry.Registry{Repos: repos}
 
 	dump, hadError := collectExport(reg, defaultExportClient, *includeClosed)
 	if !cutoff.IsZero() {

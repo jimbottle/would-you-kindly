@@ -21,6 +21,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/skills"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
+	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
 )
 
 // checkStatus is the verdict for a single doctor check.
@@ -313,6 +314,7 @@ func collectDoctorChecks() []check {
 	checks = append(checks, checkEditor())
 	checks = append(checks, checkActor())
 	checks = append(checks, checkXDGPaths()...)
+	checks = append(checks, checkWykConfig())
 	regChecks, repos := checkRegistry()
 	checks = append(checks, regChecks...)
 	for _, r := range repos {
@@ -613,6 +615,7 @@ func checkXDGPaths() []check {
 		{"~/.config/wyk/repos.json", registry.DefaultPath},
 		{"~/.config/wyk/ui.json", uiconfig.DefaultPath},
 		{"~/.config/wyk/filters.json", filters.DefaultPath},
+		{"~/.config/wyk/config.json", wykconfig.DefaultPath},
 	} {
 		p, err := e.path()
 		if err != nil {
@@ -638,6 +641,37 @@ func checkXDGPaths() []check {
 		})
 	}
 	return out
+}
+
+// checkWykConfig loads ~/.config/wyk/config.json and reports whether
+// it's parseable, version-compatible, and carries a valid default_scope.
+// Flagging a bad value HERE (not only at command time) means a user who
+// hand-edits the file to `"default_scope": "bogus"` learns from doctor
+// rather than from a surprising usage error mid-command. A missing file
+// is fine (Load returns the zero Config — first-run, scope defaults to
+// all); an unsupported version or corrupt JSON is a FAIL because the
+// multi-repo commands would refuse to run against it.
+func checkWykConfig() check {
+	const name = "wyk config.json valid"
+	path, err := wykconfig.DefaultPath()
+	if err != nil {
+		return check{name: name, status: statusWarn, detail: "could not resolve path: " + err.Error()}
+	}
+	cfg, err := wykconfig.Load(path)
+	if err != nil {
+		if errors.Is(err, wykconfig.ErrUnsupportedVersion) {
+			return check{name: name, status: statusFail, detail: err.Error() + " — update wyk or move the file aside"}
+		}
+		return check{name: name, status: statusFail, detail: fmt.Sprintf("%s: %v", path, err)}
+	}
+	if err := wykconfig.ValidateScope(cfg.DefaultScope); err != nil {
+		return check{name: name, status: statusFail, detail: fmt.Sprintf("%s: %v — fix with `wyk config set default_scope all|cwd`", path, err)}
+	}
+	scope := cfg.DefaultScope
+	if scope == "" {
+		scope = wykconfig.ScopeAll + " (default; unset)"
+	}
+	return check{name: name, status: statusPass, detail: "default_scope = " + scope}
 }
 
 func checkRegistry() ([]check, []registry.Repo) {

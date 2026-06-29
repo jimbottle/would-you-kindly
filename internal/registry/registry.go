@@ -200,6 +200,56 @@ func (r *Registry) Has(path string) bool {
 	return false
 }
 
+// RepoForDir returns the registered repo that dir belongs to: the
+// entry whose Path equals dir or is an ancestor of it, false when dir
+// lies under no registered repo. Comparison is on symlink-resolved,
+// cleaned paths (via normalizePath) so macOS's /var → /private/var
+// shortcut and user symlinks don't cause a false miss.
+//
+// When dir sits under multiple registered repos (a nested workspace —
+// e.g. an `android` entry inside an `ebay-watchlist-watch` entry) the
+// LONGEST matching path wins, so the most specific repo is chosen. A
+// path that can't be normalised (doesn't exist, permission error)
+// reports no match rather than erroring — the caller falls back to a
+// synthetic cwd source.
+func (r *Registry) RepoForDir(dir string) (Repo, bool) {
+	target, err := normalizePath(dir)
+	if err != nil {
+		return Repo{}, false
+	}
+	var best Repo
+	bestLen := -1
+	for _, repo := range r.Repos {
+		rp, err := normalizePath(repo.Path)
+		if err != nil {
+			continue
+		}
+		if target == rp || isSubpath(target, rp) {
+			if len(rp) > bestLen {
+				best = repo
+				bestLen = len(rp)
+			}
+		}
+	}
+	if bestLen < 0 {
+		return Repo{}, false
+	}
+	return best, true
+}
+
+// isSubpath reports whether target is strictly nested under parent.
+// Both are expected to be cleaned, absolute paths. The trailing
+// separator on the prefix check prevents "/a/foobar" from matching
+// parent "/a/foo".
+func isSubpath(target, parent string) bool {
+	if parent == string(filepath.Separator) {
+		return target != parent
+	}
+	return len(target) > len(parent) &&
+		target[:len(parent)] == parent &&
+		target[len(parent)] == filepath.Separator
+}
+
 // normalizePath returns the absolute, symlink-resolved form of path
 // so the registry's deduplication can compare strings directly.
 // Symlinks are resolved (via EvalSymlinks) when the path exists —

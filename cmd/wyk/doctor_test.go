@@ -470,23 +470,23 @@ func TestCheckXDGPaths_PassesWhenFilePresent(t *testing.T) {
 	if err := os.MkdirAll(wyk, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Seed only the registry file. The other two should still
-	// land as WARN (not yet created) — pin both branches at
-	// once.
+	// Seed only the registry file. The others (ui.json, filters.json,
+	// config.json) should still land as WARN (not yet created) — pin
+	// both branches at once.
 	if err := os.WriteFile(filepath.Join(wyk, "repos.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	got := checkXDGPaths()
-	if len(got) != 3 {
-		t.Fatalf("expected 3 path checks; got %d", len(got))
+	if len(got) != 4 {
+		t.Fatalf("expected 4 path checks; got %d", len(got))
 	}
 	// First entry is repos.json → PASS.
 	if got[0].status != statusPass {
 		t.Errorf("repos.json should PASS when present; got %+v", got[0])
 	}
-	// ui.json / filters.json → WARN (not yet created).
-	for i := 1; i < 3; i++ {
+	// ui.json / filters.json / config.json → WARN (not yet created).
+	for i := 1; i < len(got); i++ {
 		if got[i].status != statusWarn {
 			t.Errorf("%s should WARN when absent; got %+v", got[i].name, got[i])
 		}
