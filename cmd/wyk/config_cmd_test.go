@@ -37,6 +37,36 @@ func TestRunConfig_SetPersistsAndValidates(t *testing.T) {
 	}
 }
 
+func TestRunConfig_SetBoolKeyPersists(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if code := runConfig([]string{"set", "disable_update_check", "true"}); code != 0 {
+		t.Fatalf("set bool exit %d, want 0", code)
+	}
+	cfg := loadConfigBestEffort()
+	if !cfg.DisableUpdateCheck {
+		t.Fatal("disable_update_check not persisted")
+	}
+}
+
+func TestRunConfig_SetBoolRejectsNonBool(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	withSilencedStderr(t)
+	if code := runConfig([]string{"set", "compact_json", "yes-please"}); code != 64 {
+		t.Fatalf("set non-bool exit %d, want 64", code)
+	}
+}
+
+func TestRunConfig_SetColorValidatesEnum(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if code := runConfig([]string{"set", "color", "never"}); code != 0 {
+		t.Fatalf("set color never exit %d, want 0", code)
+	}
+	withSilencedStderr(t)
+	if code := runConfig([]string{"set", "color", "rainbow"}); code != 64 {
+		t.Fatalf("set color rainbow exit %d, want 64", code)
+	}
+}
+
 func TestRunConfig_SetRejectsInvalidValue(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	withSilencedStderr(t)

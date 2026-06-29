@@ -32,9 +32,10 @@ func runExport(args []string) int {
 	// -since accepts any duration parsable by time.ParseDuration
 	// ("24h", "7d" via 168h, "30m"). Empty (the default) emits
 	// the full dump, matching the historical behavior.
+	cfg := loadConfigBestEffort()
 	since := fs.String("since", "", "filter issues to those updated within this duration (e.g. 24h, 168h)")
-	compact := fs.Bool("compact", false, "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)")
-	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels); ~75%+ smaller for an LLM scanning the backlog")
+	compact := fs.Bool("compact", cfg.CompactJSON, "emit non-indented JSON (smaller; better for piping into jq / streaming consumers)")
+	slim := fs.Bool("slim", cfg.SlimJSON, "drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels); ~75%+ smaller for an LLM scanning the backlog")
 	includeClosed := fs.Bool("closed", false, "include closed issues (default: open issues only — the actionable set)")
 	repoName := fs.String("repo", "", "restrict the dump to the registered repo with this name (mutually exclusive with -all)")
 	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")

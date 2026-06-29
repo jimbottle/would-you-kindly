@@ -40,6 +40,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 	"github.com/jimbottle/would-you-kindly/internal/updater"
 	"github.com/jimbottle/would-you-kindly/internal/watch"
+	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
 	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
 
@@ -63,15 +64,17 @@ func disableColor() {
 }
 
 // applyNoColor downgrades to ASCII when the user has opted out of
-// color via the environment. Called once at startup; useful for
-// screen readers, log capture, SSH into dumb terminals, and CI runs
-// of `wyk --probe`. The --no-color flag (parsed later, on the TUI /
-// probe path) is the explicit equivalent.
+// color via the environment OR via config.json's color=never. Called
+// once at startup (before subcommand dispatch, so it covers every
+// surface); useful for screen readers, log capture, SSH into dumb
+// terminals, and CI runs of `wyk --probe`. The --no-color flag (parsed
+// later, on the TUI / probe path) is the explicit equivalent. The env
+// check stays in noColorRequested (env-only, unit-tested); the config
+// read is best-effort so a broken config can't block startup.
 func applyNoColor() {
-	if !noColorRequested() {
-		return
+	if noColorRequested() || loadConfigBestEffort().Color == wykconfig.ColorNever {
+		disableColor()
 	}
-	disableColor()
 }
 
 // subcommandHandlers maps every dispatchable subcommand name to its
@@ -255,12 +258,20 @@ func main() {
 		}
 	}
 
+	// Update-check surfaces — the cached nudge banner here and the
+	// background refresh below — are suppressed entirely when the user
+	// set disable_update_check in config.json (best-effort read; a broken
+	// config falls back to checks-on, the historical default).
+	updateChecks := !loadConfigBestEffort().DisableUpdateCheck
+
 	// Read the cached update nudge once at startup so the banner
 	// can render immediately if there's already a snapshot on
 	// disk. The background goroutine below refreshes it for the
 	// next run.
-	if nudge := readUpdateNudge(versionString()); nudge != "" {
-		model = model.WithUpdateNudge(nudge)
+	if updateChecks {
+		if nudge := readUpdateNudge(versionString()); nudge != "" {
+			model = model.WithUpdateNudge(nudge)
+		}
 	}
 
 	// Warm-start: seed m.all from the last-saved fetch so the
@@ -320,8 +331,11 @@ func main() {
 	// Kick a best-effort live check in the background. We don't
 	// post the result back into the running TUI — the snapshot
 	// lands on disk and the NEXT wyk invocation reads it. This
-	// keeps the TUI hot path free of network I/O entirely.
-	go backgroundUpdateCheck()
+	// keeps the TUI hot path free of network I/O entirely. Skipped
+	// when disable_update_check is set.
+	if updateChecks {
+		go backgroundUpdateCheck()
+	}
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
 		os.Exit(1)

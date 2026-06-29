@@ -39,6 +39,14 @@ const (
 	ScopeCwd = "cwd"
 )
 
+// Color values for the color setting. The built-in default is "auto"
+// (color on, the pre-config behavior); "never" disables color the same
+// way NO_COLOR / --no-color do. ColorAuto and "" are equivalent.
+const (
+	ColorAuto  = "auto"
+	ColorNever = "never"
+)
+
 // ErrUnsupportedVersion is returned when the on-disk file declares a
 // schema version this binary doesn't understand. A distinct sentinel
 // so callers can keep persistence DISABLED rather than overwriting a
@@ -52,12 +60,31 @@ var ErrUnsupportedVersion = errors.New("wykconfig: unsupported file version")
 // (e.g. "wyk config set: invalid scope …").
 var ErrInvalidScope = errors.New("invalid scope")
 
-// Config is the on-disk shape. DefaultScope is "" (unset → built-in
-// default), "all", or "cwd". omitempty keeps an unset value out of a
-// hand-written file. Future keys are added here as optional fields.
+// ErrInvalidValue wraps a rejected value for any non-scope setting (e.g.
+// color), so callers map it to the usage exit code the same way they do
+// ErrInvalidScope. Package-prefix-free for the same reason.
+var ErrInvalidValue = errors.New("invalid value")
+
+// Config is the on-disk shape. Every field is optional and zero-valued
+// to the pre-config behavior, so a missing key (or a missing file) leaves
+// wyk behaving exactly as it did before the setting existed. Future keys
+// follow the same rule: add an optional field whose zero value is the
+// current default.
 type Config struct {
-	Version      int    `json:"version"`
-	DefaultScope string `json:"default_scope,omitempty"` // "" | "all" | "cwd"
+	Version int `json:"version"`
+	// DefaultScope: "" (unset → "all"), "all", or "cwd".
+	DefaultScope string `json:"default_scope,omitempty"`
+	// DisableUpdateCheck skips the TUI's background release check and the
+	// update nudge. Default false (checks run).
+	DisableUpdateCheck bool `json:"disable_update_check,omitempty"`
+	// CompactJSON / SlimJSON set the default for the per-command -compact
+	// / -slim JSON flags. Default false (indented JSON, full bodies); the
+	// per-run flags still override (e.g. -compact=false).
+	CompactJSON bool `json:"compact_json,omitempty"`
+	SlimJSON    bool `json:"slim_json,omitempty"`
+	// Color: "" (unset → "auto"), "auto", or "never". NO_COLOR /
+	// WYK_NO_COLOR / --no-color still force color off regardless.
+	Color string `json:"color,omitempty"`
 }
 
 // DefaultPath returns the canonical config-file location, honoring
@@ -153,5 +180,17 @@ func ValidateScope(s string) error {
 		return nil
 	default:
 		return fmt.Errorf("%w %q (valid: %s, %s)", ErrInvalidScope, s, ScopeAll, ScopeCwd)
+	}
+}
+
+// ValidateColor accepts the empty string (unset → auto), "auto", or
+// "never". Any other value wraps ErrInvalidValue so the CLI maps it to a
+// usage error.
+func ValidateColor(s string) error {
+	switch s {
+	case "", ColorAuto, ColorNever:
+		return nil
+	default:
+		return fmt.Errorf("%w %q for color (valid: %s, %s)", ErrInvalidValue, s, ColorAuto, ColorNever)
 	}
 }

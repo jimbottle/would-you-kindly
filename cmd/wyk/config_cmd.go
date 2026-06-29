@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 
 	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
 )
@@ -42,6 +43,72 @@ var configKeys = []configKey{
 		},
 		effectiveDefault: wykconfig.ScopeAll,
 	},
+	{
+		name: "color",
+		desc: "colored output: auto | never (NO_COLOR / --no-color still force off)",
+		get:  func(c wykconfig.Config) string { return c.Color },
+		set: func(c *wykconfig.Config, v string) error {
+			if err := wykconfig.ValidateColor(v); err != nil {
+				return err
+			}
+			c.Color = v
+			return nil
+		},
+		effectiveDefault: wykconfig.ColorAuto,
+	},
+	{
+		name:             "disable_update_check",
+		desc:             "skip the background release check / update nudge (true | false)",
+		get:              func(c wykconfig.Config) string { return strconv.FormatBool(c.DisableUpdateCheck) },
+		set:              boolSetter(func(c *wykconfig.Config, b bool) { c.DisableUpdateCheck = b }),
+		effectiveDefault: "false",
+	},
+	{
+		name:             "compact_json",
+		desc:             "default -json output to compact / non-indented (true | false)",
+		get:              func(c wykconfig.Config) string { return strconv.FormatBool(c.CompactJSON) },
+		set:              boolSetter(func(c *wykconfig.Config, b bool) { c.CompactJSON = b }),
+		effectiveDefault: "false",
+	},
+	{
+		name:             "slim_json",
+		desc:             "default -json output to slim / drop description+notes bodies (true | false)",
+		get:              func(c wykconfig.Config) string { return strconv.FormatBool(c.SlimJSON) },
+		set:              boolSetter(func(c *wykconfig.Config, b bool) { c.SlimJSON = b }),
+		effectiveDefault: "false",
+	},
+}
+
+// boolSetter adapts a bool-field assignment into the string-based set
+// signature the key table uses, parsing the value and returning an
+// ErrInvalidValue-wrapped error (→ usage exit) on a non-boolean.
+func boolSetter(assign func(*wykconfig.Config, bool)) func(*wykconfig.Config, string) error {
+	return func(c *wykconfig.Config, v string) error {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("%w %q (use true or false)", wykconfig.ErrInvalidValue, v)
+		}
+		assign(c, b)
+		return nil
+	}
+}
+
+// loadConfigBestEffort returns the parsed config, or the zero Config on
+// ANY error (missing / corrupt / unsupported-version). Used for the
+// non-critical flag-default reads (color, compact/slim JSON) where a
+// broken config should fall back to built-in defaults rather than block
+// the command — a genuinely fatal config problem is still surfaced as a
+// hard error by the scope resolver (reposToQuery) and by `wyk doctor`.
+func loadConfigBestEffort() wykconfig.Config {
+	path, err := wykconfig.DefaultPath()
+	if err != nil {
+		return wykconfig.Config{}
+	}
+	cfg, err := wykconfig.Load(path)
+	if err != nil {
+		return wykconfig.Config{}
+	}
+	return cfg
 }
 
 // findConfigKey returns the configKey with the given name, or nil.

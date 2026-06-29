@@ -667,6 +667,9 @@ func checkWykConfig() check {
 	if err := wykconfig.ValidateScope(cfg.DefaultScope); err != nil {
 		return check{name: name, status: statusFail, detail: fmt.Sprintf("%s: %v — fix with `wyk config set default_scope all|cwd`", path, err)}
 	}
+	if err := wykconfig.ValidateColor(cfg.Color); err != nil {
+		return check{name: name, status: statusFail, detail: fmt.Sprintf("%s: %v — fix with `wyk config set color auto|never`", path, err)}
+	}
 	scope := cfg.DefaultScope
 	if scope == "" {
 		scope = wykconfig.ScopeAll + " (default; unset)"

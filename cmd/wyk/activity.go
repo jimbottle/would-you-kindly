@@ -32,8 +32,9 @@ func runActivity(args []string) int {
 	fs := flag.NewFlagSet("activity", flag.ContinueOnError)
 	fs.Usage = subcommandUsage(fs, "activity")
 	since := fs.Duration("since", 24*time.Hour, "show issues updated within this duration (e.g. 1h, 24h, 168h)")
+	cfg := loadConfigBestEffort()
 	asJSON := fs.Bool("json", false, "emit a structured JSON array instead of the table")
-	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
+	compact := fs.Bool("compact", cfg.CompactJSON, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	// -priority mirrors wyk inbox: lower number = more urgent in
 	// bd's convention. -1 (default) disables the cap. A user
 	// passing -priority 1 sees recent activity on P0 + P1 only.

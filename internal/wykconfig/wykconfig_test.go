@@ -9,7 +9,14 @@ import (
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	want := Config{Version: CurrentVersion, DefaultScope: ScopeCwd}
+	want := Config{
+		Version:            CurrentVersion,
+		DefaultScope:       ScopeCwd,
+		DisableUpdateCheck: true,
+		CompactJSON:        true,
+		SlimJSON:           true,
+		Color:              ColorNever,
+	}
 	if err := Save(path, want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -19,6 +26,25 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("round-trip mismatch: got %+v, want %+v", got, want)
+	}
+}
+
+func TestValidateColor(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		wantErr bool
+	}{
+		{"", false},
+		{ColorAuto, false},
+		{ColorNever, false},
+		{"always", true},
+		{"AUTO", true},
+		{"off", true},
+	} {
+		err := ValidateColor(tc.in)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("ValidateColor(%q) err=%v, wantErr=%v", tc.in, err, tc.wantErr)
+		}
 	}
 }
 

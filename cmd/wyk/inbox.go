@@ -59,10 +59,14 @@ func inboxQueryFor(identity string) string {
 func runInbox(args []string) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	fs.Usage = subcommandUsage(fs, "inbox")
+	// Config supplies the DEFAULT for -compact / -slim (best-effort: a
+	// broken config falls back to the built-in false); the flags still
+	// override per-run (e.g. -compact=false).
+	cfg := loadConfigBestEffort()
 	dir := fs.String("C", "", "scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config')")
 	asJSON := fs.Bool("json", false, "emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed)")
-	slim := fs.Bool("slim", false, "drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata)")
-	compact := fs.Bool("compact", false, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
+	slim := fs.Bool("slim", cfg.SlimJSON, "drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata)")
+	compact := fs.Bool("compact", cfg.CompactJSON, "with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM)")
 	// -priority caps the inbox at priority N or higher (lower N
 	// = higher priority in bd's convention). -1 (the default)
 	// disables the cap. A user passing -priority 1 gets P0 + P1
