@@ -142,7 +142,12 @@ func reposToQuery(dir, repoName string, allFlag bool) ([]registry.Repo, error) {
 	}
 
 	if scope == wykconfig.ScopeCwd {
-		if cwd, err := os.Getwd(); err == nil {
+		// Resolve cwd once and thread it through: it's both the key for
+		// finding the owning repo and, on a miss, the synthetic source's
+		// path. An unreadable cwd ("" here) leaves the client's Dir unset,
+		// so bd inherits the process working directory.
+		cwd, _ := os.Getwd()
+		if cwd != "" {
 			if repo, ok := reg.RepoForDir(cwd); ok {
 				return []registry.Repo{repo}, nil
 			}
@@ -151,7 +156,7 @@ func reposToQuery(dir, repoName string, allFlag bool) ([]registry.Repo, error) {
 		// source at cwd so an unregistered-but-valid bd workspace still
 		// reports for itself rather than silently returning the whole
 		// registry.
-		return []registry.Repo{cwdSyntheticRepo()}, nil
+		return []registry.Repo{{Path: cwd}}, nil
 	}
 
 	return reg.Repos, nil

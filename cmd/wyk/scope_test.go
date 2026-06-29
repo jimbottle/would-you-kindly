@@ -201,6 +201,12 @@ func TestReposToQuery_CwdMissFallsBackToSynthetic(t *testing.T) {
 	}
 }
 
+// TestReposToQuery_EmptyRegistryFallsBackToCwd pins the unified
+// empty-registry behavior that ALL six multi-repo commands now share
+// (activity/dashboard/depgraph/export previously hard-errored with a
+// "run wyk init" hint; routing them through reposToQuery intentionally
+// gives them inbox/stats's long-standing cwd fallback instead). This is
+// the resolver-level guarantee behind that change.
 func TestReposToQuery_EmptyRegistryFallsBackToCwd(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv(scopeEnvVar, "")
@@ -211,5 +217,18 @@ func TestReposToQuery_EmptyRegistryFallsBackToCwd(t *testing.T) {
 	}
 	if len(repos) != 1 || repos[0].Name != "" {
 		t.Fatalf("got %+v, want one un-named synthetic repo", repos)
+	}
+}
+
+// TestReposToQuery_RepoWithEmptyRegistryErrors pins that -repo is honored
+// strictly even when the registry is empty: it errors ("no registered
+// repo named …") rather than silently ignoring -repo and falling back to
+// cwd. The -repo filter deliberately runs before the empty-registry
+// shortcut — an explicit -repo should never be silently dropped.
+func TestReposToQuery_RepoWithEmptyRegistryErrors(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(scopeEnvVar, "")
+	if _, err := reposToQuery("", "ghost", false); err == nil {
+		t.Fatal("want error for -repo against an empty registry, got nil")
 	}
 }
