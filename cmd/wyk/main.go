@@ -71,8 +71,8 @@ func disableColor() {
 // later, on the TUI / probe path) is the explicit equivalent. The env
 // check stays in noColorRequested (env-only, unit-tested); the config
 // read is best-effort so a broken config can't block startup.
-func applyNoColor() {
-	if noColorRequested() || loadConfigBestEffort().Color == wykconfig.ColorNever {
+func applyNoColor(cfg wykconfig.Config) {
+	if noColorRequested() || cfg.Color == wykconfig.ColorNever {
 		disableColor()
 	}
 }
@@ -110,7 +110,12 @@ var subcommandHandlers = map[string]func([]string) int{
 }
 
 func main() {
-	applyNoColor()
+	// Read config.json once for the whole process: applyNoColor needs
+	// it before dispatch (color applies to every surface), and the TUI
+	// path below reuses the same value for the update-check guard — no
+	// second disk read, and both observe one consistent file state.
+	cfg := loadConfigBestEffort()
+	applyNoColor(cfg)
 	if len(os.Args) >= 2 {
 		if run, ok := subcommandHandlers[os.Args[1]]; ok {
 			os.Exit(run(os.Args[2:]))
@@ -260,9 +265,10 @@ func main() {
 
 	// Update-check surfaces — the cached nudge banner here and the
 	// background refresh below — are suppressed entirely when the user
-	// set disable_update_check in config.json (best-effort read; a broken
-	// config falls back to checks-on, the historical default).
-	updateChecks := !loadConfigBestEffort().DisableUpdateCheck
+	// set disable_update_check in config.json (read once at the top of
+	// main; a broken config falls back to checks-on, the historical
+	// default).
+	updateChecks := !cfg.DisableUpdateCheck
 
 	// Read the cached update nudge once at startup so the banner
 	// can render immediately if there's already a snapshot on

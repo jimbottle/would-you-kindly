@@ -11,7 +11,41 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
 )
+
+// TestRunExport_CompactJSONDefaultFromConfig pins the end-to-end contract
+// added with compact_json: a config default flips -compact ON, and the
+// per-run flag (-compact=false) still overrides it. Uses a stubbed export
+// client + empty registry (cwd synthetic source) so no real bd is needed.
+func TestRunExport_CompactJSONDefaultFromConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(scopeEnvVar, "")
+	cfgPath, err := wykconfig.DefaultPath()
+	if err != nil {
+		t.Fatalf("config path: %v", err)
+	}
+	if err := wykconfig.Save(cfgPath, wykconfig.Config{CompactJSON: true}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	orig := defaultExportClient
+	defer func() { defaultExportClient = orig }()
+	defaultExportClient = func(string) exportClient {
+		return &stubExportClient{listIssues: []beads.Issue{{ID: "x-1", Title: "t", Status: "open"}}}
+	}
+
+	// compact_json=true → default output is non-indented (no "\n  ").
+	out := captureRunStdout(t, func() int { return runExport(nil) })
+	if strings.Contains(out, "\n  ") {
+		t.Fatalf("compact_json=true should default to non-indented JSON; got:\n%s", out)
+	}
+	// -compact=false overrides the config default and re-indents.
+	out = captureRunStdout(t, func() int { return runExport([]string{"-compact=false"}) })
+	if !strings.Contains(out, "\n  ") {
+		t.Fatalf("-compact=false should override config and indent; got:\n%s", out)
+	}
+}
 
 // stubExportClient is a minimal exportClient impl recorded
 // per-call so collectExport tests can drive the list-ok/ready-
