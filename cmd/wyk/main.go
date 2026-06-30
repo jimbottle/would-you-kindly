@@ -110,6 +110,13 @@ var subcommandHandlers = map[string]func([]string) int{
 }
 
 func main() {
+	// Persist any panic that unwinds the main goroutine (every subcommand,
+	// plus setup/teardown) to a crash log before exiting non-zero — so a
+	// field crash leaves an artifact instead of a stderr trace lost behind
+	// a closed alt-screen (would-you-kindly-w5bf.2). TUI panics are caught
+	// by Bubble Tea (which restores the terminal) and recorded separately
+	// from the ErrProgramPanic returned by p.Run below.
+	defer captureCrash()
 	// Read config.json once for the whole process: applyNoColor needs
 	// it before dispatch (color applies to every surface), and the TUI
 	// path below reuses the same value for the update-check guard — no
@@ -342,9 +349,76 @@ func main() {
 		go backgroundUpdateCheck()
 	}
 	if _, err := p.Run(); err != nil {
+		// Bubble Tea caught a panic (it has already restored the terminal
+		// and printed the stack); persist a crash record so there's a
+		// durable artifact too. The returned error carries only the
+		// sentinel, not the stack, so the on-screen trace is the fuller one.
+		if errors.Is(err, tea.ErrProgramPanic) {
+			if path := writeCrashRecord("tui", err, nil); path != "" {
+				fmt.Fprintf(os.Stderr, "wyk: TUI panic recorded to %s\n", path)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "wyk:", err)
 		exitWith(1)
 	}
+}
+
+// crashLogPath resolves the always-on crash log location, independent of
+// the debug log so a panic is captured even with WYK_DEBUG off. XDG state
+// dir first (logs are state, not config/cache), then ~/.local/state, then
+// a cwd fallback if home is unresolvable.
+func crashLogPath() string {
+	if dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); dir != "" {
+		return filepath.Join(dir, "wyk", "crash.log")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".local", "state", "wyk", "crash.log")
+	}
+	return "wyk-crash.log"
+}
+
+// writeCrashRecord appends a timestamped panic record (wyk version, argv,
+// the panic value, and the stack when available) to the crash log and
+// returns the path written, or "" on failure. source distinguishes the
+// main-goroutine recover ("main") from the Bubble Tea path ("tui"), whose
+// stack is printed to the terminal by the renderer rather than passed here.
+func writeCrashRecord(source string, r any, stack []byte) string {
+	path := crashLogPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return ""
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	fmt.Fprintf(f, "\n===== wyk %s panic %s =====\nversion: %s\nargs: %v\npanic: %v\n",
+		source, time.Now().Format(time.RFC3339), versionString(), os.Args, r)
+	if len(stack) > 0 {
+		fmt.Fprintf(f, "\n%s\n", stack)
+	} else {
+		fmt.Fprintln(f, "(stack printed to the terminal by the TUI renderer)")
+	}
+	return path
+}
+
+// captureCrash is main's deferred recover: it persists the panic + stack
+// to the crash log, prints them to stderr, and exits non-zero. Re-raising
+// would re-print the stack but bury our friendly "recorded to <path>"
+// line, so we own the exit here. Only fires for panics that unwind the
+// main goroutine — Bubble Tea handles its own (see p.Run above).
+func captureCrash() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	stack := debug.Stack()
+	path := writeCrashRecord("main", r, stack)
+	if path != "" {
+		fmt.Fprintf(os.Stderr, "wyk: panic recorded to %s\n", path)
+	}
+	fmt.Fprintf(os.Stderr, "wyk: panic: %v\n\n%s\n", r, stack)
+	os.Exit(1)
 }
 
 // debugLogCleanup flushes and closes the debug log file when debug

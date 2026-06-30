@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -271,5 +272,63 @@ func TestSetupDebugLogging_OffByDefault(t *testing.T) {
 	}
 	if debugLogCleanup != nil {
 		t.Fatal("no cleanup hook should be installed when debug logging is off")
+	}
+}
+
+// TestCaptureCrash_WritesRecordAndExitsNonZero exercises the deferred
+// recover end-to-end via the standard os.Exit subprocess pattern: the
+// child installs captureCrash, panics, and must (a) exit non-zero and
+// (b) append a panic record naming the panic value + a stack to the
+// crash log under XDG_STATE_HOME. (would-you-kindly-w5bf.2)
+func TestCaptureCrash_WritesRecordAndExitsNonZero(t *testing.T) {
+	if os.Getenv("WYK_TEST_CRASH") == "1" {
+		defer captureCrash()
+		panic("boom-from-test")
+	}
+	state := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=TestCaptureCrash_WritesRecordAndExitsNonZero")
+	cmd.Env = append(os.Environ(), "WYK_TEST_CRASH=1", "XDG_STATE_HOME="+state)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected non-zero exit from the panicking child; out=%s", out)
+	}
+	b, readErr := os.ReadFile(filepath.Join(state, "wyk", "crash.log"))
+	if readErr != nil {
+		t.Fatalf("crash log not written: %v (child output: %s)", readErr, out)
+	}
+	got := string(b)
+	for _, want := range []string{"boom-from-test", "panic:", "version:", "captureCrash"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("crash record missing %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// TestWriteCrashRecord_TUINoStack pins the TUI branch: when no stack is
+// passed (Bubble Tea owns it), the record still lands with version/args
+// and an explicit note that the stack is on the terminal.
+func TestWriteCrashRecord_TUINoStack(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := writeCrashRecord("tui", errors.New("kaboom"), nil)
+	if path == "" {
+		t.Fatal("writeCrashRecord returned empty path")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read crash log: %v", err)
+	}
+	got := string(b)
+	if !strings.Contains(got, "kaboom") || !strings.Contains(got, "printed to the terminal") {
+		t.Fatalf("unexpected TUI crash record:\n%s", got)
+	}
+}
+
+// TestCrashLogPath_HonorsXDGState pins the path resolution.
+func TestCrashLogPath_HonorsXDGState(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/tmp/xdg-state-test")
+	got := crashLogPath()
+	want := filepath.Join("/tmp/xdg-state-test", "wyk", "crash.log")
+	if got != want {
+		t.Fatalf("crashLogPath() = %q, want %q", got, want)
 	}
 }
