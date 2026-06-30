@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/updater"
 	"github.com/jimbottle/would-you-kindly/internal/watch"
 	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
+	"github.com/jimbottle/would-you-kindly/internal/wyklog"
 	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
 
@@ -405,8 +407,14 @@ func recordBDFailure(args []string, dir string, err error) {
 		return
 	}
 	defer func() { _ = f.Close() }()
+	sentinel := bdSentinelName(err)
 	fmt.Fprintf(f, "%s\tbd %s\tdir=%q\tsentinel=%s\terr=%v\n",
-		time.Now().Format(time.RFC3339), strings.Join(args, " "), dir, bdSentinelName(err), err)
+		time.Now().Format(time.RFC3339), strings.Join(args, " "), dir, sentinel, err)
+	// Also surface on the structured stream when logging is active (w5bf.4);
+	// gated on Active so a failure isn't echoed to stderr when logging is off.
+	if wyklog.Active() {
+		slog.Error("bd failure", "argv", strings.Join(args, " "), "dir", dir, "sentinel", sentinel, "err", err)
+	}
 }
 
 // bdSentinelName classifies a bd error for the error log so a reader can
@@ -447,6 +455,10 @@ func writeCrashRecord(source string, r any, stack []byte) string {
 		fmt.Fprintf(f, "\n%s\n", stack)
 	} else {
 		fmt.Fprintln(f, "(stack printed to the terminal by the TUI renderer)")
+	}
+	// Mirror onto the structured stream when logging is active (w5bf.4).
+	if wyklog.Active() {
+		slog.Error("panic", "source", source, "panic", fmt.Sprint(r))
 	}
 	return path
 }
@@ -493,14 +505,21 @@ func setupDebugLogging() {
 	// Bound the file before appending so a long-lived or chatty session
 	// can't grow it without limit (would-you-kindly-w5bf.5).
 	rotateLogIfLarge(logPath)
-	lf, err := tea.LogToFile(logPath, "wyk")
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wyk: could not open debug log %q: %v\n", logPath, err)
 		return
 	}
-	beads.Debug = true
-	debugLogCleanup = func() { _ = lf.Close() }
-	log.Printf("wyk %s starting; debug logging enabled (%s)", versionString(), logPath)
+	debugLogCleanup = func() { _ = f.Close() }
+	// Install slog as the structured sink (would-you-kindly-w5bf.4); the bd
+	// trace, bd-failure, and crash records all flow through it at a level.
+	// WYK_LOG_LEVEL refines verbosity (default Debug = the full trace).
+	level := wyklog.ParseLevel(os.Getenv("WYK_LOG_LEVEL"), slog.LevelDebug)
+	wyklog.Setup(f, level)
+	// Also point the stdlib logger at the file so Bubble Tea's internal
+	// log output (which uses the standard logger) is captured alongside.
+	log.SetOutput(f)
+	slog.Info("wyk starting", "version", versionString(), "log", logPath, "level", level.String())
 }
 
 // defaultLogMaxBytes caps the debug and crash logs. Past this size the

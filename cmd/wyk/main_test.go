@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/tui"
+	"github.com/jimbottle/would-you-kindly/internal/wyklog"
 )
 
 // probeMultiStub implements both tui.Source and tui.MultiSource so the
@@ -215,34 +217,35 @@ func TestVersionString_PrefersInjectedVersion(t *testing.T) {
 	}
 }
 
-// resetDebugLogging restores the global debug-logging state a test
-// mutated: beads.Debug, the cleanup hook, and the stdlib log sink
-// (tea.LogToFile redirects it process-wide).
-func resetDebugLogging(t *testing.T, origDebug bool, origCleanup func()) {
+// resetDebugLogging restores the global logging state a test mutated: the
+// cleanup hook, the stdlib log sink, and the slog default (via wyklog).
+func resetDebugLogging(t *testing.T, origCleanup func()) {
 	t.Helper()
 	if debugLogCleanup != nil {
 		debugLogCleanup()
 	}
-	beads.Debug = origDebug
 	debugLogCleanup = origCleanup
 	log.SetOutput(os.Stderr)
+	wyklog.Reset()
 }
 
-// TestSetupDebugLogging_EnablesGlobally pins would-you-kindly-w5bf.1:
-// setupDebugLogging (now called before subcommand dispatch) turns on
-// beads.Debug and writes the startup banner whenever a log path resolves,
-// so EVERY command — not just the TUI — traces its bd calls.
+// TestSetupDebugLogging_EnablesGlobally pins would-you-kindly-w5bf.1 +
+// w5bf.4: setupDebugLogging (now called before subcommand dispatch)
+// activates the slog sink and writes the startup banner whenever a log
+// path resolves, so EVERY command — not just the TUI — traces its bd
+// calls through the structured logger.
 func TestSetupDebugLogging_EnablesGlobally(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "dbg.log")
 	t.Setenv("WYK_LOG_FILE", logPath)
 	t.Setenv("WYK_DEBUG", "")
-	origDebug, origCleanup := beads.Debug, debugLogCleanup
-	beads.Debug, debugLogCleanup = false, nil
-	t.Cleanup(func() { resetDebugLogging(t, origDebug, origCleanup) })
+	t.Setenv("WYK_LOG_LEVEL", "")
+	origCleanup := debugLogCleanup
+	debugLogCleanup = nil
+	t.Cleanup(func() { resetDebugLogging(t, origCleanup) })
 
 	setupDebugLogging()
-	if !beads.Debug {
-		t.Fatal("setupDebugLogging should set beads.Debug when a log path resolves")
+	if !wyklog.Active() {
+		t.Fatal("setupDebugLogging should activate the slog sink when a log path resolves")
 	}
 	if debugLogCleanup == nil {
 		t.Fatal("setupDebugLogging should install a cleanup hook")
@@ -253,24 +256,21 @@ func TestSetupDebugLogging_EnablesGlobally(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if !strings.Contains(string(b), "debug logging enabled") {
+	if !strings.Contains(string(b), "wyk starting") {
 		t.Fatalf("startup banner missing from log: %q", b)
 	}
 }
 
 // TestSetupDebugLogging_OffByDefault: with no WYK_DEBUG / WYK_LOG_FILE,
-// nothing is enabled and no cleanup hook is installed (zero overhead).
+// no cleanup hook is installed (zero overhead, no file opened).
 func TestSetupDebugLogging_OffByDefault(t *testing.T) {
 	t.Setenv("WYK_LOG_FILE", "")
 	t.Setenv("WYK_DEBUG", "")
-	origDebug, origCleanup := beads.Debug, debugLogCleanup
-	beads.Debug, debugLogCleanup = false, nil
-	t.Cleanup(func() { resetDebugLogging(t, origDebug, origCleanup) })
+	origCleanup := debugLogCleanup
+	debugLogCleanup = nil
+	t.Cleanup(func() { resetDebugLogging(t, origCleanup) })
 
 	setupDebugLogging()
-	if beads.Debug {
-		t.Fatal("beads.Debug should stay false when debug logging is off")
-	}
 	if debugLogCleanup != nil {
 		t.Fatal("no cleanup hook should be installed when debug logging is off")
 	}
@@ -415,5 +415,27 @@ func TestBDSentinelName(t *testing.T) {
 		if got := bdSentinelName(tc.err); got != tc.want {
 			t.Errorf("bdSentinelName(%v) = %q, want %q", tc.err, got, tc.want)
 		}
+	}
+}
+
+// TestSetupDebugLogging_LevelKnob pins would-you-kindly-w5bf.4: WYK_LOG_LEVEL
+// dials the slog level of the file log. At level=error the verbose bd trace
+// (Debug) is filtered while failures (Error) still pass.
+func TestSetupDebugLogging_LevelKnob(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "dbg.log")
+	t.Setenv("WYK_LOG_FILE", logPath)
+	t.Setenv("WYK_DEBUG", "")
+	t.Setenv("WYK_LOG_LEVEL", "error")
+	origCleanup := debugLogCleanup
+	debugLogCleanup = nil
+	t.Cleanup(func() { resetDebugLogging(t, origCleanup) })
+
+	setupDebugLogging()
+	ctx := context.Background()
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		t.Error("WYK_LOG_LEVEL=error should filter the Debug-level bd trace")
+	}
+	if !slog.Default().Enabled(ctx, slog.LevelError) {
+		t.Error("WYK_LOG_LEVEL=error should still pass Error-level records")
 	}
 }

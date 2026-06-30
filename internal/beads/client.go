@@ -7,21 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 )
-
-// Debug, when true, makes every bd invocation log its argv, the -C dir,
-// elapsed time, and error via the standard logger. wyk sets this (and
-// points the standard logger at a file) when WYK_DEBUG / WYK_LOG_FILE is
-// set, so a stuck or slow TUI can be diagnosed — stderr is invisible
-// behind the alt-screen. Off by default = zero overhead.
-// (would-you-kindly-2vyt)
-var Debug bool
 
 // ErrorSink, when non-nil, is called for every bd invocation that FAILS,
 // regardless of Debug. wyk wires it to an always-on, size-bounded error
@@ -410,13 +402,18 @@ func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) (out 
 	// when a shorter parent deadline fires first (the effective
 	// deadline is min(c.Timeout, parent.Deadline)).
 	start := time.Now()
-	// Debug tracing (would-you-kindly-2vyt): when enabled, log every bd
-	// invocation's argv + elapsed + error to the standard logger (which
-	// wyk points at WYK_DEBUG/WYK_LOG_FILE). Off by default = zero cost.
-	if Debug {
+	// Debug tracing (would-you-kindly-2vyt, w5bf.4): when the default slog
+	// logger is enabled at Debug level (wyk configures it from WYK_DEBUG /
+	// WYK_LOG_FILE / WYK_LOG_LEVEL), record every bd invocation's argv +
+	// elapsed + error as a structured event. Gated on Enabled so it costs
+	// nothing — not even the deferred closure — when debug logging is off.
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		defer func() {
-			log.Printf("bd %s (dir=%q) took %s err=%v",
-				strings.Join(args, " "), c.Dir, time.Since(start).Round(time.Millisecond), err)
+			slog.Debug("bd invocation",
+				"argv", strings.Join(args, " "),
+				"dir", c.Dir,
+				"elapsed", time.Since(start).Round(time.Millisecond).String(),
+				"err", err)
 		}()
 	}
 	// Persist every failure to the always-on error sink (independent of
