@@ -27,6 +27,7 @@ var wykSubcommands = []string{
 	"inbox",
 	"stats",
 	"doctor",
+	"bugreport",
 	"registry",
 	"config",
 	"conventions",

@@ -34,6 +34,7 @@ var sweptFlagSets = []struct {
 	{"stats", runStats, []string{"-h"}},
 	{"dashboard", runDashboard, []string{"-h"}},
 	{"doctor", runDoctor, []string{"-h"}},
+	{"bugreport", runBugreport, []string{"-h"}},
 	{"conventions", runConventions, []string{"-h"}},
 	{"version", runVersion, []string{"-h"}},
 	{"help", runHelp, []string{"-h"}},

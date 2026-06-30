@@ -94,6 +94,7 @@ var subcommandHandlers = map[string]func([]string) int{
 	"inbox":       runInbox,
 	"stats":       runStats,
 	"doctor":      runDoctor,
+	"bugreport":   runBugreport,
 	"registry":    runRegistry,
 	"config":      runConfig,
 	"conventions": runConventions,
@@ -978,6 +979,7 @@ Subcommands:
   inbox        list issues a human bounced back to the agent
   init         install the post-commit auto-close hook in this repo
   doctor       diagnose installation / registry / per-repo configuration
+  bugreport    one-shot pasteable capture (version, env, doctor, config, logs)
   stats        aggregate handoff metrics across registered repos
   dashboard    per-repo open/human/closed-this-week summary (-json for structured)
   export       JSON dump of every registered repo's full issue list + ready IDs

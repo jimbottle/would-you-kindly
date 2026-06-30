@@ -168,6 +168,19 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		},
 	},
 	{
+		Name:    "bugreport",
+		Summary: "One-shot pasteable capture for triaging a field bug: wyk version, allowlisted env, full doctor verdicts, config.json + repos.json, and the tail of the crash/debug logs.",
+		Usage:   "wyk bugreport [-tail N] [-o file]",
+		Examples: []string{
+			"wyk bugreport                 # print the report to stdout",
+			"wyk bugreport -o report.txt   # write it to a file to attach",
+		},
+		Flags: []cliFlag{
+			{Name: "-tail", Default: "50", Description: "lines of the crash/debug logs to include (0 omits them)"},
+			{Name: "-o", Default: "", Description: "write the report to this file instead of stdout"},
+		},
+	},
+	{
 		Name:    "config",
 		Summary: "Get/set machine-wide wyk settings in ~/.config/wyk/config.json (e.g. default_scope, which repos the multi-repo commands query by default).",
 		Usage:   "wyk config <list | get <key> | set <key> <value>>",

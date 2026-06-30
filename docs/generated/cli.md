@@ -169,6 +169,26 @@ wyk registry prune -y   # drop entries whose repo is gone
 | `-broken` | `false` | on prune, also drop entries whose path exists but holds no bd workspace (probes bd; only definitive 'no workspace' results qualify, not timeouts) |
 | `-json` | `false` | emit structured JSON instead of the human-readable list |
 
+## `wyk bugreport`
+
+One-shot pasteable capture for triaging a field bug: wyk version, allowlisted env, full doctor verdicts, config.json + repos.json, and the tail of the crash/debug logs.
+
+```
+wyk bugreport [-tail N] [-o file]
+```
+
+Common case:
+
+```
+wyk bugreport                 # print the report to stdout
+wyk bugreport -o report.txt   # write it to a file to attach
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-tail` | `50` | lines of the crash/debug logs to include (0 omits them) |
+| `-o` | `_(empty)_` | write the report to this file instead of stdout |
+
 ## `wyk config`
 
 Get/set machine-wide wyk settings in ~/.config/wyk/config.json (e.g. default_scope, which repos the multi-repo commands query by default).
