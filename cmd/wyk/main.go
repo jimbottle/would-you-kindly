@@ -116,13 +116,22 @@ func main() {
 	// second disk read, and both observe one consistent file state.
 	cfg := loadConfigBestEffort()
 	applyNoColor(cfg)
+	// Set up debug logging BEFORE subcommand dispatch so WYK_DEBUG /
+	// WYK_LOG_FILE traces every command's bd calls, not just the TUI
+	// (would-you-kindly-w5bf.1). The subcommand/version paths os.Exit
+	// (skipping defers), so they route through exitWith to flush+close
+	// the log; the TUI path falls through to the deferred cleanup below.
+	setupDebugLogging()
+	if debugLogCleanup != nil {
+		defer debugLogCleanup()
+	}
 	if len(os.Args) >= 2 {
 		if run, ok := subcommandHandlers[os.Args[1]]; ok {
-			os.Exit(run(os.Args[2:]))
+			exitWith(run(os.Args[2:]))
 		}
 		switch os.Args[1] {
 		case "--version", "-v":
-			os.Exit(runVersion(os.Args[2:]))
+			exitWith(runVersion(os.Args[2:]))
 		}
 	}
 
@@ -296,19 +305,9 @@ func main() {
 	// is wheel-scroll / click-to-set-cursor — navigation is keyboard
 	// only (j/k, PgUp/PgDn, g/G). Selecting text over the CLI was the
 	// repeated ask; mouse nav had keyboard equivalents.
-	// Optional debug logging (would-you-kindly-2vyt): WYK_DEBUG=1 (or
-	// WYK_LOG_FILE=<path>) tees Bubble Tea's standard logger — and every
-	// bd invocation's argv + timing — to a file, so a stuck or slow TUI
-	// can be diagnosed; stderr is invisible behind the alt-screen.
-	if logPath := debugLogPath(); logPath != "" {
-		if lf, err := tea.LogToFile(logPath, "wyk"); err == nil {
-			defer func() { _ = lf.Close() }()
-			beads.Debug = true
-			log.Printf("wyk %s starting; debug logging enabled (%s)", versionString(), logPath)
-		} else {
-			fmt.Fprintf(os.Stderr, "wyk: could not open debug log %q: %v\n", logPath, err)
-		}
-	}
+	// Debug logging is set up once at the top of main (setupDebugLogging),
+	// before subcommand dispatch, so it covers every command — not just
+	// this TUI path (would-you-kindly-w5bf.1).
 	// Mouse capture: the startup state rides a Program option (which
 	// also latches SGR coordinate encoding); runtime view-switching
 	// goes through the late-bound ProgramMouse controller — direct
@@ -344,8 +343,47 @@ func main() {
 	}
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
-		os.Exit(1)
+		exitWith(1)
 	}
+}
+
+// debugLogCleanup flushes and closes the debug log file when debug
+// logging is enabled; nil otherwise. setupDebugLogging assigns it. The
+// subcommand-dispatch paths os.Exit (which skips deferred cleanup), so
+// they call it via exitWith; the TUI path relies on the deferred call in
+// main.
+var debugLogCleanup func()
+
+// setupDebugLogging wires WYK_DEBUG / WYK_LOG_FILE for the WHOLE process.
+// When a log path resolves it tees Go's standard logger (and so every bd
+// invocation's argv + timing + error, via beads.Debug) to that file and
+// records a startup banner. Off by default: no file is opened or touched
+// and beads.Debug stays false (zero overhead). Called before dispatch so
+// non-TUI subcommands (inbox, stats, export, hook, …) trace their bd
+// calls too — previously this only ran on the TUI path
+// (would-you-kindly-w5bf.1).
+func setupDebugLogging() {
+	logPath := debugLogPath()
+	if logPath == "" {
+		return
+	}
+	lf, err := tea.LogToFile(logPath, "wyk")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wyk: could not open debug log %q: %v\n", logPath, err)
+		return
+	}
+	beads.Debug = true
+	debugLogCleanup = func() { _ = lf.Close() }
+	log.Printf("wyk %s starting; debug logging enabled (%s)", versionString(), logPath)
+}
+
+// exitWith flushes the debug log (if any) before os.Exit, since os.Exit
+// skips deferred cleanup. The single exit point for the dispatch paths.
+func exitWith(code int) {
+	if debugLogCleanup != nil {
+		debugLogCleanup()
+	}
+	os.Exit(code)
 }
 
 // backgroundUpdateCheck refreshes the update-check cache without

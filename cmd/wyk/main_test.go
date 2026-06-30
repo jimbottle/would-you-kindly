@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,5 +210,66 @@ func TestVersionString_PrefersInjectedVersion(t *testing.T) {
 	}
 	if strings.Contains(got, "(devel)") {
 		t.Errorf("injected version should override the (devel) marker: got %q", got)
+	}
+}
+
+// resetDebugLogging restores the global debug-logging state a test
+// mutated: beads.Debug, the cleanup hook, and the stdlib log sink
+// (tea.LogToFile redirects it process-wide).
+func resetDebugLogging(t *testing.T, origDebug bool, origCleanup func()) {
+	t.Helper()
+	if debugLogCleanup != nil {
+		debugLogCleanup()
+	}
+	beads.Debug = origDebug
+	debugLogCleanup = origCleanup
+	log.SetOutput(os.Stderr)
+}
+
+// TestSetupDebugLogging_EnablesGlobally pins would-you-kindly-w5bf.1:
+// setupDebugLogging (now called before subcommand dispatch) turns on
+// beads.Debug and writes the startup banner whenever a log path resolves,
+// so EVERY command — not just the TUI — traces its bd calls.
+func TestSetupDebugLogging_EnablesGlobally(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "dbg.log")
+	t.Setenv("WYK_LOG_FILE", logPath)
+	t.Setenv("WYK_DEBUG", "")
+	origDebug, origCleanup := beads.Debug, debugLogCleanup
+	beads.Debug, debugLogCleanup = false, nil
+	t.Cleanup(func() { resetDebugLogging(t, origDebug, origCleanup) })
+
+	setupDebugLogging()
+	if !beads.Debug {
+		t.Fatal("setupDebugLogging should set beads.Debug when a log path resolves")
+	}
+	if debugLogCleanup == nil {
+		t.Fatal("setupDebugLogging should install a cleanup hook")
+	}
+	debugLogCleanup() // flush + close so the banner is on disk
+	debugLogCleanup = nil
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(b), "debug logging enabled") {
+		t.Fatalf("startup banner missing from log: %q", b)
+	}
+}
+
+// TestSetupDebugLogging_OffByDefault: with no WYK_DEBUG / WYK_LOG_FILE,
+// nothing is enabled and no cleanup hook is installed (zero overhead).
+func TestSetupDebugLogging_OffByDefault(t *testing.T) {
+	t.Setenv("WYK_LOG_FILE", "")
+	t.Setenv("WYK_DEBUG", "")
+	origDebug, origCleanup := beads.Debug, debugLogCleanup
+	beads.Debug, debugLogCleanup = false, nil
+	t.Cleanup(func() { resetDebugLogging(t, origDebug, origCleanup) })
+
+	setupDebugLogging()
+	if beads.Debug {
+		t.Fatal("beads.Debug should stay false when debug logging is off")
+	}
+	if debugLogCleanup != nil {
+		t.Fatal("no cleanup hook should be installed when debug logging is off")
 	}
 }
