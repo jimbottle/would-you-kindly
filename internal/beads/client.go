@@ -23,6 +23,15 @@ import (
 // (would-you-kindly-2vyt)
 var Debug bool
 
+// ErrorSink, when non-nil, is called for every bd invocation that FAILS,
+// regardless of Debug. wyk wires it to an always-on, size-bounded error
+// log so a failure that already happened can be inspected after the fact
+// (no need to reproduce with WYK_DEBUG on). args is the bd argv without
+// the -C prefix, dir is the workspace, and err is the final wrapped error
+// (errors.Is-able against the sentinels below). Library default is nil =
+// no I/O policy baked into the package. (would-you-kindly-w5bf.6)
+var ErrorSink func(args []string, dir string, err error)
+
 // ErrBDNotFound is returned when the bd binary is not on the PATH.
 // The TUI distinguishes this from other errors so it can show a
 // "bd is not installed" message instead of a generic exec failure.
@@ -408,6 +417,17 @@ func (c *Client) run(ctx context.Context, stdin io.Reader, args ...string) (out 
 		defer func() {
 			log.Printf("bd %s (dir=%q) took %s err=%v",
 				strings.Join(args, " "), c.Dir, time.Since(start).Round(time.Millisecond), err)
+		}()
+	}
+	// Persist every failure to the always-on error sink (independent of
+	// Debug), so a field failure leaves a trace. Single deferred hook so
+	// all the error returns below are covered uniformly with the final
+	// wrapped err. (would-you-kindly-w5bf.6)
+	if ErrorSink != nil {
+		defer func() {
+			if err != nil {
+				ErrorSink(args, c.Dir, err)
+			}
 		}()
 	}
 	stdout, stderr, err := r(ctx, c.Binary, full, stdin)

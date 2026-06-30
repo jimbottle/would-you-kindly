@@ -134,6 +134,10 @@ func main() {
 	if debugLogCleanup != nil {
 		defer debugLogCleanup()
 	}
+	// Wire the always-on bd-failure log before dispatch so EVERY command's
+	// failed bd calls are recorded, independent of WYK_DEBUG
+	// (would-you-kindly-w5bf.6).
+	beads.ErrorSink = recordBDFailure
 	if len(os.Args) >= 2 {
 		if run, ok := subcommandHandlers[os.Args[1]]; ok {
 			exitWith(run(os.Args[2:]))
@@ -365,18 +369,60 @@ func main() {
 	}
 }
 
-// crashLogPath resolves the always-on crash log location, independent of
-// the debug log so a panic is captured even with WYK_DEBUG off. XDG state
-// dir first (logs are state, not config/cache), then ~/.local/state, then
-// a cwd fallback if home is unresolvable.
-func crashLogPath() string {
+// stateFilePath resolves a wyk state-file location (logs are state, not
+// config/cache): XDG_STATE_HOME/wyk/<name> first, then ~/.local/state/
+// wyk/<name>, then a cwd "wyk-<name>" fallback if home is unresolvable.
+func stateFilePath(name string) string {
 	if dir := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); dir != "" {
-		return filepath.Join(dir, "wyk", "crash.log")
+		return filepath.Join(dir, "wyk", name)
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".local", "state", "wyk", "crash.log")
+		return filepath.Join(home, ".local", "state", "wyk", name)
 	}
-	return "wyk-crash.log"
+	return "wyk-" + name
+}
+
+// crashLogPath is the always-on crash log (panic records), independent of
+// the debug log so a panic is captured even with WYK_DEBUG off.
+func crashLogPath() string { return stateFilePath("crash.log") }
+
+// errorLogPath is the always-on bd-failure log: every failed bd
+// invocation is appended here regardless of WYK_DEBUG (would-you-kindly-w5bf.6).
+func errorLogPath() string { return stateFilePath("bd-errors.log") }
+
+// recordBDFailure is wired into beads.ErrorSink so every failed bd call
+// leaves a one-line record (timestamp, argv, dir, classified sentinel,
+// error) in the always-on, size-bounded error log — best-effort, never
+// blocking the caller on an I/O hiccup.
+func recordBDFailure(args []string, dir string, err error) {
+	path := errorLogPath()
+	if e := os.MkdirAll(filepath.Dir(path), 0o755); e != nil {
+		return
+	}
+	rotateLogIfLarge(path)
+	f, e := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if e != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	fmt.Fprintf(f, "%s\tbd %s\tdir=%q\tsentinel=%s\terr=%v\n",
+		time.Now().Format(time.RFC3339), strings.Join(args, " "), dir, bdSentinelName(err), err)
+}
+
+// bdSentinelName classifies a bd error for the error log so a reader can
+// scan for timeouts / missing-workspace / missing-binary without parsing
+// the free-text message.
+func bdSentinelName(err error) string {
+	switch {
+	case errors.Is(err, beads.ErrTimedOut):
+		return "timed-out"
+	case errors.Is(err, beads.ErrNoWorkspace):
+		return "no-workspace"
+	case errors.Is(err, beads.ErrBDNotFound):
+		return "bd-not-found"
+	default:
+		return "-"
+	}
 }
 
 // writeCrashRecord appends a timestamped panic record (wyk version, argv,

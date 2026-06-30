@@ -315,3 +315,43 @@ func TestBDTimeoutFromEnv(t *testing.T) {
 		})
 	}
 }
+
+// TestErrorSink_FiresOnFailure pins would-you-kindly-w5bf.6: a failed bd
+// invocation calls ErrorSink once with the argv, dir, and wrapped error.
+func TestErrorSink_FiresOnFailure(t *testing.T) {
+	orig := ErrorSink
+	t.Cleanup(func() { ErrorSink = orig })
+	var gotDir string
+	var gotErr error
+	calls := 0
+	ErrorSink = func(_ []string, dir string, err error) {
+		calls++
+		gotDir, gotErr = dir, err
+	}
+	c := newTestClient(&fakeRunner{stderr: []byte(`{"error":"boom"}`), err: errors.New("exit status 1")})
+	c.Dir = "/tmp/x"
+	if _, err := c.Query(context.Background(), "status!=closed"); err == nil {
+		t.Fatal("expected a query error")
+	}
+	if calls != 1 {
+		t.Fatalf("ErrorSink fired %d times, want 1", calls)
+	}
+	if gotDir != "/tmp/x" || gotErr == nil {
+		t.Fatalf("ErrorSink got dir=%q err=%v", gotDir, gotErr)
+	}
+}
+
+// TestErrorSink_NotCalledOnSuccess: a successful call records nothing.
+func TestErrorSink_NotCalledOnSuccess(t *testing.T) {
+	orig := ErrorSink
+	t.Cleanup(func() { ErrorSink = orig })
+	calls := 0
+	ErrorSink = func([]string, string, error) { calls++ }
+	c := newTestClient(&fakeRunner{stdout: []byte("[]")})
+	if _, err := c.Query(context.Background(), "x"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("ErrorSink should not fire on success; fired %d", calls)
+	}
+}

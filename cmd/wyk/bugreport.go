@@ -87,6 +87,8 @@ func writeBugreport(w io.Writer, tail int) {
 	writeFileSection(w, registryPathForReport())
 
 	if tail > 0 {
+		fmt.Fprintf(w, "\n## bd error log (last %d lines)\n", tail)
+		writeFileTail(w, errorLogPath(), tail)
 		fmt.Fprintf(w, "\n## crash log (last %d lines)\n", tail)
 		writeFileTail(w, crashLogPath(), tail)
 		if dbg := debugLogPath(); dbg != "" {

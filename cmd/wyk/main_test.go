@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -378,5 +379,41 @@ func TestLogMaxBytes_EnvOverride(t *testing.T) {
 	t.Setenv("WYK_LOG_MAX_BYTES", "garbage")
 	if got := logMaxBytes(); got != defaultLogMaxBytes {
 		t.Fatalf("invalid env should fall back to default %d, got %d", defaultLogMaxBytes, got)
+	}
+}
+
+// TestRecordBDFailure_WritesSentinelRecord pins would-you-kindly-w5bf.6:
+// recordBDFailure appends a one-line record with the argv, dir, and the
+// classified sentinel to the always-on error log.
+func TestRecordBDFailure_WritesSentinelRecord(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	recordBDFailure([]string{"list", "--all"}, "/repo", fmt.Errorf("bd list: %w", beads.ErrTimedOut))
+	b, err := os.ReadFile(errorLogPath())
+	if err != nil {
+		t.Fatalf("error log not written: %v", err)
+	}
+	got := string(b)
+	for _, want := range []string{"bd list --all", `dir="/repo"`, "sentinel=timed-out"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("error record missing %q; got: %s", want, got)
+		}
+	}
+}
+
+// TestBDSentinelName classifies each sentinel + the plain-error fallback.
+func TestBDSentinelName(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("x: %w", beads.ErrTimedOut), "timed-out"},
+		{fmt.Errorf("x: %w", beads.ErrNoWorkspace), "no-workspace"},
+		{fmt.Errorf("x: %w", beads.ErrBDNotFound), "bd-not-found"},
+		{errors.New("plain"), "-"},
+	}
+	for _, tc := range cases {
+		if got := bdSentinelName(tc.err); got != tc.want {
+			t.Errorf("bdSentinelName(%v) = %q, want %q", tc.err, got, tc.want)
+		}
 	}
 }
