@@ -332,3 +332,51 @@ func TestCrashLogPath_HonorsXDGState(t *testing.T) {
 		t.Fatalf("crashLogPath() = %q, want %q", got, want)
 	}
 }
+
+// TestRotateLogIfLarge pins would-you-kindly-w5bf.5: a log at/over the cap
+// is rotated to ".1" (active path reopens empty); under the cap it's left
+// alone. WYK_LOG_MAX_BYTES sets a tiny cap for the test.
+func TestRotateLogIfLarge(t *testing.T) {
+	t.Setenv("WYK_LOG_MAX_BYTES", "10")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wyk-debug.log")
+
+	// Under cap: no rotation.
+	if err := os.WriteFile(path, []byte("tiny"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rotateLogIfLarge(path)
+	if _, err := os.Stat(path + ".1"); !os.IsNotExist(err) {
+		t.Fatalf("under-cap file should not rotate; .1 exists: %v", err)
+	}
+
+	// Over cap: rotate to .1, active path gone (will reopen fresh).
+	big := []byte("this is definitely more than ten bytes")
+	if err := os.WriteFile(path, big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rotateLogIfLarge(path)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("over-cap active log should have been renamed away; still present: %v", err)
+	}
+	b, err := os.ReadFile(path + ".1")
+	if err != nil {
+		t.Fatalf("rotated backup .1 missing: %v", err)
+	}
+	if string(b) != string(big) {
+		t.Fatalf(".1 should hold the rotated content; got %q", b)
+	}
+}
+
+// TestLogMaxBytes_EnvOverride pins the WYK_LOG_MAX_BYTES knob and its
+// fallback to the default on unset/invalid.
+func TestLogMaxBytes_EnvOverride(t *testing.T) {
+	t.Setenv("WYK_LOG_MAX_BYTES", "4096")
+	if got := logMaxBytes(); got != 4096 {
+		t.Fatalf("logMaxBytes() = %d, want 4096", got)
+	}
+	t.Setenv("WYK_LOG_MAX_BYTES", "garbage")
+	if got := logMaxBytes(); got != defaultLogMaxBytes {
+		t.Fatalf("invalid env should fall back to default %d, got %d", defaultLogMaxBytes, got)
+	}
+}

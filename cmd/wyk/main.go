@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -388,6 +389,7 @@ func writeCrashRecord(source string, r any, stack []byte) string {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return ""
 	}
+	rotateLogIfLarge(path)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return ""
@@ -442,6 +444,9 @@ func setupDebugLogging() {
 	if logPath == "" {
 		return
 	}
+	// Bound the file before appending so a long-lived or chatty session
+	// can't grow it without limit (would-you-kindly-w5bf.5).
+	rotateLogIfLarge(logPath)
 	lf, err := tea.LogToFile(logPath, "wyk")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wyk: could not open debug log %q: %v\n", logPath, err)
@@ -450,6 +455,38 @@ func setupDebugLogging() {
 	beads.Debug = true
 	debugLogCleanup = func() { _ = lf.Close() }
 	log.Printf("wyk %s starting; debug logging enabled (%s)", versionString(), logPath)
+}
+
+// defaultLogMaxBytes caps the debug and crash logs. Past this size the
+// active file is rotated to a single ".1" backup, so disk usage stays
+// bounded at ~2x the cap. Override with WYK_LOG_MAX_BYTES (bytes).
+const defaultLogMaxBytes = 10 << 20 // 10 MiB
+
+// logMaxBytes is the effective rotation threshold: WYK_LOG_MAX_BYTES when
+// it parses to a positive integer, else the built-in default. A knob is
+// handy both for users on tight disks and for exercising rotation in tests.
+func logMaxBytes() int64 {
+	if v := strings.TrimSpace(os.Getenv("WYK_LOG_MAX_BYTES")); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultLogMaxBytes
+}
+
+// rotateLogIfLarge renames path to path+".1" (replacing any prior backup)
+// once it reaches the size cap, so the active log reopens empty and disk
+// stays bounded at ~2x the cap — current file plus one rotated generation.
+// Best-effort: a missing file or any stat/rename error leaves things as-is.
+func rotateLogIfLarge(path string) {
+	if path == "" {
+		return
+	}
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() < logMaxBytes() {
+		return
+	}
+	_ = os.Rename(path, path+".1")
 }
 
 // exitWith flushes the debug log (if any) before os.Exit, since os.Exit
