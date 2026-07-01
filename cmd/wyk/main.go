@@ -164,7 +164,7 @@ func main() {
 	// instead (would-you-kindly-tu9t).
 	if msg, bad := strayArgGuard(flag.Args()); bad {
 		fmt.Fprintln(os.Stderr, msg)
-		os.Exit(64)
+		exitWith(64)
 	}
 	// The flag is the explicit equivalent of the env opt-out. The env
 	// path already ran in applyNoColor at startup; honor the flag here,
@@ -182,7 +182,7 @@ func main() {
 			fmt.Fprint(os.Stderr, p)
 		}
 		fmt.Fprintln(os.Stderr, ")")
-		os.Exit(64)
+		exitWith(64)
 	}
 
 	// Resolve --me lazily so a user supplying --me doesn't pay the cost
@@ -195,11 +195,11 @@ func main() {
 	src, repoPaths, hint, err := buildSource(*dir, *me)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk:", err)
-		os.Exit(1)
+		exitWith(1)
 	}
 
 	if *probe {
-		os.Exit(runProbe(src))
+		exitWith(runProbe(src))
 	}
 
 	// Overlay user theme.json onto the built-in lipgloss styles
@@ -408,13 +408,42 @@ func recordBDFailure(args []string, dir string, err error) {
 	}
 	defer func() { _ = f.Close() }()
 	sentinel := bdSentinelName(err)
+	// Redact user-supplied argv values: this log is always-on (independent
+	// of WYK_DEBUG), so a failed `bd create --title=<secret>` must not
+	// persist that content to a long-lived plaintext file. The full argv
+	// stays available only in the opt-in debug trace.
+	argv := redactBDArgs(args)
 	fmt.Fprintf(f, "%s\tbd %s\tdir=%q\tsentinel=%s\terr=%v\n",
-		time.Now().Format(time.RFC3339), strings.Join(args, " "), dir, sentinel, err)
+		time.Now().Format(time.RFC3339), argv, dir, sentinel, err)
 	// Also surface on the structured stream when logging is active (w5bf.4);
 	// gated on Active so a failure isn't echoed to stderr when logging is off.
 	if wyklog.Active() {
-		slog.Error("bd failure", "argv", strings.Join(args, " "), "dir", dir, "sentinel", sentinel, "err", err)
+		slog.Error("bd failure", "argv", argv, "dir", dir, "sentinel", sentinel, "err", err)
 	}
+}
+
+// redactBDArgs renders a bd argv for the always-on error log with all
+// user-supplied VALUES stripped: only the subcommand verb (args[0]) and
+// flag NAMES survive, e.g. ["create","--title=secret","--notes","x","-a","al"]
+// → "create --title=<redacted> --notes <redacted> -a <redacted>". Keeps
+// enough to see which operation + flags failed without leaking issue text.
+func redactBDArgs(args []string) string {
+	out := make([]string, 0, len(args))
+	for i, a := range args {
+		switch {
+		case i == 0:
+			out = append(out, a)
+		case strings.HasPrefix(a, "-"):
+			if eq := strings.IndexByte(a, '='); eq >= 0 {
+				out = append(out, a[:eq]+"=<redacted>")
+			} else {
+				out = append(out, a)
+			}
+		default:
+			out = append(out, "<redacted>")
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 // bdSentinelName classifies a bd error for the error log so a reader can
@@ -490,20 +519,24 @@ func captureCrash() {
 var debugLogCleanup func()
 
 // setupDebugLogging wires WYK_DEBUG / WYK_LOG_FILE for the WHOLE process.
-// When a log path resolves it tees Go's standard logger (and so every bd
-// invocation's argv + timing + error, via beads.Debug) to that file and
-// records a startup banner. Off by default: no file is opened or touched
-// and beads.Debug stays false (zero overhead). Called before dispatch so
-// non-TUI subcommands (inbox, stats, export, hook, …) trace their bd
-// calls too — previously this only ran on the TUI path
-// (would-you-kindly-w5bf.1).
+// When a log path resolves it installs a slog sink on that file (see
+// internal/wyklog) at the level from WYK_LOG_LEVEL (default Debug = the
+// full bd-call trace) and also points the stdlib logger there for Bubble
+// Tea's own output. Off by default: no file is opened, wyklog stays
+// inactive, and slog's default (Info) leaves the Debug trace disabled —
+// zero overhead. Called before dispatch so non-TUI subcommands (inbox,
+// stats, export, hook, …) trace their bd calls too, not just the TUI
+// (would-you-kindly-w5bf.1, w5bf.4).
 func setupDebugLogging() {
 	logPath := debugLogPath()
 	if logPath == "" {
 		return
 	}
-	// Bound the file before appending so a long-lived or chatty session
-	// can't grow it without limit (would-you-kindly-w5bf.5).
+	// Bound the file at startup (per-launch): rotate before opening so a
+	// chatty session doesn't reopen an already-huge log. Not re-checked
+	// within a session — the handle stays open — so a single long-running
+	// session can still grow past the cap; the bound is across launches
+	// (would-you-kindly-w5bf.5).
 	rotateLogIfLarge(logPath)
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -511,9 +544,13 @@ func setupDebugLogging() {
 		return
 	}
 	debugLogCleanup = func() { _ = f.Close() }
+	// Write the startup banner directly to the file BEFORE installing the
+	// leveled handler, so the version / log-path header anchoring the trace
+	// is always present even at WYK_LOG_LEVEL=error/warn (roborev: a banner
+	// emitted via slog.Info would be filtered out at those levels).
+	fmt.Fprintf(f, "wyk %s starting; debug logging enabled (%s)\n", versionString(), logPath)
 	// Install slog as the structured sink (would-you-kindly-w5bf.4); the bd
 	// trace, bd-failure, and crash records all flow through it at a level.
-	// WYK_LOG_LEVEL refines verbosity (default Debug = the full trace).
 	level := wyklog.ParseLevel(os.Getenv("WYK_LOG_LEVEL"), slog.LevelDebug)
 	wyklog.Setup(f, level)
 	// Also point the stdlib logger at the file so Bubble Tea's internal

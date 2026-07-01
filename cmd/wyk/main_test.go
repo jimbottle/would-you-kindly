@@ -268,11 +268,15 @@ func TestSetupDebugLogging_OffByDefault(t *testing.T) {
 	t.Setenv("WYK_DEBUG", "")
 	origCleanup := debugLogCleanup
 	debugLogCleanup = nil
+	wyklog.Reset() // start from a known-inactive state, not incidental prior cleanup
 	t.Cleanup(func() { resetDebugLogging(t, origCleanup) })
 
 	setupDebugLogging()
 	if debugLogCleanup != nil {
 		t.Fatal("no cleanup hook should be installed when debug logging is off")
+	}
+	if wyklog.Active() {
+		t.Fatal("no slog sink should be installed when debug logging is off")
 	}
 }
 
@@ -437,5 +441,20 @@ func TestSetupDebugLogging_LevelKnob(t *testing.T) {
 	}
 	if !slog.Default().Enabled(ctx, slog.LevelError) {
 		t.Error("WYK_LOG_LEVEL=error should still pass Error-level records")
+	}
+}
+
+// TestRedactBDArgs pins that argv values are stripped for the always-on
+// error log (roborev on w5bf.6): verb + flag names survive, values don't.
+func TestRedactBDArgs(t *testing.T) {
+	got := redactBDArgs([]string{"create", "--title=secret", "--notes", "sensitive", "-a", "alice", "positional"})
+	if strings.Contains(got, "secret") || strings.Contains(got, "sensitive") ||
+		strings.Contains(got, "alice") || strings.Contains(got, "positional") {
+		t.Fatalf("redactBDArgs leaked a value: %q", got)
+	}
+	for _, want := range []string{"create", "--title=<redacted>", "--notes", "<redacted>", "-a"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("redactBDArgs dropped %q; got %q", want, got)
+		}
 	}
 }

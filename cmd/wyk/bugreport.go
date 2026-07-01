@@ -72,12 +72,18 @@ func writeBugreport(w io.Writer, tail int) {
 
 	fmt.Fprintln(w, "\n## doctor")
 	for _, c := range collectDoctorChecks() {
-		// Mirrors the doctor text row, minus color, so the verdicts read
-		// the same in a pasted report as on a terminal.
+		// Mirror the doctor text renderer (doctor.go): honor leadingBlank
+		// and indent each line of a multi-line detail, so a check with a
+		// multi-line stanza (the always-present handoff/update blocks)
+		// doesn't land flush-left and break the report's indentation.
+		if c.leadingBlank {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "  [%s] %s\n", c.status, c.name)
 		if c.detail != "" {
-			fmt.Fprintf(w, "  [%s] %s — %s\n", c.status, c.name, c.detail)
-		} else {
-			fmt.Fprintf(w, "  [%s] %s\n", c.status, c.name)
+			for _, line := range strings.Split(c.detail, "\n") {
+				fmt.Fprintf(w, "         %s\n", line)
+			}
 		}
 	}
 

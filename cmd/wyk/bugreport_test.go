@@ -86,3 +86,60 @@ func TestRunBugreport_WritesFile(t *testing.T) {
 		t.Fatalf("report file missing header:\n%s", b)
 	}
 }
+
+// TestRunBugreport_UsageError: a trailing positional is a usage error (64).
+func TestRunBugreport_UsageError(t *testing.T) {
+	if code := runBugreport([]string{"extra-arg"}); code != 64 {
+		t.Fatalf("runBugreport with a positional exit %d, want 64", code)
+	}
+}
+
+// TestRunBugreport_WriteFailure: an unwritable -o target exits 1.
+func TestRunBugreport_WriteFailure(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	// A path whose parent is a regular file can't be created.
+	notADir := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(notADir, "report.txt")
+	if code := runBugreport([]string{"-tail", "0", "-o", bad}); code != 1 {
+		t.Fatalf("runBugreport to an unwritable -o exit %d, want 1", code)
+	}
+}
+
+// TestWriteBugreport_DebugLogSection: with WYK_DEBUG set, the report
+// includes the debug-log tail section (exercises the debugLogPath()!="" branch).
+func TestWriteBugreport_DebugLogSection(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("WYK_DEBUG", "1")
+	var b strings.Builder
+	writeBugreport(&b, 10)
+	if !strings.Contains(b.String(), "## debug log") {
+		t.Fatalf("expected a debug-log section when WYK_DEBUG is set; got:\n%s", b.String())
+	}
+}
+
+// TestWriteBugreport_DoctorMultilineIndented: multi-line doctor details
+// (the always-present handoff stanza) must be indented, not flush-left, so
+// the report's structure holds (roborev on w5bf.3).
+func TestWriteBugreport_DoctorMultilineIndented(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	var b strings.Builder
+	writeBugreport(&b, 0)
+	// The handoff-convention check carries a multi-line detail; every one
+	// of its continuation lines should be indented under the doctor section.
+	inDoctor := false
+	for _, line := range strings.Split(b.String(), "\n") {
+		if strings.HasPrefix(line, "## ") {
+			inDoctor = strings.Contains(line, "doctor")
+			continue
+		}
+		if inDoctor && line != "" && !strings.HasPrefix(line, "  ") {
+			t.Fatalf("doctor section line is flush-left (not indented): %q", line)
+		}
+	}
+}
