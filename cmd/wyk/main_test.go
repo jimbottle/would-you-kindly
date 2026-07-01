@@ -457,4 +457,31 @@ func TestRedactBDArgs(t *testing.T) {
 			t.Errorf("redactBDArgs dropped %q; got %q", want, got)
 		}
 	}
+
+	// A space-separated value that begins with '-' (a markdown bullet or
+	// dash-led note) must NOT be mistaken for a flag and preserved — it
+	// gets redacted (roborev on w5bf.6).
+	got = redactBDArgs([]string{"create", "--description", "- fixes the crash on startup"})
+	if strings.Contains(got, "fixes the crash") {
+		t.Fatalf("redactBDArgs leaked a dash-prefixed value: %q", got)
+	}
+	if !strings.Contains(got, "--description <redacted>") {
+		t.Fatalf("dash-prefixed value should be redacted; got %q", got)
+	}
+}
+
+// TestLooksLikeFlag pins the flag-shape predicate used by redaction.
+func TestLooksLikeFlag(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"-a", true}, {"--title", true}, {"--title=x", true},
+		{"- fixes", false}, {"-", false}, {"--", false},
+		{"-5", false}, {"---x", false}, {"plain", false}, {"", false},
+	} {
+		if got := looksLikeFlag(tc.in); got != tc.want {
+			t.Errorf("looksLikeFlag(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
 }

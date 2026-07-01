@@ -433,7 +433,7 @@ func redactBDArgs(args []string) string {
 		switch {
 		case i == 0:
 			out = append(out, a)
-		case strings.HasPrefix(a, "-"):
+		case looksLikeFlag(a):
 			if eq := strings.IndexByte(a, '='); eq >= 0 {
 				out = append(out, a[:eq]+"=<redacted>")
 			} else {
@@ -444,6 +444,21 @@ func redactBDArgs(args []string) string {
 		}
 	}
 	return strings.Join(out, " ")
+}
+
+// looksLikeFlag reports whether a is shaped like a flag NAME (^--?[A-Za-z])
+// rather than a value. Requiring a letter after the leading dash(es) means
+// a dash-prefixed VALUE — a markdown bullet or dash-led title/note like
+// "- fixes the crash" — is NOT mistaken for a flag and so gets redacted
+// instead of leaking into the always-on error log (roborev on w5bf.6).
+func looksLikeFlag(a string) bool {
+	rest := strings.TrimLeft(a, "-")
+	dashes := len(a) - len(rest)
+	if dashes < 1 || dashes > 2 || rest == "" {
+		return false
+	}
+	c := rest[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // bdSentinelName classifies a bd error for the error log so a reader can
