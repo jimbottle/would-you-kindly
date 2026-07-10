@@ -734,10 +734,16 @@ func TestCheckContractHygiene(t *testing.T) {
 			inDetail: []string{"empty runbook", "h1"},
 		},
 		{
-			name:     "human task missing provenance warns",
-			issues:   []beads.Issue{mk("h2", []string{"human"}, "a runbook", "")},
-			want:     statusWarn,
-			inDetail: []string{"provenance", "h2"},
+			// A human-flagged task with no src: — the filer is unknown, so
+			// the hint must offer BOTH options and must NOT hand out the
+			// unconditional `bd label add … src:agent` backfill command
+			// (that would mis-stamp a genuinely human-filed task and pull it
+			// into the agent inbox on bounce-back). roborev on w5bf voef.
+			name:      "human task missing provenance warns without the src:agent backfill",
+			issues:    []beads.Issue{mk("h2", []string{"human"}, "a runbook", "")},
+			want:      statusWarn,
+			inDetail:  []string{"provenance", "h2", "as appropriate"},
+			notDetail: []string{"bd label add"},
 		},
 		{
 			name:      "agent task without assignee is an orphan",
@@ -750,10 +756,12 @@ func TestCheckContractHygiene(t *testing.T) {
 			// A wyk-filed issue (carries session:) with no src: label — the
 			// wyk-create under-labeling bug (would-you-kindly-voef). Assigned
 			// so only the provenance clause fires, not orphan.
-			name:      "wyk-filed agent task missing provenance warns",
-			issues:    []beads.Issue{mk("s1", []string{"session:abc123"}, "", "alice")},
-			want:      statusWarn,
-			inDetail:  []string{"provenance", "s1"},
+			name:   "wyk-filed agent task missing provenance warns with the src:agent backfill",
+			issues: []beads.Issue{mk("s1", []string{"session:abc123"}, "", "alice")},
+			want:   statusWarn,
+			// The wyk-filed case is provably src:agent, so it — and only it —
+			// gets the exact `bd label add … src:agent` backfill command.
+			inDetail:  []string{"provenance", "s1", "bd label add", "src:agent"},
 			notDetail: []string{"no assignee"},
 		},
 		{

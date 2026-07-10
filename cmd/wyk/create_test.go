@@ -153,3 +153,38 @@ func TestHasFlag(t *testing.T) {
 		t.Error("want hasFlag to detect single-dash -dolt-auto-commit=off")
 	}
 }
+
+// TestDisplayLabels pins the success-line rendering (roborev on
+// would-you-kindly-voef): a long session:<id> is shortened to 8 chars so
+// the full session ID never lands on stdout, while src: and other labels
+// pass through unchanged. This behavior regressed silently once before.
+func TestDisplayLabels(t *testing.T) {
+	cases := []struct {
+		name   string
+		labels []string
+		want   string
+	}{
+		{
+			name:   "long session id is shortened",
+			labels: []string{"src:agent", "session:abcd1234-5678-9012"},
+			want:   "src:agent, session:abcd1234",
+		},
+		{
+			name:   "short session id passes through",
+			labels: []string{"src:human", "session:abc"},
+			want:   "src:human, session:abc",
+		},
+		{
+			name:   "non-session labels untouched",
+			labels: []string{"src:agent"},
+			want:   "src:agent",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := displayLabels(tc.labels); got != tc.want {
+				t.Errorf("displayLabels(%v) = %q, want %q", tc.labels, got, tc.want)
+			}
+		})
+	}
+}

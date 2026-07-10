@@ -1,4 +1,0 @@
-wyk wyk v0.7.1-0.20260701131153-d8cb4ca527e7 (commit d8cb4ca-dirty) starting; debug logging enabled (wyk-debug.log)
-time=2026-07-10T11:04:15.775-04:00 level=INFO msg="wyk starting" version="wyk v0.7.1-0.20260701131153-d8cb4ca527e7 (commit d8cb4ca-dirty)" log=wyk-debug.log level=DEBUG
-wyk wyk v0.7.1-0.20260701131153-d8cb4ca527e7 (commit d8cb4ca-dirty) starting; debug logging enabled (wyk-debug.log)
-time=2026-07-10T11:04:26.619-04:00 level=INFO msg="wyk starting" version="wyk v0.7.1-0.20260701131153-d8cb4ca527e7 (commit d8cb4ca-dirty)" log=wyk-debug.log level=DEBUG

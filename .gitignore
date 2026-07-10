@@ -17,3 +17,10 @@
 
 # Netatalk/AFP/SMB "deletion-in-progress" sentinel temp files (.!NNNNN!<name>)
 .!*!*
+
+# wyk runtime diagnostic logs — WYK_DEBUG writes wyk-debug.log to the cwd
+# (often the repo during dev), and the crash / bd-error logs fall back to
+# the cwd when no home dir resolves; rotation adds a ".1". Never commit these.
+wyk-debug.log*
+wyk-crash.log*
+wyk-bd-errors.log*
