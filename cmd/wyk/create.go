@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/pkg/handoff"
 )
 
 // sessionEnvVar is the environment variable Claude Code exports with the
@@ -61,9 +62,10 @@ func createUsage(w *os.File) {
 	fmt.Fprintln(w, "usage: wyk create <bd create args...>")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Thin wrapper over `bd create`: forwards every argument verbatim, then")
-	fmt.Fprintln(w, "stamps the new issue with a `session:<id>` label recording the Claude")
-	fmt.Fprintln(w, "session that filed it (from $"+sessionEnvVar+"). Use it instead of")
-	fmt.Fprintln(w, "`bd create` so the TUI's Session column is populated.")
+	fmt.Fprintln(w, "stamps the new issue with its provenance — `src:agent` when a Claude")
+	fmt.Fprintln(w, "session filed it (else `src:human`), so it matches `wyk inbox` — plus a")
+	fmt.Fprintln(w, "`session:<id>` label (from $"+sessionEnvVar+") for the TUI's Session")
+	fmt.Fprintln(w, "column. Use it instead of `bd create` so both are applied.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Examples:")
 	fmt.Fprintln(w, `  wyk create --title "Fix the flaky test" --type=bug -a alice`)
@@ -72,13 +74,13 @@ func createUsage(w *os.File) {
 	fmt.Fprintln(w, "Run `bd create --help` for the full flag reference.")
 }
 
-// runBDCreateWithSession is the seam `runCreate` calls to do the actual
-// bd work: file the issue (returning its ID) and, when sessionLabel is
-// non-empty, stamp it. Production wires it to beads.Client; tests swap a
-// stub so they can assert the forwarded args + label without a real bd.
-var runBDCreateWithSession = realBDCreateWithSession
+// runBDCreateWithLabels is the seam `runCreate` calls to do the actual bd
+// work: file the issue (returning its ID) then stamp each non-empty label
+// in order. Production wires it to beads.Client; tests swap a stub so they
+// can assert the forwarded args + labels without a real bd.
+var runBDCreateWithLabels = realBDCreateWithLabels
 
-func realBDCreateWithSession(dir string, passthrough []string, sessionLabel string) (string, error) {
+func realBDCreateWithLabels(dir string, passthrough []string, labels []string) (string, error) {
 	c := beads.NewClient()
 	c.Dir = dir
 	ctx := context.Background()
@@ -103,12 +105,15 @@ func realBDCreateWithSession(dir string, passthrough []string, sessionLabel stri
 	if id == "" {
 		return "", fmt.Errorf("bd create returned no issue ID")
 	}
-	if sessionLabel != "" {
-		if lerr := c.AddLabel(ctx, id, sessionLabel); lerr != nil {
-			// The issue exists; only the session stamp failed. Surface it
-			// but return the ID so the caller can still report success of
-			// the create itself.
-			return id, fmt.Errorf("created %s but failed to stamp the session label: %w", id, lerr)
+	for _, l := range labels {
+		if l == "" {
+			continue
+		}
+		if lerr := c.AddLabel(ctx, id, l); lerr != nil {
+			// The issue exists; only a label stamp failed. Surface which
+			// label but return the ID so the caller can still report the
+			// create itself succeeded (partial success).
+			return id, fmt.Errorf("created %s but failed to stamp label %q: %w", id, l, lerr)
 		}
 	}
 	return id, nil
@@ -150,9 +155,17 @@ func runCreate(args []string) int {
 	}
 
 	session := strings.TrimSpace(os.Getenv(sessionEnvVar))
-	label := sessionLabel(session)
+	// Every wyk-filed issue carries a src: provenance label (docs/CONTRACT.md):
+	// src:agent when a Claude session filed it, src:human otherwise. Without
+	// it an agent-filed task never matches `wyk inbox` (would-you-kindly-voef).
+	// The session env var IS the agent-context discriminator. The src: label
+	// goes first, then the session:<id> stamp (when in a session).
+	labels := []string{srcLabelForSession(session)}
+	if sl := sessionLabel(session); sl != "" {
+		labels = append(labels, sl)
+	}
 
-	id, err := runBDCreateWithSession("", args, label)
+	id, err := runBDCreateWithLabels("", args, labels)
 	if id == "" {
 		// The create itself failed — nothing was filed.
 		fmt.Fprintln(os.Stderr, "wyk create:", err)
@@ -160,27 +173,26 @@ func runCreate(args []string) int {
 	}
 	// The issue exists. stdout uniformly carries the "created <id>" line
 	// regardless of exit code, so a caller parses it the same way whether
-	// or not the session stamp succeeded; the error (if any) goes to
-	// stderr and only the exit code distinguishes partial success.
+	// or not the labels stamped; the error (if any) goes to stderr and only
+	// the exit code distinguishes partial success.
 	switch {
 	case err != nil:
-		// Partial success: created, but the session label didn't stamp.
-		fmt.Printf("wyk create: created %s (session NOT recorded)\n", id)
+		// Partial success: created, but a label didn't stamp.
+		fmt.Printf("wyk create: created %s (labels NOT fully stamped)\n", id)
 		fmt.Fprintln(os.Stderr, "wyk create:", err)
 		return 1
-	case label != "":
-		fmt.Printf("wyk create: created %s (session %s)\n", id, shortSession(session))
 	default:
-		fmt.Printf("wyk create: created %s (no %s in env — session not recorded)\n", id, sessionEnvVar)
+		fmt.Printf("wyk create: created %s (%s)\n", id, strings.Join(labels, ", "))
 	}
 	return 0
 }
 
-// shortSession trims a session ID to its leading 8 chars for display in
-// the success line; the full value lives in the label.
-func shortSession(s string) string {
-	if len(s) > 8 {
-		return s[:8]
+// srcLabelForSession returns the provenance label for a create: src:agent
+// when a Claude session ID is present (an agent is filing), src:human
+// otherwise. Mirrors the agent/person split in docs/CONTRACT.md.
+func srcLabelForSession(session string) string {
+	if session != "" {
+		return handoff.SrcAgentLabel
 	}
-	return s
+	return handoff.SrcHumanLabel
 }

@@ -747,6 +747,23 @@ func TestCheckContractHygiene(t *testing.T) {
 			notDetail: []string{"runbook", "provenance"},
 		},
 		{
+			// A wyk-filed issue (carries session:) with no src: label — the
+			// wyk-create under-labeling bug (would-you-kindly-voef). Assigned
+			// so only the provenance clause fires, not orphan.
+			name:      "wyk-filed agent task missing provenance warns",
+			issues:    []beads.Issue{mk("s1", []string{"session:abc123"}, "", "alice")},
+			want:      statusWarn,
+			inDetail:  []string{"provenance", "s1"},
+			notDetail: []string{"no assignee"},
+		},
+		{
+			// A legacy/hand-filed issue with neither session: nor src: is
+			// "unknown source" per CONTRACT.md — NOT a violation.
+			name:   "legacy issue without session or src is not flagged",
+			issues: []beads.Issue{mk("legacy", []string{}, "", "alice")},
+			want:   statusPass,
+		},
+		{
 			name:   "agent-handoff is never flagged",
 			issues: []beads.Issue{mk("ah", []string{"agent-handoff"}, "", "")},
 			want:   statusPass,

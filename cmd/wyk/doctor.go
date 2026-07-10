@@ -813,6 +813,15 @@ func checkContractHygiene(prefix string, issues []beads.Issue) check {
 			if strings.TrimSpace(is.Assignee) == "" {
 				orphan = append(orphan, is.ID)
 			}
+			// An agent-owned task filed through wyk (it carries a session:
+			// stamp) but missing src: provenance is the wyk-create
+			// under-labeling bug (would-you-kindly-voef): it can never match
+			// `wyk inbox`. Flag it for backfill. A bare legacy issue with no
+			// session: and no src: is "unknown source" per CONTRACT.md and is
+			// deliberately NOT flagged.
+			if hasSessionLabel(is) && !is.HasLabel("src:agent") && !is.HasLabel("src:human") {
+				noProvenance = append(noProvenance, is.ID)
+			}
 		}
 	}
 	if len(noRunbook) == 0 && len(noProvenance) == 0 && len(orphan) == 0 {
@@ -823,12 +832,25 @@ func checkContractHygiene(prefix string, issues []beads.Issue) check {
 		parts = append(parts, fmt.Sprintf("%d human task(s) with an empty runbook [%s] — the description IS the runbook; fill it via `wyk handoff <id>`", len(noRunbook), capIDs(noRunbook)))
 	}
 	if len(noProvenance) > 0 {
-		parts = append(parts, fmt.Sprintf("%d human task(s) missing a src: provenance label [%s]", len(noProvenance), capIDs(noProvenance)))
+		parts = append(parts, fmt.Sprintf("%d task(s) missing a src: provenance label [%s] — invisible to `wyk inbox`; backfill with `bd label add <id> src:agent --dolt-auto-commit=on`", len(noProvenance), capIDs(noProvenance)))
 	}
 	if len(orphan) > 0 {
 		parts = append(parts, fmt.Sprintf("%d agent task(s) with no assignee [%s] — claim or assign them (`bd update <id> --claim`)", len(orphan), capIDs(orphan)))
 	}
 	return check{name: name, status: statusWarn, detail: strings.Join(parts, "; ")}
+}
+
+// hasSessionLabel reports whether the issue carries any session:<id>
+// stamp — i.e. it was filed through `wyk create` / `wyk handoff`. Used to
+// tell a wyk-filed issue (which the contract requires to carry src:) from
+// a legacy/hand-filed one (unknown source, not a violation).
+func hasSessionLabel(is beads.Issue) bool {
+	for _, l := range is.Labels {
+		if strings.HasPrefix(l, sessionLabelPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // capIDs renders up to five issue IDs, summarising any remainder, so a

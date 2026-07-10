@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`wyk create` and bare-id `wyk handoff` now stamp `src:` provenance
+  labels** — the two paths previously set no `src:` label (only
+  `session:<id>` / only `human`), violating the contract that every
+  wyk-filed issue carries provenance. The consequence was silent: an
+  agent-filed task, once a human bounced it back, could never match the
+  `wyk inbox` query (`label=src:agent AND NOT label=human …`), so returned
+  work was invisible. Now `wyk create` stamps `src:agent` in a Claude
+  session (else `src:human`), and `handoff.BounceToHuman` adds the
+  collective `src:agent` alongside `human`. Two guards keep the class of
+  bug from recurring: a writer-vs-reader contract test (every filing
+  path's labels must satisfy the inbox query after a simulated
+  bounce-back) and a `wyk doctor` check that flags any wyk-filed
+  (`session:`-labeled) or human-flagged issue missing a `src:` label, with
+  the backfill command.
+
 - **Click-drag text selection works in the detail view again** — the
   mouse-navigation feature captured the mouse globally, so selecting
   text in an issue's instructions (the reading view's primary mouse

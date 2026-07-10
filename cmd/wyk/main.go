@@ -870,7 +870,7 @@ func runHandoff(args []string) int {
 	// on top), plus the Claude session (like `wyk create`) so the TUI's
 	// Session column is populated for handoff-filed issues too. Empty
 	// session (outside Claude Code) records nothing.
-	createLabels := []string{"src:agent"}
+	createLabels := []string{handoff.SrcAgentLabel}
 	if ident != "" {
 		// Identity routing layers on top of the collective src:agent
 		// umbrella (never replaces it). wyk-contract/v3.

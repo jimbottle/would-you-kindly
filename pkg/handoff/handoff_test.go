@@ -7,20 +7,35 @@ import (
 	"testing"
 )
 
-// stubMutator records both calls and lets a test inject an error
-// at either step to verify the partial-failure contract.
+// stubMutator records the calls and lets a test inject an error at
+// either step to verify the partial-failure contract. addedLabels is a
+// SLICE now that BounceToHuman applies more than one label (human then
+// src:agent), and records only labels that were applied successfully.
 type stubMutator struct {
-	addedID, addedLabel string
-	updatedID, updated  string
-	addLabelErr         error
-	updateErr           error
+	addedID     string
+	addedLabels []string
+	updatedID   string
+	updated     string
+	addLabelErr error
+	updateErr   error
 
 	updateCalled bool
 }
 
 func (s *stubMutator) AddLabel(_ context.Context, id, label string) error {
-	s.addedID, s.addedLabel = id, label
-	return s.addLabelErr
+	s.addedID = id
+	if s.addLabelErr != nil {
+		return s.addLabelErr
+	}
+	s.addedLabels = append(s.addedLabels, label)
+	return nil
+}
+
+func (s *stubMutator) lastAdded() string {
+	if len(s.addedLabels) == 0 {
+		return ""
+	}
+	return s.addedLabels[len(s.addedLabels)-1]
 }
 
 func (s *stubMutator) UpdateDescription(_ context.Context, id, desc string) error {
@@ -35,9 +50,19 @@ func TestBounceToHuman_TagsThenUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BounceToHuman: %v", err)
 	}
-	if s.addedID != "wyk-42" || s.addedLabel != HumanLabel {
-		t.Errorf("AddLabel: got id=%q label=%q, want id=wyk-42 label=%s",
-			s.addedID, s.addedLabel, HumanLabel)
+	// Both provenance labels are applied, human FIRST (so a concurrent
+	// reader sees the human flag before the description overwrite begins),
+	// then the collective src:agent so a bounced-back issue matches
+	// `wyk inbox` (would-you-kindly-voef).
+	want := []string{HumanLabel, SrcAgentLabel}
+	if s.addedID != "wyk-42" || len(s.addedLabels) != len(want) {
+		t.Fatalf("AddLabel: got id=%q labels=%v, want id=wyk-42 labels=%v",
+			s.addedID, s.addedLabels, want)
+	}
+	for i := range want {
+		if s.addedLabels[i] != want[i] {
+			t.Errorf("addedLabels[%d] = %q, want %q", i, s.addedLabels[i], want[i])
+		}
 	}
 	if s.updatedID != "wyk-42" || s.updated != "step 1\nstep 2\nstep 3" {
 		t.Errorf("UpdateDescription mismatch: id=%q desc=%q", s.updatedID, s.updated)
@@ -56,6 +81,11 @@ func TestBounceToHuman_LabelFailureDoesNotUpdate(t *testing.T) {
 	if s.updateCalled {
 		t.Error("UpdateDescription must not be called when AddLabel fails")
 	}
+	// The very first AddLabel (human) failed, so we must short-circuit
+	// before attempting src:agent — no label was successfully applied.
+	if len(s.addedLabels) != 0 {
+		t.Errorf("no labels should have been applied after the first AddLabel failed; got %v", s.addedLabels)
+	}
 }
 
 func TestBounceToHuman_UpdateFailureLeavesLabel(t *testing.T) {
@@ -66,8 +96,8 @@ func TestBounceToHuman_UpdateFailureLeavesLabel(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from update failure")
 	}
-	if s.addedLabel != HumanLabel {
-		t.Errorf("label should have been applied; got %q", s.addedLabel)
+	if s.lastAdded() != SrcAgentLabel {
+		t.Errorf("both labels should have been applied before the update; got %v", s.addedLabels)
 	}
 }
 

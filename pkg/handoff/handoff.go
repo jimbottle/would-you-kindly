@@ -59,6 +59,17 @@ const priorDescriptionHeading = "## Prior description (preserved on handoff)"
 // human" can use the same string the writer used.
 const HumanLabel = "human"
 
+// SrcAgentLabel / SrcHumanLabel are the provenance labels the contract
+// requires on every wyk-filed issue (docs/CONTRACT.md): src:agent when an
+// agent filed it, src:human when a person did. Exported so the CLI's
+// filing paths (wyk create, wyk handoff) stamp the exact same strings the
+// inbox query keys off — the label set and the reader must not drift
+// (would-you-kindly-voef).
+const (
+	SrcAgentLabel = "src:agent"
+	SrcHumanLabel = "src:human"
+)
+
 // BounceToHuman hands the named issue back to a human:
 //
 //  1. Tags the issue with the `human` label.
@@ -86,6 +97,18 @@ const HumanLabel = "human"
 // description.
 func BounceToHuman(ctx context.Context, m Mutator, id, runbook string) error {
 	if err := m.AddLabel(ctx, id, HumanLabel); err != nil {
+		return err
+	}
+	// Stamp the collective src:agent provenance too: a handoff is
+	// definitionally the agent's call, and without it a bare-id handoff of
+	// an issue that never carried src:agent (e.g. one filed before wyk
+	// create stamped it) would be invisible to `wyk inbox` once the human
+	// bounces it back by removing `human`. Idempotent — AddLabel tolerates
+	// an already-present label (see the retry-story note above), so the
+	// -create path (which already sets src:agent at creation) double-adding
+	// is harmless. Identity routing (src:agent:<name>) still layers on top
+	// separately. (would-you-kindly-voef)
+	if err := m.AddLabel(ctx, id, SrcAgentLabel); err != nil {
 		return err
 	}
 	return m.UpdateDescription(ctx, id, descriptionForHandoff(ctx, m, id, runbook))

@@ -9,28 +9,37 @@ import (
 // withStubCreate swaps the bd-create seam for the duration of a test and
 // captures what runCreate forwarded.
 type capturedCreate struct {
-	dir          string
-	passthrough  []string
-	sessionLabel string
-	called       bool
+	dir         string
+	passthrough []string
+	labels      []string
+	called      bool
+}
+
+func (c *capturedCreate) hasLabel(l string) bool {
+	for _, got := range c.labels {
+		if got == l {
+			return true
+		}
+	}
+	return false
 }
 
 func withStubCreate(t *testing.T, id string, err error) *capturedCreate {
 	t.Helper()
 	cap := &capturedCreate{}
-	prev := runBDCreateWithSession
-	runBDCreateWithSession = func(dir string, passthrough []string, sessionLabel string) (string, error) {
+	prev := runBDCreateWithLabels
+	runBDCreateWithLabels = func(dir string, passthrough []string, labels []string) (string, error) {
 		cap.called = true
 		cap.dir = dir
 		cap.passthrough = passthrough
-		cap.sessionLabel = sessionLabel
+		cap.labels = labels
 		return id, err
 	}
-	t.Cleanup(func() { runBDCreateWithSession = prev })
+	t.Cleanup(func() { runBDCreateWithLabels = prev })
 	return cap
 }
 
-func TestRunCreate_StampsSessionFromEnv(t *testing.T) {
+func TestRunCreate_StampsSrcAgentAndSessionInSession(t *testing.T) {
 	t.Setenv(sessionEnvVar, "abcd1234-5678-9012")
 	cap := withStubCreate(t, "demo-xyz", nil)
 
@@ -41,8 +50,19 @@ func TestRunCreate_StampsSessionFromEnv(t *testing.T) {
 	if !cap.called {
 		t.Fatal("bd create seam was not invoked")
 	}
-	if cap.sessionLabel != sessionLabelPrefix+"abcd1234-5678-9012" {
-		t.Errorf("session label = %q, want %q", cap.sessionLabel, sessionLabelPrefix+"abcd1234-5678-9012")
+	// A Claude session filed it: src:agent (contract) + the session stamp.
+	if !cap.hasLabel("src:agent") {
+		t.Errorf("labels %v missing src:agent — wyk-filed agent issues must match `wyk inbox`", cap.labels)
+	}
+	if cap.hasLabel("src:human") {
+		t.Errorf("labels %v should not carry src:human in a session", cap.labels)
+	}
+	if !cap.hasLabel(sessionLabelPrefix + "abcd1234-5678-9012") {
+		t.Errorf("labels %v missing the session stamp", cap.labels)
+	}
+	// src: label comes first so provenance is stamped before the session.
+	if len(cap.labels) == 0 || cap.labels[0] != "src:agent" {
+		t.Errorf("labels %v: src:agent should be applied first", cap.labels)
 	}
 	// User args forwarded verbatim.
 	want := []string{"--title", "A task", "--type=task"}
@@ -52,6 +72,27 @@ func TestRunCreate_StampsSessionFromEnv(t *testing.T) {
 	for i := range want {
 		if cap.passthrough[i] != want[i] {
 			t.Errorf("passthrough[%d] = %q, want %q", i, cap.passthrough[i], want[i])
+		}
+	}
+}
+
+func TestRunCreate_StampsSrcHumanWithoutSession(t *testing.T) {
+	t.Setenv(sessionEnvVar, "")
+	cap := withStubCreate(t, "demo-xyz", nil)
+
+	if code := runCreate([]string{"--title", "x"}); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	// No session → a person is filing → src:human, and no session stamp.
+	if !cap.hasLabel("src:human") {
+		t.Errorf("labels %v missing src:human when no session is set", cap.labels)
+	}
+	if cap.hasLabel("src:agent") {
+		t.Errorf("labels %v should not carry src:agent without a session", cap.labels)
+	}
+	for _, l := range cap.labels {
+		if strings.HasPrefix(l, sessionLabelPrefix) {
+			t.Errorf("labels %v should carry no session stamp when the env is unset", cap.labels)
 		}
 	}
 }
@@ -75,19 +116,6 @@ func TestRunCreate_PartialSuccessReportsIDAndExits1(t *testing.T) {
 	}
 	if !strings.Contains(out, "wyk create: created") {
 		t.Errorf("partial-success stdout should use the standard created line; got %q", out)
-	}
-}
-
-func TestRunCreate_NoSessionEnvStillCreates(t *testing.T) {
-	t.Setenv(sessionEnvVar, "")
-	cap := withStubCreate(t, "demo-xyz", nil)
-
-	code := runCreate([]string{"Quick task"})
-	if code != 0 {
-		t.Fatalf("exit %d, want 0", code)
-	}
-	if cap.sessionLabel != "" {
-		t.Errorf("session label = %q, want empty when env unset", cap.sessionLabel)
 	}
 }
 
