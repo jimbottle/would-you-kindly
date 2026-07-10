@@ -182,9 +182,26 @@ func runCreate(args []string) int {
 		fmt.Fprintln(os.Stderr, "wyk create:", err)
 		return 1
 	default:
-		fmt.Printf("wyk create: created %s (%s)\n", id, strings.Join(labels, ", "))
+		fmt.Printf("wyk create: created %s (%s)\n", id, displayLabels(labels))
 	}
 	return 0
+}
+
+// displayLabels renders the stamped labels for the success line, shortening
+// any session:<id> to its leading 8 chars so a full session ID doesn't land
+// on stdout / in logs — the full value is still stamped on the issue. Keeps
+// the short-display behavior a prior commit added while now also surfacing
+// the src: provenance label.
+func displayLabels(labels []string) string {
+	out := make([]string, len(labels))
+	for i, l := range labels {
+		if id, ok := strings.CutPrefix(l, sessionLabelPrefix); ok && len(id) > 8 {
+			out[i] = sessionLabelPrefix + id[:8]
+			continue
+		}
+		out[i] = l
+	}
+	return strings.Join(out, ", ")
 }
 
 // srcLabelForSession returns the provenance label for a create: src:agent

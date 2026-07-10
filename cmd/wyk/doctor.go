@@ -797,7 +797,12 @@ func classifyGuardHook(prefix, repoPath string, data []byte, readErr error) chec
 // summarising the offenders (IDs capped) otherwise.
 func checkContractHygiene(prefix string, issues []beads.Issue) check {
 	name := prefix + ": handoff-contract hygiene"
-	var noRunbook, noProvenance, orphan []string
+	// noProvWyk: wyk-filed (session:-labeled) issues missing src: — the
+	// filer is provably an agent-context tool, so `src:agent` is the right
+	// backfill. noProvHuman: human tasks missing src: — the filer is
+	// unknown (could legitimately be src:human), so the hint must NOT
+	// assume src:agent (roborev on would-you-kindly-voef).
+	var noRunbook, noProvWyk, noProvHuman, orphan []string
 	for _, is := range issues {
 		switch {
 		case is.IsHuman():
@@ -805,7 +810,7 @@ func checkContractHygiene(prefix string, issues []beads.Issue) check {
 				noRunbook = append(noRunbook, is.ID)
 			}
 			if !is.HasLabel("src:agent") && !is.HasLabel("src:human") {
-				noProvenance = append(noProvenance, is.ID)
+				noProvHuman = append(noProvHuman, is.ID)
 			}
 		case is.IsAgentHandoff():
 			// another agent's work, human-orchestrated — leave it alone
@@ -820,19 +825,22 @@ func checkContractHygiene(prefix string, issues []beads.Issue) check {
 			// session: and no src: is "unknown source" per CONTRACT.md and is
 			// deliberately NOT flagged.
 			if hasSessionLabel(is) && !is.HasLabel("src:agent") && !is.HasLabel("src:human") {
-				noProvenance = append(noProvenance, is.ID)
+				noProvWyk = append(noProvWyk, is.ID)
 			}
 		}
 	}
-	if len(noRunbook) == 0 && len(noProvenance) == 0 && len(orphan) == 0 {
+	if len(noRunbook) == 0 && len(noProvWyk) == 0 && len(noProvHuman) == 0 && len(orphan) == 0 {
 		return check{name: name, status: statusPass}
 	}
 	var parts []string
 	if len(noRunbook) > 0 {
 		parts = append(parts, fmt.Sprintf("%d human task(s) with an empty runbook [%s] — the description IS the runbook; fill it via `wyk handoff <id>`", len(noRunbook), capIDs(noRunbook)))
 	}
-	if len(noProvenance) > 0 {
-		parts = append(parts, fmt.Sprintf("%d task(s) missing a src: provenance label [%s] — invisible to `wyk inbox`; backfill with `bd label add <id> src:agent --dolt-auto-commit=on`", len(noProvenance), capIDs(noProvenance)))
+	if len(noProvWyk) > 0 {
+		parts = append(parts, fmt.Sprintf("%d wyk-filed task(s) missing a src: provenance label [%s] — invisible to `wyk inbox`; backfill with `bd label add <id> src:agent --dolt-auto-commit=on`", len(noProvWyk), capIDs(noProvWyk)))
+	}
+	if len(noProvHuman) > 0 {
+		parts = append(parts, fmt.Sprintf("%d human task(s) missing a src: provenance label [%s] — add `src:agent` or `src:human` as appropriate", len(noProvHuman), capIDs(noProvHuman)))
 	}
 	if len(orphan) > 0 {
 		parts = append(parts, fmt.Sprintf("%d agent task(s) with no assignee [%s] — claim or assign them (`bd update <id> --claim`)", len(orphan), capIDs(orphan)))

@@ -16,7 +16,8 @@ type stubMutator struct {
 	addedLabels []string
 	updatedID   string
 	updated     string
-	addLabelErr error
+	addLabelErr error  // fails EVERY AddLabel (the first call, i.e. human)
+	failOnLabel string // fails only this specific label's AddLabel
 	updateErr   error
 
 	updateCalled bool
@@ -26,6 +27,9 @@ func (s *stubMutator) AddLabel(_ context.Context, id, label string) error {
 	s.addedID = id
 	if s.addLabelErr != nil {
 		return s.addLabelErr
+	}
+	if s.failOnLabel != "" && label == s.failOnLabel {
+		return errors.New("bd: label add failed: " + label)
 	}
 	s.addedLabels = append(s.addedLabels, label)
 	return nil
@@ -85,6 +89,38 @@ func TestBounceToHuman_LabelFailureDoesNotUpdate(t *testing.T) {
 	// before attempting src:agent — no label was successfully applied.
 	if len(s.addedLabels) != 0 {
 		t.Errorf("no labels should have been applied after the first AddLabel failed; got %v", s.addedLabels)
+	}
+}
+
+// TestBounceToHuman_SrcAgentFailureLeavesHumanNoUpdate pins the
+// intermediate failure state introduced by the second AddLabel (roborev
+// on would-you-kindly-voef): human applied, src:agent failed, description
+// NOT yet overwritten — and a retry then completes cleanly.
+func TestBounceToHuman_SrcAgentFailureLeavesHumanNoUpdate(t *testing.T) {
+	s := &stubMutator{failOnLabel: SrcAgentLabel}
+	err := BounceToHuman(context.Background(), s, "wyk-42", "runbook")
+	if err == nil {
+		t.Fatal("expected error when the src:agent AddLabel fails")
+	}
+	if s.updateCalled {
+		t.Error("UpdateDescription must not run when src:agent add fails — the old description must be preserved")
+	}
+	if len(s.addedLabels) != 1 || s.addedLabels[0] != HumanLabel {
+		t.Errorf("human should be applied but not src:agent; got %v", s.addedLabels)
+	}
+
+	// Retry with the failure cleared: idempotent re-issue completes — both
+	// labels applied (human again, per bd's idempotency) and the
+	// description finally written.
+	s.failOnLabel = ""
+	if err := BounceToHuman(context.Background(), s, "wyk-42", "runbook"); err != nil {
+		t.Fatalf("retry should succeed: %v", err)
+	}
+	if !s.updateCalled {
+		t.Error("retry should write the description")
+	}
+	if s.lastAdded() != SrcAgentLabel {
+		t.Errorf("retry should end with src:agent applied; got %v", s.addedLabels)
 	}
 }
 
