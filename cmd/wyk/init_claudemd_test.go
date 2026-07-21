@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -374,8 +375,18 @@ func TestResolveWriteTarget_ChainsAndLoops(t *testing.T) {
 		if err := os.Symlink(filepath.Join("missing-dir", "AGENTS.md"), link); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeFileAtomic(link, []byte("body\n"), 0o644); err == nil {
+		err := writeFileAtomic(link, []byte("body\n"), 0o644)
+		if err == nil {
 			t.Fatal("write through a link into a missing dir should fail, got nil")
+		}
+		// The message must name the link the caller wrote, not the
+		// resolved temp path under the missing dir; the errno stays
+		// ENOENT so errors.Is classification still works.
+		if !strings.Contains(err.Error(), link) {
+			t.Errorf("error should name the caller's path %q; got %q", link, err)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("error should still classify as not-exist; got %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "missing-dir")); !os.IsNotExist(err) {
 			t.Errorf("missing-dir should not have been created (stat err=%v)", err)

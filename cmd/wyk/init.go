@@ -876,13 +876,27 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	viaLink := resolved != path
-	path = resolved
+	if resolved == path {
+		return writeResolvedAtomic(path, data, perm, true)
+	}
+	// A failure under the resolved target would otherwise surface a
+	// path the caller never wrote (e.g. CreateTemp's hidden temp name
+	// under a link's missing dir) — name the link they asked about.
+	if err := writeResolvedAtomic(resolved, data, perm, false); err != nil {
+		return fmt.Errorf("writing through symlink %s: %w", path, err)
+	}
+	return nil
+}
+
+// writeResolvedAtomic is writeFileAtomic's write half, operating on an
+// already-resolved path. mkdirParent creates the parent on demand —
+// disabled for symlink-resolved targets (see writeFileAtomic's doc).
+func writeResolvedAtomic(path string, data []byte, perm os.FileMode, mkdirParent bool) error {
 	if info, err := os.Stat(path); err == nil {
 		perm = info.Mode().Perm()
 	}
 	dir := filepath.Dir(path)
-	if !viaLink {
+	if mkdirParent {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
