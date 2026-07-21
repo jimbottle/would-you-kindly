@@ -379,12 +379,14 @@ func main() {
 
 // isTTYOpenErr reports whether err looks like Bubble Tea failing to
 // open a terminal (v1.3.10 words it "could not open a new TTY:
-// open /dev/tty: …"). Matched case-insensitively and also on the
-// wrapped /dev/tty path so a bubbletea upgrade that rewords the
-// outer message doesn't silently drop the --probe hint.
+// open /dev/tty: …"). Two case-insensitive prongs — the outer
+// message and the wrapped /dev/tty path — so a bubbletea upgrade
+// that rewords one doesn't silently drop the --probe hint, while an
+// unrelated error that merely contains "tty" (pretty, getty, a user
+// path) doesn't trigger a misleading "needs a terminal" hint.
 func isTTYOpenErr(err error) bool {
 	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "tty")
+	return strings.Contains(s, "open a new tty") || strings.Contains(s, "/dev/tty")
 }
 
 // stateFilePath resolves a wyk state-file location (logs are state, not

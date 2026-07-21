@@ -241,3 +241,83 @@ func TestInit_SeedsClaudeMDByDefault(t *testing.T) {
 		t.Errorf("default init did not seed the wyk block:\n%s", body)
 	}
 }
+
+// TestWriteFileAtomic_PreservesSymlinksAndModes pins the two
+// os.WriteFile behaviors the atomic swap must not lose (the file is
+// user-authored CLAUDE.md territory): writes land on a symlink's
+// TARGET — the link survives, resolvable or dangling — and an
+// existing file keeps its own mode, perm applying only on create.
+func TestWriteFileAtomic_PreservesSymlinksAndModes(t *testing.T) {
+	t.Run("fresh file gets the passed perm", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "CLAUDE.md")
+		if err := writeFileAtomic(path, []byte("body\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Errorf("fresh file mode = %o, want 644", got)
+		}
+	})
+
+	t.Run("existing file keeps its own mode", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "CLAUDE.md")
+		if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFileAtomic(path, []byte("new\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("rewrite reset mode to %o, want the original 600", got)
+		}
+	})
+
+	t.Run("writes through a resolvable symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "AGENTS.md")
+		link := filepath.Join(dir, "CLAUDE.md")
+		if err := os.WriteFile(target, []byte("old\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("AGENTS.md", link); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFileAtomic(link, []byte("new\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("CLAUDE.md is no longer a symlink (err=%v mode=%v)", err, fi.Mode())
+		}
+		got, err := os.ReadFile(target)
+		if err != nil || string(got) != "new\n" {
+			t.Errorf("target content = %q, %v; want the new body", got, err)
+		}
+	})
+
+	t.Run("dangling symlink creates the target, keeps the link", func(t *testing.T) {
+		// os.WriteFile would follow the link and create AGENTS.md;
+		// the atomic path must do the same, not clobber the link.
+		dir := t.TempDir()
+		link := filepath.Join(dir, "CLAUDE.md")
+		if err := os.Symlink("AGENTS.md", link); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFileAtomic(link, []byte("body\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("CLAUDE.md is no longer a symlink (err=%v mode=%v)", err, fi.Mode())
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+		if err != nil || string(got) != "body\n" {
+			t.Errorf("AGENTS.md content = %q, %v; want the written body", got, err)
+		}
+	})
+}

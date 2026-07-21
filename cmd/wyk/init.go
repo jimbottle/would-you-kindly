@@ -863,13 +863,13 @@ func removeHookForEvent(root map[string]any, event, cmd string) bool {
 // Two existing-file behaviors are deliberately preserved from the
 // os.WriteFile semantics this replaced: a symlinked path (the common
 // CLAUDE.md → AGENTS.md setup) is resolved first so the rename lands on
-// the link's target instead of replacing the link with a regular file,
-// and an existing file keeps its own mode — perm applies only when the
-// file is being created.
+// the link's target instead of replacing the link with a regular file —
+// including a DANGLING link, whose target is created just as a
+// write-through would have — and an existing file keeps its own mode;
+// perm applies only when the file is being created.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
-	} else if !errors.Is(err, os.ErrNotExist) {
+	path, err := resolveWriteTarget(path)
+	if err != nil {
 		return err
 	}
 	if info, err := os.Stat(path); err == nil {
@@ -903,6 +903,39 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return nil
+}
+
+// resolveWriteTarget walks symlinks on the final path component (Lstat +
+// Readlink, relative targets resolved against the link's directory) and
+// returns where a write should actually land. Unlike filepath.EvalSymlinks
+// it resolves a DANGLING link too — returning the nonexistent target so
+// the caller creates it there, exactly as an os.WriteFile write-through
+// would have — instead of erroring and letting the rename clobber the
+// link itself.
+func resolveWriteTarget(path string) (string, error) {
+	// 40 hops matches the traversal limit kernels use for symlink
+	// chains; a longer chain is a loop in practice.
+	for range 40 {
+		fi, err := os.Lstat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return path, nil
+			}
+			return "", err
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
+	}
+	return "", fmt.Errorf("too many levels of symbolic links resolving %s", path)
 }
 
 // settingsHasHookForEvent reports whether any hook command under the given
