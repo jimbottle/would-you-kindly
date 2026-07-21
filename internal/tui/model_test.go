@@ -3770,12 +3770,16 @@ func TestAssign_DispatchesSetAssigneeWithTypedValue(t *testing.T) {
 	}
 }
 
-func TestAssign_EmptyValueClearsOwner(t *testing.T) {
+func TestAssign_EmptyValueClearsAssignee(t *testing.T) {
 	// Empty value is honored as a deliberate clear (bd accepts
 	// --assignee ""). The QuickAdd require-owner rule only
 	// governs creation; a pre-existing row CAN be unassigned.
+	// Assignee (not Owner) so the prompt actually opens seeded and
+	// the backspace loop below clears real content — with only
+	// Owner set the prompt would open empty and the clear would be
+	// a no-op.
 	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
-		{ID: "a-1", Owner: "alice"},
+		{ID: "a-1", Assignee: "alice"},
 	}}}
 	m := applyMutatorFetched(New(s), s)
 

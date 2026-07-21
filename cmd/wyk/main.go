@@ -370,11 +370,21 @@ func main() {
 		// The TUI needs a terminal; when Bubble Tea can't open one
 		// (CI, cron, a pipe with no controlling tty) point at the
 		// non-TTY entry point instead of leaving a bare open error.
-		if strings.Contains(err.Error(), "TTY") {
+		if isTTYOpenErr(err) {
 			fmt.Fprintln(os.Stderr, "wyk: the TUI needs a terminal — for scripts/CI use `wyk --probe` (or `wyk inbox -json`)")
 		}
 		exitWith(1)
 	}
+}
+
+// isTTYOpenErr reports whether err looks like Bubble Tea failing to
+// open a terminal (v1.3.10 words it "could not open a new TTY:
+// open /dev/tty: …"). Matched case-insensitively and also on the
+// wrapped /dev/tty path so a bubbletea upgrade that rewords the
+// outer message doesn't silently drop the --probe hint.
+func isTTYOpenErr(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "tty")
 }
 
 // stateFilePath resolves a wyk state-file location (logs are state, not
@@ -631,19 +641,6 @@ func backgroundUpdateCheck() {
 	_, _, _ = updater.LatestCached(ctx, nil)
 }
 
-// buildSource picks single-repo vs multi-repo wiring based on the
-// flags and the registry state:
-//
-//   - -C <dir>: explicit single-repo, scoped to that workspace.
-//   - registry has 2+ repos: multi-repo source.
-//   - registry has 1 repo: single-repo source against that repo
-//     (NOT cwd) — a user who registered one project then runs `wyk`
-//     from anywhere should land in that project, not get an opaque
-//     "no workspace here" failure.
-//   - registry is empty: single-repo against cwd, the v0.1.0
-//     fallback so a user who hasn't run `wyk init` anywhere still
-//     gets a working TUI from inside a bd repo.
-//
 // validateDashC stats a -C directory up front so a bad path produces
 // a clean one-liner instead of bd's raw JSON error blob surfacing
 // through a failed query ("bd query …: { \"error\": … }"). A common
@@ -664,6 +661,18 @@ func validateDashC(dir string) error {
 	return nil
 }
 
+// buildSource picks single-repo vs multi-repo wiring based on the
+// flags and the registry state:
+//
+//   - -C <dir>: explicit single-repo, scoped to that workspace.
+//   - registry has 2+ repos: multi-repo source.
+//   - registry has 1 repo: single-repo source against that repo
+//     (NOT cwd) — a user who registered one project then runs `wyk`
+//     from anywhere should land in that project, not get an opaque
+//     "no workspace here" failure.
+//   - registry is empty: single-repo against cwd, the v0.1.0
+//     fallback so a user who hasn't run `wyk init` anywhere still
+//     gets a working TUI from inside a bd repo.
 func buildSource(dir, me string) (tui.Source, []string, string, error) {
 	if dir != "" {
 		if err := validateDashC(dir); err != nil {

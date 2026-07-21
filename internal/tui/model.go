@@ -3781,9 +3781,10 @@ func (m Model) updateLabel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// beginAssign opens the owner-change prompt. Seeded with the
-// current owner so the common "fix a typo" or "keep me, just
-// confirm" cases are one keystroke instead of a re-type.
+// beginAssign opens the assign prompt. Seeded with the current
+// assignee (the field the prompt submits via SetAssignee) so the
+// common "fix a typo" or "keep me, just confirm" cases are one
+// keystroke instead of a re-type.
 // Bulk-aware via the marks set; single path snapshots the cursor
 // row into pendingTarget so a concurrent refetch can't shift the
 // target out from under the prompt.

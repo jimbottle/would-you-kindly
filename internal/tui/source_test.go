@@ -932,6 +932,16 @@ func TestMultiBDSource_ListDepsStampsRepo(t *testing.T) {
 	if len(a.added) != 2 {
 		t.Errorf("alpha should have received both AddLabel calls; got %+v", a.added)
 	}
+	// The sub-source's own rows must be untouched: stamping works on a
+	// copy. This also keeps the ListDependents leg above honest — the
+	// fake serves the same slice to both listers, so an in-place stamp
+	// during the ListDeps leg would leave the second leg pre-stamped
+	// and its assertions vacuous.
+	for _, d := range a.deps["alpha-1"] {
+		if d.Repo != "" {
+			t.Errorf("sub-source row %s was mutated in place (Repo=%q); stampRepos must copy", d.ID, d.Repo)
+		}
+	}
 }
 
 func TestIsAgentInboxCandidate(t *testing.T) {

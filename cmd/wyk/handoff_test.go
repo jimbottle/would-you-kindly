@@ -256,6 +256,22 @@ func TestHandoff_DryRunBannerPrintsCanonicalPriority(t *testing.T) {
 	}
 }
 
+func TestRunHandoff_CValidatesDir(t *testing.T) {
+	// A typo'd -C is a usage error caught up front (exit 64, clean
+	// one-liner) — not bd argv noise from the first write.
+	clearAmbientIdentity(t)
+	var code int
+	_, stderr := captureOutErr(t, func() {
+		code = runHandoff([]string{"-C", "/no/such/dir", "some-id"})
+	})
+	if code != 64 {
+		t.Errorf("bad -C exit = %d, want 64", code)
+	}
+	if !strings.Contains(stderr, "does not exist") {
+		t.Errorf("bad -C should fail with the does-not-exist one-liner; got %q", stderr)
+	}
+}
+
 func TestRunHandoff_WrongArityPrintsCanonicalUsage(t *testing.T) {
 	// The wrong-arity error prints the cliSubcommandDocs usage — this
 	// pins both the exit code and the doc entry's existence (the

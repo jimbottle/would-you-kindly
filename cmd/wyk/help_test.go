@@ -101,7 +101,13 @@ func TestRunHelp_CLIMarkdownEmitsEverySubcommand(t *testing.T) {
 	// Note: this only catches "table entry missing from output" —
 	// the inverse (dispatch entry missing from the table) is
 	// covered by TestCLISubcommandDocs_CoversEveryDispatchedSubcommand
-	// below, and flag-level drift is caught by the CI docs-check.
+	// below. Flag-level drift is only PARTIALLY guarded: the CI
+	// docs-check verifies the generated markdown matches the table,
+	// but a flag registered on a FlagSet and never added to the
+	// table is invisible to it (the -all omission shipped exactly
+	// that way). A table↔FlagSet parity check would need each
+	// subcommand's flag registration extracted to be constructible
+	// from tests — tracked in the backlog.
 	for _, d := range cliSubcommandDocs {
 		want := "## `wyk " + d.Name + "`"
 		if !contains(out, want) {

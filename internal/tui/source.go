@@ -933,8 +933,7 @@ func (m *MultiBDSource) ListDeps(ctx context.Context, id string) ([]beads.Issue,
 	if err != nil {
 		return nil, err
 	}
-	m.stampRepos(deps, sub.name)
-	return deps, nil
+	return m.stampRepos(deps, sub.name), nil
 }
 
 // ListDependents routes a `bd dep list --direction=up` to the
@@ -951,8 +950,7 @@ func (m *MultiBDSource) ListDependents(ctx context.Context, id string) ([]beads.
 	if err != nil {
 		return nil, err
 	}
-	m.stampRepos(dependents, sub.name)
-	return dependents, nil
+	return m.stampRepos(dependents, sub.name), nil
 }
 
 // subForID returns the sub whose name is the longest registered
@@ -975,23 +973,29 @@ func (m *MultiBDSource) subForID(id string) (sub subRepo, ok bool) {
 	return best, true
 }
 
-// stampRepos fills in Issue.Repo on dep-list rows so they can be
-// drilled into: Detail and every Mutator method route on Repo via
-// repoForIssue, and a blank Repo surfaces as a programmer error.
-// Each row routes by its own ID prefix (a dep edge can cross repos);
-// a row no sub claims falls back to the workspace the listing came
-// from, which is where bd resolved it.
-func (m *MultiBDSource) stampRepos(issues []beads.Issue, fallback string) {
-	for i := range issues {
-		if issues[i].Repo != "" {
+// stampRepos returns a copy of the dep-list rows with Issue.Repo
+// filled in so they can be drilled into: Detail and every Mutator
+// method route on Repo via repoForIssue, and a blank Repo surfaces
+// as a programmer error. Each row routes by its own ID prefix (a dep
+// edge can cross repos); a row no sub claims falls back to the
+// workspace the listing came from, which is where bd resolved it.
+// Stamping a COPY keeps the sub-source's returned slice untouched —
+// mutating in place would silently impose a caller-owns-the-slice
+// contract on DepLister implementations, corrupting any future
+// cached implementation's rows across queries.
+func (m *MultiBDSource) stampRepos(issues []beads.Issue, fallback string) []beads.Issue {
+	out := append([]beads.Issue(nil), issues...)
+	for i := range out {
+		if out[i].Repo != "" {
 			continue
 		}
-		if sub, ok := m.subForID(issues[i].ID); ok {
-			issues[i].Repo = sub.name
+		if sub, ok := m.subForID(out[i].ID); ok {
+			out[i].Repo = sub.name
 		} else {
-			issues[i].Repo = fallback
+			out[i].Repo = fallback
 		}
 	}
+	return out
 }
 
 // Create routes the new issue to a specific sub by name. If repo is

@@ -95,13 +95,13 @@ wyk inbox -json    # structured, for agent ingestion
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
+| `-C` | `_(empty)_` | scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config') |
 | `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-json` | `false` | emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated) |
 | `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-slim` | `false` | drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata) |
 | `-priority` | `-1` | cap the inbox at priority N or higher (lower number = higher priority; -1 disables) |
-| `-repo` | `_(empty)_` | restrict the inbox to the registered repo with this name (mutually exclusive with -C) |
+| `-repo` | `_(empty)_` | restrict the inbox to the registered repo with this name (mutually exclusive with -C/-all) |
 | `-limit` | `-1` | cap the inbox at N rows (after priority/repo filtering; -1 disables) |
 | `-identity` | `_(empty)_` | scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset |
 | `-strict` | `false` | with -identity, show ONLY work routed to that identity; default also includes un-routed collective work so it isn't stranded |
@@ -123,11 +123,11 @@ wyk stats -json
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
+| `-C` | `_(empty)_` | scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config') |
 | `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-json` | `false` | emit a JSON object suitable for scripting |
 | `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
-| `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (mutually exclusive with -C) |
+| `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (mutually exclusive with -C/-all) |
 
 ## `wyk doctor`
 
@@ -263,11 +263,11 @@ wyk dashboard      # per-repo open/human/closed-this-week table
 
 | Flag | Default | Description |
 | --- | --- | --- |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-json` | `false` | emit a structured JSON object instead of the table |
 | `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-days` | `7` | window for the closed-recently column (default 7) |
-| `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (empty = every registered repo) |
-| `-all` | `false` | query every registered repo, ignoring the configured default scope |
+| `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (mutually exclusive with -all) |
 | `-priority` | `-1` | drop issues below priority N before tallying counts (lower number = higher priority; -1 disables — does NOT hide empty repo rows) |
 
 ## `wyk export`
@@ -286,12 +286,12 @@ wyk export > wyk-backup.json
 
 | Flag | Default | Description |
 | --- | --- | --- |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-since` | `_(empty)_` | filter issues to those updated within this duration (e.g. 24h, 168h) |
 | `-compact` | `false` | emit non-indented JSON (smaller; better for piping into jq / streaming consumers) |
 | `-slim` | `false` | drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels); ~75%+ smaller for an LLM scanning the backlog |
 | `-closed` | `false` | include closed issues (default: open issues only — the actionable set) |
-| `-repo` | `_(empty)_` | restrict the dump to the registered repo with this name (empty = full registry) |
-| `-all` | `false` | query every registered repo, ignoring the configured default scope |
+| `-repo` | `_(empty)_` | restrict the dump to the registered repo with this name (mutually exclusive with -all) |
 
 ## `wyk import`
 
@@ -329,14 +329,14 @@ wyk activity -since 24h   # what changed across repos today?
 
 | Flag | Default | Description |
 | --- | --- | --- |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-since` | `24h` | show issues updated within this duration (e.g. 1h, 24h, 168h) |
 | `-json` | `false` | emit a structured JSON array instead of the table |
 | `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-priority` | `-1` | cap rows at priority N or higher (lower number = higher priority; -1 disables) |
-| `-repo` | `_(empty)_` | restrict the stream to the registered repo with this name (empty = every registered repo) |
+| `-repo` | `_(empty)_` | restrict the stream to the registered repo with this name (mutually exclusive with -all) |
 | `-status` | `all` | filter rows by status: open / closed / all |
 | `-limit` | `-1` | cap the stream at N rows (after every other filter; -1 disables) |
-| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 
 ## `wyk depgraph`
 
@@ -355,13 +355,13 @@ wyk depgraph -dot | dot -Tsvg > deps.svg
 
 | Flag | Default | Description |
 | --- | --- | --- |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-dot` | `false` | emit Graphviz DOT (pipe into `dot -Tsvg`) |
 | `-json` | `false` | emit {nodes, edges} JSON for tooling consumers |
 | `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
-| `-repo` | `_(empty)_` | restrict to the registered repo with this name (empty = full registry) |
+| `-repo` | `_(empty)_` | restrict to the registered repo with this name (mutually exclusive with -all) |
 | `-priority` | `-1` | only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out |
 | `-closed` | `false` | include closed issues (default omits them) |
-| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 
 ## `wyk skills`
 

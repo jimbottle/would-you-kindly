@@ -4,8 +4,26 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestLoad_CorruptJSONNamesRemedy(t *testing.T) {
+	// The parse error must name the remedy, not just the file: the
+	// registry is re-creatable (wyk init re-registers repos), so the
+	// message tells the user deleting it is safe.
+	path := filepath.Join(t.TempDir(), "repos.json")
+	if err := os.WriteFile(path, []byte(`{broken`), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load: want parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "wyk init") {
+		t.Errorf("parse error should name the remedy; got %q", err)
+	}
+}
 
 func TestLoad_MissingFileReturnsEmptyRegistry(t *testing.T) {
 	r, err := Load(filepath.Join(t.TempDir(), "nope.json"))

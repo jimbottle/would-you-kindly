@@ -859,7 +859,22 @@ func removeHookForEvent(root map[string]any, event, cmd string) bool {
 // for settings.json (which already holds bd's SessionStart/PreCompact
 // hooks the merge works to preserve) and for the user's CLAUDE.md, which
 // seedWykConventions rewrites in place. Creates the parent dir on demand.
+//
+// Two existing-file behaviors are deliberately preserved from the
+// os.WriteFile semantics this replaced: a symlinked path (the common
+// CLAUDE.md → AGENTS.md setup) is resolved first so the rename lands on
+// the link's target instead of replacing the link with a regular file,
+// and an existing file keeps its own mode — perm applies only when the
+// file is being created.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

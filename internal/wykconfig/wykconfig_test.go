@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,6 +111,12 @@ func TestLoadCorruptJSON(t *testing.T) {
 	}
 	if errors.Is(err, ErrUnsupportedVersion) {
 		t.Fatal("corrupt JSON must not be reported as ErrUnsupportedVersion")
+	}
+	// The message must name the remedy, not just the file: settings
+	// are re-settable, so pointing at `wyk config set` turns a JSON
+	// parse error into an actionable one.
+	if !strings.Contains(err.Error(), "wyk config set") {
+		t.Errorf("parse error should name the remedy; got %q", err)
 	}
 }
 
