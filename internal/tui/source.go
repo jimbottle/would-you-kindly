@@ -922,46 +922,76 @@ func (m *MultiBDSource) Detail(ctx context.Context, i beads.Issue) (beads.Issue,
 // Issue.ID, and threading the full Repo would just duplicate the
 // prefix routing the IDs already encode. An ID that no registered
 // sub claims returns an error so a caller can degrade rather than
-// silently mis-route.
+// silently mis-route. Returned rows get Repo stamped so the detail
+// view can drill into them (Detail/Mutator route on Repo).
 func (m *MultiBDSource) ListDeps(ctx context.Context, id string) ([]beads.Issue, error) {
-	sub := m.subForID(id)
-	if sub == nil {
+	sub, ok := m.subForID(id)
+	if !ok {
 		return nil, fmt.Errorf("no registered workspace claims issue %q", id)
 	}
-	return sub.ListDeps(ctx, id)
+	deps, err := sub.src.ListDeps(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	m.stampRepos(deps, sub.name)
+	return deps, nil
 }
 
 // ListDependents routes a `bd dep list --direction=up` to the
 // workspace that owns id, returning the issues it blocks. Mirrors
-// ListDeps's longest-prefix-ID routing exactly — an ID no registered
-// sub claims returns an error rather than silently mis-routing, so a
-// caller can degrade.
+// ListDeps's longest-prefix-ID routing and Repo stamping exactly —
+// an ID no registered sub claims returns an error rather than
+// silently mis-routing, so a caller can degrade.
 func (m *MultiBDSource) ListDependents(ctx context.Context, id string) ([]beads.Issue, error) {
-	sub := m.subForID(id)
-	if sub == nil {
+	sub, ok := m.subForID(id)
+	if !ok {
 		return nil, fmt.Errorf("no registered workspace claims issue %q", id)
 	}
-	return sub.ListDependents(ctx, id)
+	dependents, err := sub.src.ListDependents(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	m.stampRepos(dependents, sub.name)
+	return dependents, nil
 }
 
 // subForID returns the sub whose name is the longest registered
-// prefix of id (matching N such that id begins with N+"-"). nil
-// means no registered sub claims the ID. Mirrors the longest-
+// prefix of id (matching N such that id begins with N+"-"). ok ==
+// false means no registered sub claims the ID. Mirrors the longest-
 // prefix-match rule in FetchWithSubErrors so a nested-prefix
 // registry (foo and foo-bar) routes to the more specific repo.
-func (m *MultiBDSource) subForID(id string) fullSource {
+func (m *MultiBDSource) subForID(id string) (sub subRepo, ok bool) {
 	var best subRepo
 	var bestLen = -1
-	for _, sub := range m.subs {
-		if strings.HasPrefix(id, sub.name+"-") && len(sub.name) > bestLen {
-			best = sub
-			bestLen = len(sub.name)
+	for _, s := range m.subs {
+		if strings.HasPrefix(id, s.name+"-") && len(s.name) > bestLen {
+			best = s
+			bestLen = len(s.name)
 		}
 	}
 	if bestLen < 0 {
-		return nil
+		return subRepo{}, false
 	}
-	return best.src
+	return best, true
+}
+
+// stampRepos fills in Issue.Repo on dep-list rows so they can be
+// drilled into: Detail and every Mutator method route on Repo via
+// repoForIssue, and a blank Repo surfaces as a programmer error.
+// Each row routes by its own ID prefix (a dep edge can cross repos);
+// a row no sub claims falls back to the workspace the listing came
+// from, which is where bd resolved it.
+func (m *MultiBDSource) stampRepos(issues []beads.Issue, fallback string) {
+	for i := range issues {
+		if issues[i].Repo != "" {
+			continue
+		}
+		if sub, ok := m.subForID(issues[i].ID); ok {
+			issues[i].Repo = sub.name
+		} else {
+			issues[i].Repo = fallback
+		}
+	}
 }
 
 // Create routes the new issue to a specific sub by name. If repo is

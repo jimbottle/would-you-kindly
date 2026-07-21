@@ -2698,8 +2698,9 @@ func (m Model) detailEnrichCmd(target beads.Issue) tea.Cmd {
 // openDetailLink drills into the highlighted dependency/dependent: it
 // pushes the current (enriched) issue onto detailStack so Back returns
 // here, swaps detailIssue to the link, and dispatches Detail +
-// dep-resolution for it (cross-repo targets route by ID prefix through
-// the Detailer / DepLister). With no valid selection it falls back to
+// dep-resolution for it (dep-list rows carry a stamped Repo, which the
+// Detailer routes on; the DepLister routes by ID prefix). With no
+// valid selection it falls back to
 // backing out one level, so Enter still means "back" when no link is
 // highlighted.
 func (m Model) openDetailLink() (tea.Model, tea.Cmd) {

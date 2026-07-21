@@ -70,6 +70,10 @@ type fakeRepoSource struct {
 	removed      []labelOp
 	notes        []labelOp
 
+	// deps, when set, backs ListDeps/ListDependents (keyed by the
+	// parent issue id). nil means every lookup returns no edges.
+	deps map[string][]beads.Issue
+
 	// fetchDelay, when non-zero, makes Fetch sleep for that long
 	// while holding a fan-out slot — long enough for the
 	// concurrency-cap test to observe overlapping fetches via
@@ -188,18 +192,19 @@ func (f *fakeRepoSource) SetIssueType(_ context.Context, i beads.Issue, issueTyp
 }
 
 // ListDeps satisfies DepLister (and thus fullSource) for the
-// multi-repo routing tests. The fake has no dependency edges, so
-// every issue resolves to an empty set — enough to keep the
+// multi-repo routing tests. Edges come from the optional deps map
+// (keyed by parent id); the zero value has none, so every issue
+// resolves to an empty set — enough to keep the
 // MultiBDSource.ListDeps routing test honest without canned data.
-func (f *fakeRepoSource) ListDeps(_ context.Context, _ string) ([]beads.Issue, error) {
-	return nil, nil
+func (f *fakeRepoSource) ListDeps(_ context.Context, id string) ([]beads.Issue, error) {
+	return f.deps[id], nil
 }
 
 // ListDependents is the reverse-direction twin of ListDeps; same
-// best-effort empty set so fakeRepoSource keeps satisfying DepLister
-// / fullSource.
-func (f *fakeRepoSource) ListDependents(_ context.Context, _ string) ([]beads.Issue, error) {
-	return nil, nil
+// deps-map lookup so fakeRepoSource keeps satisfying DepLister /
+// fullSource.
+func (f *fakeRepoSource) ListDependents(_ context.Context, id string) ([]beads.Issue, error) {
+	return f.deps[id], nil
 }
 
 // newMultiForTest builds a MultiBDSource directly from fake subs so
@@ -870,6 +875,62 @@ func TestMultiBDSource_WriteRoutesByRepoNotID(t *testing.T) {
 	}
 	if len(b.closed) != 1 || b.closed[0] != "shared-1" {
 		t.Errorf("beta should have received Close(shared-1); got %+v", b.closed)
+	}
+}
+
+func TestMultiBDSource_ListDepsStampsRepo(t *testing.T) {
+	// Regression: dep-list rows came back with a blank Repo, but
+	// Detail and every Mutator method route on Repo via repoForIssue
+	// — so drilling into a dependency in the detail view failed
+	// enrichment and surfaced the "has no Repo set" programmer error.
+	// Rows must route by their own ID prefix (a dep edge can cross
+	// repos); an unclaimed prefix falls back to the queried sub.
+	a := &fakeRepoSource{deps: map[string][]beads.Issue{
+		"alpha-1": {
+			{ID: "alpha-2", Title: "same-repo dep"},
+			{ID: "beta-9", Title: "cross-repo dep"},
+			{ID: "zzz-1", Title: "foreign-prefix dep"},
+		},
+	}}
+	b := &fakeRepoSource{}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"alpha", "main", a},
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"beta", "main", b},
+	)
+
+	for _, list := range []func(context.Context, string) ([]beads.Issue, error){
+		m.ListDeps, m.ListDependents,
+	} {
+		deps, err := list(context.Background(), "alpha-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{"alpha-2": "alpha", "beta-9": "beta", "zzz-1": "alpha"}
+		if len(deps) != len(want) {
+			t.Fatalf("expected %d rows, got %+v", len(want), deps)
+		}
+		for _, d := range deps {
+			if d.Repo != want[d.ID] {
+				t.Errorf("dep %s: Repo=%q, want %q", d.ID, d.Repo, want[d.ID])
+			}
+		}
+		// The stamped rows must now route: a Mutator write on the
+		// same-repo dep should reach alpha without the "no Repo set"
+		// error a blank Repo used to produce.
+		if err := m.AddLabel(context.Background(), deps[0], "human"); err != nil {
+			t.Errorf("AddLabel on stamped dep row: %v", err)
+		}
+	}
+	if len(a.added) != 2 {
+		t.Errorf("alpha should have received both AddLabel calls; got %+v", a.added)
 	}
 }
 
