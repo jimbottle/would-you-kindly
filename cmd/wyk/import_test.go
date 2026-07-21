@@ -106,20 +106,22 @@ func TestRunImportPlan_UpdatesExistingAndCreatesMissing(t *testing.T) {
 	}
 }
 
-func TestRunImportPlan_LabelAndOwnerDiffs(t *testing.T) {
+func TestRunImportPlan_LabelAndAssigneeDiffs(t *testing.T) {
 	// Existing test only varies priority+description; this one
 	// proves the label add/remove and assignee paths fire on a
 	// real (non-dry-run) plan, covering the wiring labelDiff
-	// drives.
+	// drives. The diff compares Assignee (the field SetAssignee
+	// writes) — Owner is bd's who-filed audit field and identical
+	// owners must not mask an assignee difference.
 	reg := &registry.Registry{Repos: []registry.Repo{{Name: "repo-a", Path: "/tmp/a"}}}
 	dump := exportDump{Repos: []exportRepo{{
 		Name: "repo-a",
 		Issues: []beads.Issue{
-			{ID: "a-1", Status: "open", Owner: "bob", Labels: []string{"keep", "new"}},
+			{ID: "a-1", Status: "open", Owner: "filer", Assignee: "bob", Labels: []string{"keep", "new"}},
 		},
 	}}}
 	fake := &fakeImportClient{existing: []beads.Issue{
-		{ID: "a-1", Owner: "alice", Labels: []string{"keep", "old"}},
+		{ID: "a-1", Owner: "filer", Assignee: "alice", Labels: []string{"keep", "old"}},
 	}}
 	mk := func(_ string) importClient { return fake }
 

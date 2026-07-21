@@ -282,15 +282,20 @@ func applyImportUpdate(c importClient, existing, in beads.Issue, dryRun bool) (b
 		}
 		changed = true
 	}
-	if existing.Owner != in.Owner && in.Owner != "" {
+	// Assignee, not Owner: bd's owner is the who-FILED audit field and
+	// can't be written back, so the restorable responsibility field is
+	// assignee. Diffing owner here while remediating via SetAssignee
+	// (the old bug) never converged — every re-import re-fired the
+	// write without ever satisfying the diff.
+	if existing.Assignee != in.Assignee && in.Assignee != "" {
 		if !dryRun {
-			if err := c.SetAssignee(ctx, in.ID, in.Owner); err != nil {
+			if err := c.SetAssignee(ctx, in.ID, in.Assignee); err != nil {
 				return changed, err
 			}
 		}
 		changed = true
 	}
-	// Guard the description diff the same way as owner: an empty
+	// Guard the description diff the same way as assignee: an empty
 	// value in the dump represents "the source didn't carry one"
 	// (e.g. a freshly-created bd issue without a body), not "clear
 	// the local description." Without this guard, a restore from a
@@ -342,7 +347,7 @@ func applyImportCreate(c importClient, in beads.Issue, dryRun bool) (string, err
 		Labels:    in.Labels,
 		Priority:  strconv.Itoa(in.Priority),
 		IssueType: in.IssueType,
-		Assignee:  in.Owner,
+		Assignee:  in.Assignee,
 	}
 	newID, err := c.Create(ctx, opts)
 	if err != nil {

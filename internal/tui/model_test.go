@@ -3198,17 +3198,21 @@ func drainCmd(cmd tea.Cmd) {
 }
 
 func TestRenderStatsLine_CountsHumanAndMine(t *testing.T) {
+	// The mine count tallies Assignee — the field the mine preset
+	// queries (assignee=) — NOT Owner (who filed). a-4 is filed by ev
+	// but assigned elsewhere, so it must not count.
 	issues := []beads.Issue{
-		{ID: "a-1", Labels: []string{"human"}, Owner: "ev"},
-		{ID: "a-2", Labels: []string{"human", "src:agent"}, Owner: "ev"},
-		{ID: "a-3", Labels: []string{"src:agent"}, Owner: "other"},
-		{ID: "a-4", Owner: "ev"},
+		{ID: "a-1", Labels: []string{"human"}, Assignee: "ev"},
+		{ID: "a-2", Labels: []string{"human", "src:agent"}, Assignee: "ev"},
+		{ID: "a-3", Labels: []string{"src:agent"}, Assignee: "other"},
+		{ID: "a-4", Owner: "ev", Assignee: "other"},
+		{ID: "a-5", Assignee: "ev"},
 	}
 	src := &stubSource{issues: issues}
 	m := applyFetched(New(src).WithMe("ev"), src)
 
 	got := m.renderStatsLine()
-	// 2 human (a-1, a-2), 3 mine (a-1, a-2, a-4 owned by ev).
+	// 2 human (a-1, a-2), 3 mine (a-1, a-2, a-5 assigned to ev).
 	if !strings.Contains(got, "2 human") {
 		t.Errorf("expected '2 human' in stats; got %q", got)
 	}
@@ -3725,8 +3729,12 @@ func TestLabel_ReadOnlyShowsHint(t *testing.T) {
 }
 
 func TestAssign_DispatchesSetAssigneeWithTypedValue(t *testing.T) {
+	// Owner differs from Assignee on purpose: the prompt submits
+	// SetAssignee, so it must seed with Assignee — seeding Owner
+	// (who filed) would make a bare "confirm" overwrite the
+	// assignee with the filer.
 	s := &stubMutator{stubSource: stubSource{issues: []beads.Issue{
-		{ID: "a-1", Owner: "alice", Title: "rotate"},
+		{ID: "a-1", Owner: "filer", Assignee: "alice", Title: "rotate"},
 	}}}
 	m := applyMutatorFetched(New(s), s)
 
@@ -3735,10 +3743,10 @@ func TestAssign_DispatchesSetAssigneeWithTypedValue(t *testing.T) {
 	if m.mode != modeAssign {
 		t.Fatalf("O should enter modeAssign; got %v", m.mode)
 	}
-	// Prompt should be pre-seeded with the current owner so the
+	// Prompt should be pre-seeded with the current assignee so the
 	// common "confirm/typo-fix" cases are one keystroke.
 	if m.input.Value() != "alice" {
-		t.Errorf("prompt should seed with current owner; got %q", m.input.Value())
+		t.Errorf("prompt should seed with current assignee; got %q", m.input.Value())
 	}
 	// Clear and retype bob.
 	for range "alice" {

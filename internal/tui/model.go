@@ -3805,7 +3805,10 @@ func (m Model) beginAssign() (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		m.input.Prompt = fmt.Sprintf("owner for %d rows ▸ ", len(m.marked))
 	} else {
-		m.input.SetValue(m.pendingTarget.Owner)
+		// Seed with the assignee — the field the prompt submits via
+		// SetAssignee. Seeding the Owner (who filed) would make the
+		// "just confirm" flow overwrite the assignee with the filer.
+		m.input.SetValue(m.pendingTarget.Assignee)
 		m.input.Prompt = "owner ▸ "
 	}
 	m.input.Placeholder = "ev@example.com (empty = clear)"
@@ -5395,7 +5398,10 @@ func (m Model) renderStatsLine() string {
 		if i.HasLabel(filter.ReviewLabel) {
 			review++
 		}
-		if m.me != "" && i.Owner == m.me {
+		// Assignee, not Owner: the mine preset queries assignee=,
+		// so the count must tally the same field or the status-bar
+		// number and the view it advertises disagree.
+		if m.me != "" && i.Assignee == m.me {
 			mine++
 		}
 	}
