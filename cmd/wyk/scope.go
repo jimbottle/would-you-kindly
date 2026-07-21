@@ -100,7 +100,12 @@ func reposToQuery(dir, repoName string, allFlag bool) ([]registry.Repo, error) {
 	}
 
 	// -C bypasses the registry: a single synthetic source at the dir.
+	// Validated up front so a typo'd path fails with a one-liner
+	// instead of bd's raw JSON error blob from the eventual query.
 	if dir != "" {
+		if err := validateDashC(dir); err != nil {
+			return nil, err
+		}
 		return []registry.Repo{{Path: dir}}, nil
 	}
 

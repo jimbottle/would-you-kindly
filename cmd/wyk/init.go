@@ -707,7 +707,7 @@ func seedWykConventions(repoRoot string, dryRun bool) (string, error) {
 		if dryRun {
 			return "would create CLAUDE.md with wyk conventions", nil
 		}
-		if werr := os.WriteFile(path, []byte(claudeMDPreamble+wykConventionsBlock+"\n"), 0o644); werr != nil {
+		if werr := writeFileAtomic(path, []byte(claudeMDPreamble+wykConventionsBlock+"\n"), 0o644); werr != nil {
 			return "", werr
 		}
 		return "created CLAUDE.md with wyk conventions", nil
@@ -730,7 +730,7 @@ func seedWykConventions(repoRoot string, dryRun bool) (string, error) {
 			return "would refresh the wyk conventions block in CLAUDE.md", nil
 		}
 		updated := content[:i] + wykConventionsBlock + content[end:]
-		if werr := os.WriteFile(path, []byte(updated), 0o644); werr != nil {
+		if werr := writeFileAtomic(path, []byte(updated), 0o644); werr != nil {
 			return "", werr
 		}
 		return "refreshed the wyk conventions block in CLAUDE.md", nil
@@ -748,7 +748,7 @@ func seedWykConventions(repoRoot string, dryRun bool) (string, error) {
 	if !strings.HasSuffix(prefix, "\n\n") {
 		prefix += "\n"
 	}
-	if werr := os.WriteFile(path, []byte(prefix+wykConventionsBlock+"\n"), 0o644); werr != nil {
+	if werr := writeFileAtomic(path, []byte(prefix+wykConventionsBlock+"\n"), 0o644); werr != nil {
 		return "", werr
 	}
 	return "appended wyk conventions to CLAUDE.md", nil
@@ -856,14 +856,15 @@ func removeHookForEvent(root map[string]any, event, cmd string) bool {
 // writeFileAtomic writes data to path via a sibling temp file + rename so
 // an interrupted write can't truncate or corrupt an existing file —
 // matching the durability the registry/session writers use. This matters
-// for settings.json, which already holds bd's SessionStart/PreCompact
-// hooks the merge works to preserve. Creates the parent dir on demand.
+// for settings.json (which already holds bd's SessionStart/PreCompact
+// hooks the merge works to preserve) and for the user's CLAUDE.md, which
+// seedWykConventions rewrites in place. Creates the parent dir on demand.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".settings.json.*")
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err
 	}

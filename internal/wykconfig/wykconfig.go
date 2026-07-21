@@ -114,7 +114,10 @@ func Load(path string) (Config, error) {
 	}
 	var c Config
 	if err := json.Unmarshal(b, &c); err != nil {
-		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+		// Name the remedy, not just the file: settings are re-settable
+		// (`wyk config set`), so deleting a corrupt file is safe and
+		// beats hand-debugging JSON.
+		return Config{}, fmt.Errorf("parse %s: %w (fix the JSON by hand, or delete the file and re-apply settings with `wyk config set`)", path, err)
 	}
 	if c.Version == 0 {
 		c.Version = CurrentVersion

@@ -367,6 +367,12 @@ func main() {
 			}
 		}
 		fmt.Fprintln(os.Stderr, "wyk:", err)
+		// The TUI needs a terminal; when Bubble Tea can't open one
+		// (CI, cron, a pipe with no controlling tty) point at the
+		// non-TTY entry point instead of leaving a bare open error.
+		if strings.Contains(err.Error(), "TTY") {
+			fmt.Fprintln(os.Stderr, "wyk: the TUI needs a terminal — for scripts/CI use `wyk --probe` (or `wyk inbox -json`)")
+		}
 		exitWith(1)
 	}
 }
@@ -637,21 +643,31 @@ func backgroundUpdateCheck() {
 //   - registry is empty: single-repo against cwd, the v0.1.0
 //     fallback so a user who hasn't run `wyk init` anywhere still
 //     gets a working TUI from inside a bd repo.
+//
+// validateDashC stats a -C directory up front so a bad path produces
+// a clean one-liner instead of bd's raw JSON error blob surfacing
+// through a failed query ("bd query …: { \"error\": … }"). A common
+// typo deserves a one-liner, not a stack of escaped JSON. Shared by
+// the TUI/--probe path (buildSource), the multi-repo subcommands
+// (reposToQuery), and wyk handoff.
+func validateDashC(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("-C directory %q does not exist", dir)
+		}
+		return fmt.Errorf("-C directory %q: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("-C %q is not a directory", dir)
+	}
+	return nil
+}
+
 func buildSource(dir, me string) (tui.Source, []string, string, error) {
 	if dir != "" {
-		// Validate -C up front so a bad path produces a clean message
-		// instead of bd's raw JSON error blob surfacing through a
-		// failed Fetch ("bd query …: { \"error\": … }"). A common
-		// typo deserves a one-liner, not a stack of escaped JSON.
-		info, err := os.Stat(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, nil, "", fmt.Errorf("-C directory %q does not exist", dir)
-			}
-			return nil, nil, "", fmt.Errorf("-C directory %q: %w", dir, err)
-		}
-		if !info.IsDir() {
-			return nil, nil, "", fmt.Errorf("-C %q is not a directory", dir)
+		if err := validateDashC(dir); err != nil {
+			return nil, nil, "", err
 		}
 		c := beads.NewClient()
 		c.Dir = dir
@@ -785,6 +801,15 @@ func runHandoff(args []string) int {
 	if *template {
 		fmt.Print(handoffRunbookTemplate)
 		return 0
+	}
+
+	// Validate -C like the other arg checks below: a typo'd path is a
+	// usage error caught here, not bd argv noise from the first write.
+	if *dir != "" {
+		if err := validateDashC(*dir); err != nil {
+			fmt.Fprintln(os.Stderr, "wyk handoff:", err)
+			return 64
+		}
 	}
 
 	// Resolve the routing identity (flag > $WYK_AGENT_IDENTITY > none).

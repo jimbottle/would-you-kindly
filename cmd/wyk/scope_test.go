@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jimbottle/would-you-kindly/internal/registry"
@@ -108,12 +109,23 @@ func TestReposToQuery_MutualExclusion(t *testing.T) {
 
 func TestReposToQuery_CBypassesRegistry(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	repos, err := reposToQuery("/some/dir", "", false)
+	dir := t.TempDir()
+	repos, err := reposToQuery(dir, "", false)
 	if err != nil {
 		t.Fatalf("reposToQuery: %v", err)
 	}
-	if len(repos) != 1 || repos[0].Path != "/some/dir" || repos[0].Name != "" {
-		t.Fatalf("got %+v, want one un-named repo at /some/dir", repos)
+	if len(repos) != 1 || repos[0].Path != dir || repos[0].Name != "" {
+		t.Fatalf("got %+v, want one un-named repo at %s", repos, dir)
+	}
+}
+
+func TestReposToQuery_CValidatesDir(t *testing.T) {
+	// A typo'd -C must fail with the up-front one-liner, not bd's raw
+	// JSON error blob from the eventual per-repo query.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	_, err := reposToQuery("/no/such/dir", "", false)
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("expected does-not-exist error for bad -C; got %v", err)
 	}
 }
 

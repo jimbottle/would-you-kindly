@@ -69,7 +69,10 @@ func Load(path string) (*Registry, error) {
 	}
 	var r Registry
 	if err := json.Unmarshal(b, &r); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		// Name the remedy, not just the file: the registry is plain
+		// re-creatable JSON (wyk init re-registers repos), so a user
+		// staring at a JSON parse error should know deleting it is safe.
+		return nil, fmt.Errorf("parse %s: %w (fix the JSON by hand, or delete the file and re-run `wyk init` in each repo)", path, err)
 	}
 	if r.Version != 0 && r.Version != CurrentVersion {
 		return nil, fmt.Errorf("registry %s has unknown version %d (this wyk knows %d)",
