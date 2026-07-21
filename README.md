@@ -284,10 +284,12 @@ wyk inbox -json    # structured output for an LLM to ingest
 # >   would-you-kindly-037   P4  Configure production OAuth client
 ```
 
-The canonical query is `label=src:agent AND NOT label=human AND
-status!=closed` — things you (the agent) filed that a human has
-touched but left open. Use this at the start of a session to find
-what you need to act on next.
+The canonical query is `label=src:agent AND NOT label=human AND NOT
+label=agent-handoff AND status!=closed AND status!=blocked` — things
+you (the agent) filed that a human has touched but left open, minus
+another agent's work (`agent-handoff`) and issues waiting on a tracked
+blocker (`blocked` reappears when its status returns to open). Use
+this at the start of a session to find what you need to act on next.
 
 #### Proactive nudge (opt-in Stop hook)
 

@@ -83,7 +83,7 @@ wyk init -scan ~/Projects # register every bd workspace under a tree
 Agent inbox: issues filed with `src:agent` that a human has bounced back.
 
 ```
-wyk inbox [-C <dir>] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]
+wyk inbox [-C <dir>] [-all] [-json] [-compact] [-slim] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]
 ```
 
 Common case:
@@ -96,6 +96,7 @@ wyk inbox -json    # structured, for agent ingestion
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-json` | `false` | emit a JSON {issues, errors} envelope for LLM consumption (errors names any repos that failed, so a partial multi-repo result is labelled not silently truncated) |
 | `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-slim` | `false` | drop the heavy description/notes bodies from each issue (with -json; keeps the lightweight metadata) |
@@ -110,7 +111,7 @@ wyk inbox -json    # structured, for agent ingestion
 Aggregate snapshot across registered repos: counts by status, human-flagged splits, time-to-close.
 
 ```
-wyk stats [-C <dir>] [-json] [-compact] [-repo name]
+wyk stats [-C <dir>] [-all] [-json] [-compact] [-repo name]
 ```
 
 Common case:
@@ -123,6 +124,7 @@ wyk stats -json
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | scope to a single workspace; default is every registered repo |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-json` | `false` | emit a JSON object suitable for scripting |
 | `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (mutually exclusive with -C) |
@@ -250,7 +252,7 @@ wyk update -channel stable  # skip prereleases
 Per-repo rollup of open / human-flagged / recently-closed counts.
 
 ```
-wyk dashboard [-json] [-compact] [-days N] [-repo name] [-priority N]
+wyk dashboard [-all] [-json] [-compact] [-days N] [-repo name] [-priority N]
 ```
 
 Common case:
@@ -265,6 +267,7 @@ wyk dashboard      # per-repo open/human/closed-this-week table
 | `-compact` | `false` | with -json, emit non-indented JSON (smaller; indentation is overhead for an LLM) |
 | `-days` | `7` | window for the closed-recently column (default 7) |
 | `-repo` | `_(empty)_` | restrict the rollup to the registered repo with this name (empty = every registered repo) |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-priority` | `-1` | drop issues below priority N before tallying counts (lower number = higher priority; -1 disables — does NOT hide empty repo rows) |
 
 ## `wyk export`
@@ -272,7 +275,7 @@ wyk dashboard      # per-repo open/human/closed-this-week table
 JSON dump of every registered repo's open issue list + ready IDs (-closed for full history).
 
 ```
-wyk export [-since 24h] [-compact] [-slim] [-closed] [-repo name]
+wyk export [-all] [-since 24h] [-compact] [-slim] [-closed] [-repo name]
 ```
 
 Common case:
@@ -288,6 +291,7 @@ wyk export > wyk-backup.json
 | `-slim` | `false` | drop the heavy description/notes bodies from each issue (keeps id/title/status/priority/labels); ~75%+ smaller for an LLM scanning the backlog |
 | `-closed` | `false` | include closed issues (default: open issues only — the actionable set) |
 | `-repo` | `_(empty)_` | restrict the dump to the registered repo with this name (empty = full registry) |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 
 ## `wyk import`
 
@@ -314,7 +318,7 @@ wyk import -file wyk-backup.json -dry-run   # preview the reconcile
 Recently-touched issues across registered repos (chronological merged stream).
 
 ```
-wyk activity [-since 24h] [-json] [-compact] [-priority N] [-repo name] [-status open|closed|all] [-limit N]
+wyk activity [-all] [-since 24h] [-json] [-compact] [-priority N] [-repo name] [-status open|closed|all] [-limit N]
 ```
 
 Common case:
@@ -332,13 +336,14 @@ wyk activity -since 24h   # what changed across repos today?
 | `-repo` | `_(empty)_` | restrict the stream to the registered repo with this name (empty = every registered repo) |
 | `-status` | `all` | filter rows by status: open / closed / all |
 | `-limit` | `-1` | cap the stream at N rows (after every other filter; -1 disables) |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 
 ## `wyk depgraph`
 
 Cross-repo dependency graph between bd issues: text tree (default), Graphviz DOT, or {nodes,edges} JSON.
 
 ```
-wyk depgraph [-dot | -json] [-compact] [-repo name] [-priority N] [-closed]
+wyk depgraph [-all] [-dot | -json] [-compact] [-repo name] [-priority N] [-closed]
 ```
 
 Common case:
@@ -356,6 +361,7 @@ wyk depgraph -dot | dot -Tsvg > deps.svg
 | `-repo` | `_(empty)_` | restrict to the registered repo with this name (empty = full registry) |
 | `-priority` | `-1` | only include issues at this priority or higher (0=critical; -1=all); the cap is per-node, so an edge to a lower-priority neighbor is pruned and a high-priority issue with only lower-priority links can drop out |
 | `-closed` | `false` | include closed issues (default omits them) |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
 
 ## `wyk skills`
 
