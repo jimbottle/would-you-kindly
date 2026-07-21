@@ -866,18 +866,26 @@ func removeHookForEvent(root map[string]any, event, cmd string) bool {
 // the link's target instead of replacing the link with a regular file —
 // including a DANGLING link, whose target is created just as a
 // write-through would have — and an existing file keeps its own mode;
-// perm applies only when the file is being created.
+// perm applies only when the file is being created. The create-parent-
+// dirs-on-demand behavior applies only to the path as given: a dangling
+// link pointing into a missing directory fails like os.WriteFile's
+// ENOENT would, rather than silently materializing directory trees the
+// link's author never created.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	path, err := resolveWriteTarget(path)
+	resolved, err := resolveWriteTarget(path)
 	if err != nil {
 		return err
 	}
+	viaLink := resolved != path
+	path = resolved
 	if info, err := os.Stat(path); err == nil {
 		perm = info.Mode().Perm()
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	if !viaLink {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
 	if err != nil {
@@ -913,6 +921,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 // would have — instead of erroring and letting the rename clobber the
 // link itself.
 func resolveWriteTarget(path string) (string, error) {
+	orig := path
 	// 40 hops matches the traversal limit kernels use for symlink
 	// chains; a longer chain is a loop in practice.
 	for range 40 {
@@ -935,7 +944,10 @@ func resolveWriteTarget(path string) (string, error) {
 		}
 		path = target
 	}
-	return "", fmt.Errorf("too many levels of symbolic links resolving %s", path)
+	// Name the path the caller asked about, not the final hop — a
+	// chain of relative targets can wander to a joined path the user
+	// never wrote, which would make the loop hard to locate.
+	return "", fmt.Errorf("too many levels of symbolic links resolving %s", orig)
 }
 
 // settingsHasHookForEvent reports whether any hook command under the given

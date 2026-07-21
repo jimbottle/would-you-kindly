@@ -321,3 +321,64 @@ func TestWriteFileAtomic_PreservesSymlinksAndModes(t *testing.T) {
 		}
 	})
 }
+
+// TestResolveWriteTarget_ChainsAndLoops covers the two paths the
+// Lstat/Readlink walk adds beyond EvalSymlinks: multi-hop chains of
+// relative targets, and the loop cap (which must error naming the
+// path the caller asked about, not wherever the chain wandered).
+func TestResolveWriteTarget_ChainsAndLoops(t *testing.T) {
+	t.Run("multi-hop chain writes the final target", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Symlink("mid.md", filepath.Join(dir, "CLAUDE.md")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("AGENTS.md", filepath.Join(dir, "mid.md")); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFileAtomic(filepath.Join(dir, "CLAUDE.md"), []byte("body\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"CLAUDE.md", "mid.md"} {
+			if fi, err := os.Lstat(filepath.Join(dir, name)); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("%s is no longer a symlink (err=%v)", name, err)
+			}
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+		if err != nil || string(got) != "body\n" {
+			t.Errorf("AGENTS.md content = %q, %v; want the written body", got, err)
+		}
+	})
+
+	t.Run("self-loop errors naming the asked-about path", func(t *testing.T) {
+		dir := t.TempDir()
+		link := filepath.Join(dir, "CLAUDE.md")
+		if err := os.Symlink("CLAUDE.md", link); err != nil {
+			t.Fatal(err)
+		}
+		_, err := resolveWriteTarget(link)
+		if err == nil {
+			t.Fatal("self-loop should error, not spin or clobber")
+		}
+		if !strings.Contains(err.Error(), "too many levels of symbolic links") ||
+			!strings.Contains(err.Error(), link) {
+			t.Errorf("loop error should name the original path %q; got %q", link, err)
+		}
+	})
+
+	t.Run("dangling link into a missing dir fails like os.WriteFile", func(t *testing.T) {
+		// MkdirAll-on-demand applies to the path as given, not to a
+		// resolved link target: a mis-pointed link must not silently
+		// materialize directory trees.
+		dir := t.TempDir()
+		link := filepath.Join(dir, "CLAUDE.md")
+		if err := os.Symlink(filepath.Join("missing-dir", "AGENTS.md"), link); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFileAtomic(link, []byte("body\n"), 0o644); err == nil {
+			t.Fatal("write through a link into a missing dir should fail, got nil")
+		}
+		if _, err := os.Stat(filepath.Join(dir, "missing-dir")); !os.IsNotExist(err) {
+			t.Errorf("missing-dir should not have been created (stat err=%v)", err)
+		}
+	})
+}
