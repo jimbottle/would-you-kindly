@@ -205,6 +205,32 @@ func TestWriteSurfacesNoWorkspaceAsTypedErr(t *testing.T) {
 	}
 }
 
+func TestNoWorkspacePhrasings(t *testing.T) {
+	// bd phrases the not-a-workspace error differently depending on
+	// how it was invoked: with -C it says "no beads project found"
+	// (JSON on stderr), but resolving from the bare cwd (bd 1.0.4)
+	// it prints plain text "Error: no beads database found" plus a
+	// Hint block. Missing the latter made `wyk --probe` exit 1 with
+	// the raw error instead of the documented exit 2.
+	phrasings := []string{
+		`{"error":"no beads project found","schema_version":1}`,
+		"Error: no beads database found\nHint: run 'bd where' to inspect the resolved workspace, or 'bd init' to create a new database",
+		"no .beads directory found",
+		"could not find a .beads directory",
+	}
+	for _, out := range phrasings {
+		r := &fakeRunner{
+			stderr: []byte(out),
+			err:    errors.New("exit status 1"),
+		}
+		c := newTestClient(r)
+		_, err := c.Query(context.Background(), "status=open")
+		if !errors.Is(err, ErrNoWorkspace) {
+			t.Errorf("stderr %q: expected ErrNoWorkspace, got %v", out, err)
+		}
+	}
+}
+
 // blockingRunner waits for ctx to fire, then returns the
 // SIGKILL-shaped error string exec.CommandContext would produce
 // when it kills its child. Lets the run-timeout test exercise the

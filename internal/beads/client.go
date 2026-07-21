@@ -492,6 +492,7 @@ func execRunner(ctx context.Context, binary string, args []string, stdin io.Read
 func isNoWorkspaceErr(s string) bool {
 	for _, marker := range []string{
 		"no beads project found",
+		"no beads database found",
 		"no .beads",
 		"no workspace",
 		"could not find a .beads",
