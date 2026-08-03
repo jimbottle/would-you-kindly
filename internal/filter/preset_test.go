@@ -33,12 +33,6 @@ func TestQueryWithClosed(t *testing.T) {
 	}
 }
 
-func TestQueryDelegatesToWithClosed(t *testing.T) {
-	if Query(PresetHuman, "ev") != QueryWithClosed(PresetHuman, "ev", false) {
-		t.Errorf("Query should delegate to QueryWithClosed(.., false)")
-	}
-}
-
 func TestIsPreset(t *testing.T) {
 	cases := map[string]bool{
 		"all":     true,

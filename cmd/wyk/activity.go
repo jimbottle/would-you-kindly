@@ -25,8 +25,9 @@ import (
 //
 // Exit codes:
 //
-//	0  activity printed
-//	1  registry / per-repo I/O error (partial output still emitted)
+//	0  activity printed — including a PARTIAL stream, where some repos
+//	   failed and the failures are surfaced alongside the events
+//	1  registry error, or a total failure: every registered repo errored
 //	64 usage error
 func runActivity(args []string) int {
 	fs := flag.NewFlagSet("activity", flag.ContinueOnError)
@@ -45,10 +46,10 @@ func runActivity(args []string) int {
 	limit := fs.Int("limit", -1, "cap the stream at N rows (after every other filter; -1 disables)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk activity [-since 24h] [-all] [-json] [-priority N] [-repo name] [-status open|closed|all] [-limit N]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("activity"))
 		return 64
 	}
 	switch *status {

@@ -14,7 +14,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   option. The path may be the workspace root or any directory inside
   it; the nearest ancestor holding `.beads/` is what gets registered.
 
+### Changed
+
+- **The `O` prompt is now labelled "assignee", not "owner"** — it writes
+  bd's `assignee` field, while "owner" in the TUI means the Owner
+  column's HUMAN / AGENT badge (a different thing entirely, driven by
+  labels). The prompt, its bulk form, the cancel banner, and the keymap
+  help all say assignee now.
+
 ### Fixed
+
+- **Low-severity drift batch from the public-release review**
+  (would-you-kindly-6gjb). User-visible pieces: `wyk init -uninstall
+  -skills` (and the `-scan` / `-fix-foreign-hooks` modes) no longer
+  silently ignore `-skills`; `-h` exits 0 rather than 64 on every
+  subcommand, matching the documented convention; the bulk type-change
+  banner reads "retyped N rows" instead of "type N rows"; the text
+  cursor blinks in every prompt, not just the filter one; `:filter list`
+  and `:filter remove` are advertised in the palette placeholder and the
+  unknown-command hint; every subcommand rejects stray positional
+  arguments; and `wyk init -scan` reports the paths it couldn't read
+  instead of returning "0 repos found" as if the tree were clean.
+  Internally: the per-repo init flag list, the CLI usage strings, and the
+  set of textinput-driven TUI modes each collapsed from several
+  hand-copied copies to one source, and three new guards pin them —
+  cliSubcommandDocs against the real FlagSets, `bulkVerbs` against the
+  real bulk actions, and status writes through `setStatus` so a stale
+  flash-clear can't wipe a fresh banner.
 
 - **An unregistered repo no longer silently swallows handoffs.** Every
   multi-repo view (`wyk inbox`, `wyk dashboard`, `wyk stats`, the TUI)

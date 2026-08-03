@@ -30,6 +30,10 @@ func runUpdate(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print the install command without executing it")
 	channel := fs.String("channel", "any", "release channel: `any` (include prereleases — default) or `stable` (skip prereleases). When omitted, the most recently used channel is reused so a stable-pinned user clicking the TUI's nudge doesn't silently jump back to prereleases.")
 	if err := fs.Parse(args); err != nil {
+		return flagParseExit(err)
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("update"))
 		return 64
 	}
 	// If the user didn't pass -channel explicitly, fall back to

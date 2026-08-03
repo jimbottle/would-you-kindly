@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -79,13 +78,10 @@ func runInbox(args []string) int {
 	strict := fs.Bool("strict", false, "with -identity, show ONLY work routed to that identity; default also includes un-routed collective work so it isn't stranded")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk inbox [-C <dir>] [-all] [-json] [-priority N] [-repo name] [-limit N] [-identity name] [-strict]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("inbox"))
 		return 64
 	}
 

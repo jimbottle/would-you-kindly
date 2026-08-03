@@ -38,10 +38,10 @@ func runDashboard(args []string) int {
 	maxPriority := fs.Int("priority", -1, "drop issues below priority N before tallying counts (lower number = higher priority; -1 disables — does NOT hide empty repo rows)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk dashboard [-all] [-json] [-days N] [-repo name] [-priority N]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("dashboard"))
 		return 64
 	}
 	if *days <= 0 {

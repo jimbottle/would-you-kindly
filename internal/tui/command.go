@@ -27,7 +27,7 @@ func (m Model) beginCommand() (tea.Model, tea.Cmd) {
 	m.mode = modeCommand
 	m.input.SetValue("")
 	m.input.Prompt = ":"
-	m.input.Placeholder = "refresh / preset <name> / sort <axis> / reverse / filter save <name>"
+	m.input.Placeholder = "refresh / preset <name> / sort <axis> / reverse / filter save|list|remove"
 	m.input.Focus()
 	return m, textinput.Blink
 }
@@ -135,7 +135,7 @@ func (m Model) dispatchCommand(raw string) (tea.Model, tea.Cmd) {
 		}
 		return m.dispatchPaletteLabel(rest)
 	default:
-		m.setStatus(":" + name + ": unknown command. Known: refresh, preset, sort, reverse, filter save <name>, assign, priority <0-4>, label, bd <args>, help")
+		m.setStatus(":" + name + ": unknown command. Known: refresh, preset, sort, reverse, filter <save <name>|list|remove <name>>, assign, priority <0-4>, label, bd <args>, help")
 		return m, flashClearCmd(m.statusGen)
 	}
 }
@@ -475,10 +475,9 @@ func (m Model) viewOutput() string {
 	return b.String()
 }
 
-// dispatchFilterCommand handles the `:filter <sub> <args>` family.
-// Only `save <name>` is supported today; the function exists as a
-// branch point so a future `:filter clear`, `:filter list`, etc.
-// don't bloat the main dispatchCommand switch.
+// dispatchFilterCommand handles the `:filter <sub> <args>` family:
+// `save <name>`, `list`, and `remove <name>`. Split out of
+// dispatchCommand's switch so the family can grow without bloating it.
 func (m Model) dispatchFilterCommand(rest string) (tea.Model, tea.Cmd) {
 	sub, args, _ := strings.Cut(rest, " ")
 	args = strings.TrimSpace(args)

@@ -2926,7 +2926,7 @@ func TestHighlightRunes_StylesMatchedRunesOnly(t *testing.T) {
 	// output contains those exact rendered bytes — same logic
 	// the function uses, so the test pins the per-rune
 	// segmentation regardless of color profile.
-	got := highlightRunes("hello", []int{0, 4}, fuzzyMatchStyle)
+	got := highlightRunesWithRest("hello", []int{0, 4}, fuzzyMatchStyle, nil)
 	wantH := fuzzyMatchStyle.Render("h")
 	wantO := fuzzyMatchStyle.Render("o")
 	if !strings.Contains(got, wantH) {
@@ -3009,7 +3009,7 @@ func TestRenderMatchCell_HighlightsAndPreservesValue(t *testing.T) {
 func TestHighlightRunes_OutOfRangeIndicesDropped(t *testing.T) {
 	// Match indices past the end of s (e.g., truncated title) are
 	// silently skipped — no panic, no trailing ANSI noise.
-	got := highlightRunes("hi", []int{0, 5}, fuzzyMatchStyle)
+	got := highlightRunesWithRest("hi", []int{0, 5}, fuzzyMatchStyle, nil)
 	if !strings.Contains(got, "i") {
 		t.Errorf("expected the unmatched tail to render; got %q", got)
 	}

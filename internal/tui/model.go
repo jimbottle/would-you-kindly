@@ -1441,6 +1441,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// fired) carry an older gen and are dropped — only the
 		// active gen actually clears.
 		if msg.gen == m.statusGen {
+			// Direct write, NOT setStatus: this IS the clear the
+			// generation counter guards. Bumping the gen here would
+			// invalidate nothing and cost an ensureCursorVisible on
+			// every expiring banner.
 			m.status = ""
 		}
 		return m, nil
@@ -1589,15 +1593,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeLabel:
 			return m.updateLabel(msg)
 		default:
+			// Direct write: clearing a banner on the next keypress has
+			// no stale-flash to lose, and this is the hot key path.
 			m.status = ""
 			return m.updateList(msg)
 		}
 	}
 
 	// Forward any other message (e.g. textinput's cursor-blink ticks)
-	// to the focused textinput while the filter prompt is open. Without
-	// this the cursor stops blinking after the initial Blink command.
-	if m.mode == modeFilter {
+	// to the focused textinput while ANY prompt using it is open.
+	// Without this the cursor stops blinking after the initial Blink
+	// command — and this used to test modeFilter alone, so every other
+	// prompt (quick-add, defer, command, assign, label) had a dead
+	// cursor (would-you-kindly-6gjb).
+	if m.usesTextInput() {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
@@ -1779,7 +1788,7 @@ func (m Model) jumpToHuman(dir int) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	m.status = "no human-flagged issues in this view"
+	m.setStatus("no human-flagged issues in this view")
 	return m, nil
 }
 
@@ -1815,8 +1824,7 @@ func (m Model) mutator() Mutator {
 // has moved on.
 func (m Model) beginClose() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
-		m.status = "read-only mode (no Mutator wired up)"
-		m.ensureCursorVisible()
+		m.setStatus("read-only mode (no Mutator wired up)")
 		return m, nil
 	}
 	if len(m.visible) == 0 {
@@ -1864,7 +1872,7 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// absent from the filtered list, so issueExists would
 		// false-negative — let bd surface a genuinely-gone ID instead.
 		if !fromDetail && !m.issueExists(target.ID) {
-			m.status = "close cancelled: " + target.ID + " was removed from the workspace by a refresh"
+			m.setStatus("close cancelled: " + target.ID + " was removed from the workspace by a refresh")
 			return m, nil
 		}
 		m.lastAction = repeatableAction{kind: "close"}
@@ -1874,7 +1882,7 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// any other key cancels — back to wherever the prompt was opened
 	m.mode = ret
-	m.status = "close cancelled"
+	m.setStatus("close cancelled")
 	return m, nil
 }
 
@@ -1901,7 +1909,7 @@ func (m Model) issueExists(id string) bool {
 // inconsistent across mixed-state selections.
 func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
-		m.status = "read-only mode (no Mutator wired up)"
+		m.setStatus("read-only mode (no Mutator wired up)")
 		return m, nil
 	}
 	if len(m.visible) == 0 {
@@ -1936,8 +1944,7 @@ func (m Model) toggleHuman() (tea.Model, tea.Cmd) {
 // workspace if no row is selected). The issue is labeled src:human.
 func (m Model) beginQuickAdd() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
-		m.status = "read-only mode (no Mutator wired up)"
-		m.ensureCursorVisible()
+		m.setStatus("read-only mode (no Mutator wired up)")
 		return m, nil
 	}
 	m.mode = modeQuickAdd
@@ -1976,7 +1983,7 @@ func (m Model) updateQuickAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		m.restoreFilterPrompt()
 		if title == "" {
-			m.status = "quick-add cancelled (empty title)"
+			m.setStatus("quick-add cancelled (empty title)")
 			return m, nil
 		}
 		// Refuse to file an orphan task. wyk's working assumption is
@@ -1986,7 +1993,7 @@ func (m Model) updateQuickAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// names the fix so a user surprised by the refusal knows
 		// what to do.
 		if m.me == "" {
-			m.status = "quick-add cancelled: no owner. Re-launch with -me=you@example.com (or set git user.email / $USER)"
+			m.setStatus("quick-add cancelled: no owner. Re-launch with -me=you@example.com (or set git user.email / $USER)")
 			return m, nil
 		}
 		assignee := m.me
@@ -2014,8 +2021,7 @@ func runQuickAdd(fn func(ctx context.Context) (string, error)) tea.Cmd {
 // see Model.pendingTarget.
 func (m Model) beginNote() (tea.Model, tea.Cmd) {
 	if m.mutator() == nil {
-		m.status = "read-only mode (no Mutator wired up)"
-		m.ensureCursorVisible()
+		m.setStatus("read-only mode (no Mutator wired up)")
 		return m, nil
 	}
 	if len(m.visible) == 0 {
@@ -2058,13 +2064,13 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.promptReturn = modeList
 		m.noteArea.Blur()
 		if text == "" {
-			m.status = "note cancelled (empty)"
+			m.setStatus("note cancelled (empty)")
 			return m, nil
 		}
 		// Detail path trusts its snapshot (see updateConfirmClose);
 		// the list path guards against a refetch removing the row.
 		if !fromDetail && !m.issueExists(target.ID) {
-			m.status = "note cancelled: " + target.ID + " was removed from the workspace by a refresh"
+			m.setStatus("note cancelled: " + target.ID + " was removed from the workspace by a refresh")
 			return m, nil
 		}
 		// Optimistically append the note to the detail body so it
@@ -2297,6 +2303,9 @@ type bulkWriteMsg struct {
 // for the status banner. A naive `action + "ed"` produced
 // "closeed" and "defered"; this explicit map matches what
 // handleWriteResult uses for the single-target path.
+// Every action passed to runBulkWrite needs an entry: a miss falls
+// back to the raw action name, so the type bulk-write's banner read
+// "type 3 rows" (would-you-kindly-6gjb).
 var bulkVerbs = map[string]string{
 	"close":    "closed",
 	"flag":     "flagged",
@@ -2304,6 +2313,24 @@ var bulkVerbs = map[string]string{
 	"priority": "reprioritized",
 	"assign":   "reassigned",
 	"label":    "labeled",
+	"type":     "retyped",
+}
+
+// usesTextInput reports whether the current mode renders the shared
+// single-line textinput prompt (m.input) — every prompt mode except
+// modeNote, which uses the multi-line noteArea.
+//
+// Three behaviours must agree on this set: viewList renders the prompt,
+// bodyHeight reserves its two lines of chrome, and the key-handler
+// fallthrough forwards cursor-blink ticks to it. They were three
+// hand-copied lists, and the blink one had only modeFilter — so the
+// cursor was frozen in every other prompt (would-you-kindly-6gjb).
+func (m Model) usesTextInput() bool {
+	switch m.mode {
+	case modeFilter, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
+		return true
+	}
+	return false
 }
 
 // rowIndexByKey returns the index of the issue in m.all matching key
@@ -2823,7 +2850,7 @@ func (m Model) updateColumns(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "o", "q":
 		if err := m.persistColumns(); err != nil {
-			m.status = "ui.json save failed: " + err.Error()
+			m.setStatus("ui.json save failed: " + err.Error())
 		}
 		m.mode = modeList
 		return m, nil
@@ -3804,13 +3831,13 @@ func (m Model) beginAssign() (tea.Model, tea.Cmd) {
 	m.mode = modeAssign
 	if len(m.marked) > 0 {
 		m.input.SetValue("")
-		m.input.Prompt = fmt.Sprintf("owner for %d rows ▸ ", len(m.marked))
+		m.input.Prompt = fmt.Sprintf("assignee for %d rows ▸ ", len(m.marked))
 	} else {
 		// Seed with the assignee — the field the prompt submits via
 		// SetAssignee. Seeding the Owner (who filed) would make the
 		// "just confirm" flow overwrite the assignee with the filer.
 		m.input.SetValue(m.pendingTarget.Assignee)
-		m.input.Prompt = "owner ▸ "
+		m.input.Prompt = "assignee ▸ "
 	}
 	m.input.Placeholder = "ev@example.com (empty = clear)"
 	m.input.Focus()
@@ -3848,7 +3875,7 @@ func (m Model) updateAssign(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 		if !m.issueExists(target.ID) {
-			m.setStatus("owner change cancelled: " + target.ID + " was removed from the workspace by a refresh")
+			m.setStatus("assignee change cancelled: " + target.ID + " was removed from the workspace by a refresh")
 			return m, flashClearCmd(m.statusGen)
 		}
 		m.lastAction = repeatableAction{kind: "assign", arg: owner}
@@ -4226,14 +4253,14 @@ func (m Model) viewList() string {
 	}
 
 	// modal prompts live just above the status bar
-	switch m.mode {
-	case modeFilter, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
+	switch {
+	case m.usesTextInput():
 		b.WriteString("\n")
 		b.WriteString(m.input.View())
-	case modeNote:
+	case m.mode == modeNote:
 		b.WriteString("\n")
 		b.WriteString(m.noteArea.View())
-	case modeConfirmClose:
+	case m.mode == modeConfirmClose:
 		// Render the captured ID, not the cursor's current target —
 		// a refetch may have shifted things since the prompt opened.
 		// Bulk path: pendingTarget.ID is "" and the prompt counts
@@ -4772,15 +4799,10 @@ func renderMatchCell(value string, width int, query string, base lipgloss.Style)
 	return highlightRunesWithRest(val, substringRuneIdxs(val, query), fuzzyMatchStyle, &rest)
 }
 
-// highlightRunes returns s with the runes at the given rune
-// indices wrapped in style.Render. Indices past the end of s
-// (e.g. matches in a truncated title) are silently dropped.
-func highlightRunes(s string, idxs []int, style lipgloss.Style) string {
-	return highlightRunesWithRest(s, idxs, style, nil)
-}
-
-// highlightRunesWithRest is highlightRunes plus an optional
-// "rest" style applied to runs of non-highlighted runes. Used by
+// highlightRunesWithRest returns s with the runes at the given rune
+// indices wrapped in style.Render. Indices past the end of s (e.g.
+// matches in a truncated title) are silently dropped. It also takes an
+// optional "rest" style applied to runs of non-highlighted runes. Used by
 // renderRow for closed rows with active fuzzy matches: every
 // embedded fuzzy SGR emits a \x1b[0m reset on its trailing edge,
 // which would clear an outer dim envelope and leave the title
@@ -5536,21 +5558,21 @@ func (m Model) chromeExtra() int {
 	if m.updateNudge != "" {
 		n++ // update-available nudge
 	}
-	switch m.mode {
+	switch {
 	// Every mode that renders a textinput prompt at the bottom of
-	// viewList (see line ~2972) costs 2 lines of chrome — a blank
-	// separator + the input itself. Keeping this list in sync with
-	// the viewList switch is the only way bodyHeight stays
-	// accurate; an under-count pushes the title/last rows past the
-	// terminal edge while a prompt is open.
-	case modeFilter, modeQuickAdd, modeDefer, modeCommand, modeAssign, modeLabel:
+	// viewList costs 2 lines of chrome — a blank separator + the
+	// input itself. Both that switch and this one now read the set
+	// from usesTextInput, so they cannot drift; an under-count here
+	// pushes the title/last rows past the terminal edge while a
+	// prompt is open.
+	case m.usesTextInput():
 		n += 2 // blank + single-line textinput
-	case modeNote:
+	case m.mode == modeNote:
 		// blank separator + textarea body height. noteArea
 		// height is fixed (6 by default) but read it from the
 		// component so a future SetHeight call stays in sync.
 		n += 1 + m.noteArea.Height()
-	case modeConfirmClose:
+	case m.mode == modeConfirmClose:
 		if m.pendingTarget.ID != "" || len(m.marked) > 0 {
 			n += 2 // blank + confirm prompt
 		}

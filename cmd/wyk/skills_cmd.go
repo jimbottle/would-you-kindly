@@ -226,6 +226,10 @@ func runSkillsList(args []string) int {
 	userFlag := fs.Bool("user", false, "show state at the user target (~/.claude/skills) — the default")
 	projectFlag := fs.Bool("project", false, "show state at the project target (./.claude/skills)")
 	if err := fs.Parse(args); err != nil {
+		return flagParseExit(err)
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("skills list"))
 		return 64
 	}
 	dir, label, code := resolveSkillsTarget(*userFlag, *projectFlag)
@@ -272,6 +276,10 @@ func runSkillsInstall(args []string, stdin io.Reader) int {
 	dryRun := fs.Bool("dry-run", false, "print what would be written without touching disk")
 	yes := fs.Bool("y", false, "skip the confirmation prompt")
 	if err := fs.Parse(args); err != nil {
+		return flagParseExit(err)
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("skills install"))
 		return 64
 	}
 	dir, label, code := resolveSkillsTarget(*userFlag, *projectFlag)
@@ -368,6 +376,10 @@ func runSkillsUninstall(args []string, stdin io.Reader) int {
 	dryRun := fs.Bool("dry-run", false, "print what would be removed without touching disk")
 	yes := fs.Bool("y", false, "skip the confirmation prompt")
 	if err := fs.Parse(args); err != nil {
+		return flagParseExit(err)
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("skills uninstall"))
 		return 64
 	}
 	dir, label, code := resolveSkillsTarget(*userFlag, *projectFlag)
@@ -465,18 +477,7 @@ func skillNames(all []skills.Skill) string {
 	for i, s := range all {
 		names[i] = s.Name
 	}
-	return joinComma(names)
-}
-
-func joinComma(s []string) string {
-	out := ""
-	for i, v := range s {
-		if i > 0 {
-			out += ", "
-		}
-		out += v
-	}
-	return out
+	return strings.Join(names, ", ")
 }
 
 // writeSkillFile writes one skill's SKILL.md under dir/<name>/,

@@ -63,35 +63,32 @@ func NextPreset(p Preset) Preset {
 	return presetOrder[0]
 }
 
-// Query returns the bd query expression that materialises a preset,
-// or the empty string for presets that have no `bd query` equivalent.
-// `me` is the current user, used by PresetMine; empty `me` falls back
-// to all open issues, since "mine" with no identity is moot.
+// QueryWithClosed returns the bd query expression that materialises a
+// preset, or the empty string for presets that have no `bd query`
+// equivalent. `me` is the current user, used by PresetMine; empty `me`
+// falls back to all open issues, since "mine" with no identity is moot.
+//
+// When includeClosed is true the `status!=closed` exclusion is dropped
+// so the caller sees closed issues alongside open ones — the C-key
+// toggle in the TUI surfaces this.
 //
 // Two presets intentionally return "":
 //
 //   - PresetReady has blocker-aware semantics only `bd ready` can
 //     reproduce; a query approximation would silently drop the
-//     blocked-by-open-deps exclusion.
+//     blocked-by-open-deps exclusion. It is unaffected by
+//     includeClosed (ready by definition excludes closed, and bd ready
+//     has no --all equivalent).
 //   - PresetAll wants closed issues included; `bd list --all` is the
-//     canonical source, and `status!=closed` would drop them.
+//     canonical source, and `status!=closed` would drop them. It
+//     returns "" regardless of includeClosed — callers map it to bd
+//     list or bd list --all based on the same flag.
 //
 // Sources are expected to special-case these two presets and call
 // the dedicated bd subcommands. Returning "" instead of a wrong-but-
 // plausible query means a Source that forgets the special case will
 // fail loudly (bd rejects an empty query) rather than quietly return
 // the wrong set.
-func Query(p Preset, me string) string {
-	return QueryWithClosed(p, me, false)
-}
-
-// QueryWithClosed is Query with an explicit `includeClosed` flag.
-// When true, the `status!=closed` exclusion is dropped so the
-// caller sees closed issues alongside open ones — the C-key
-// toggle in the TUI surfaces this. PresetAll still returns the
-// empty string (callers map it to bd list or bd list --all based
-// on the same flag); PresetReady is unaffected (ready by
-// definition excludes closed, and bd ready has no --all equivalent).
 func QueryWithClosed(p Preset, me string, includeClosed bool) string {
 	switch p {
 	case PresetHuman:

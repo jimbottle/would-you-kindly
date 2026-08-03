@@ -234,7 +234,7 @@ func defaultKeyMap() keyMap {
 		PriorityUp:      key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "↑prio")),
 		TypeCycle:       key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "cycle type")),
 		PriorityDown:    key.NewBinding(key.WithKeys("-"), key.WithHelp("-", "↓prio")),
-		AssignOwner:     key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "owner")),
+		AssignOwner:     key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "assignee")),
 		Label:           key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "label")),
 		Editor:          key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Repeat:          key.NewBinding(key.WithKeys("."), key.WithHelp(".", "repeat last")),

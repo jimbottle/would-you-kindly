@@ -47,10 +47,10 @@ func runDepgraph(args []string) int {
 	includeClosed := fs.Bool("closed", false, "include closed issues (default omits them)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk depgraph [-all] [-dot | -json] [-repo name] [-priority N] [-closed]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("depgraph"))
 		return 64
 	}
 	if *asDOT && *asJSON {

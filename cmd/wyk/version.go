@@ -28,10 +28,10 @@ func runVersion(args []string) int {
 	check := fs.Bool("check", false, "poll the release feed and exit 0 (current) / 1 (newer available) / 2 (network failure)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk version [--check]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("version"))
 		return 64
 	}
 	if !*check {

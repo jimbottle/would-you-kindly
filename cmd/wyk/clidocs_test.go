@@ -168,3 +168,71 @@ func TestSubcommandHelp_LeadsWithSynopsis(t *testing.T) {
 		})
 	}
 }
+
+// flagNamesInHelp extracts the flag names PrintDefaults emitted in a
+// subcommand's -h output. PrintDefaults writes one "  -name ..." line
+// per registered flag, so the help text is a faithful, refactor-free
+// view of the FlagSet's contents.
+func flagNamesInHelp(help string) map[string]bool {
+	names := map[string]bool{}
+	for _, line := range strings.Split(help, "\n") {
+		// Flag lines start with exactly two spaces then a dash; the
+		// wrapped description lines below them are indented further.
+		if !strings.HasPrefix(line, "  -") || strings.HasPrefix(line, "   ") {
+			continue
+		}
+		field := strings.Fields(strings.TrimSpace(line))[0]
+		names[strings.TrimLeft(field, "-")] = true
+	}
+	return names
+}
+
+// TestCLIDocsFlagsMatchFlagSets is the table↔FlagSet parity guard.
+//
+// CI's docs-check proves the generated cli.md matches cliSubcommandDocs,
+// but it is blind in the direction that actually bites: a flag
+// registered on a FlagSet and never added to the table is invisible to
+// it, which is exactly how `-all` shipped undocumented. This closes the
+// loop from the other side, without the refactor the original note
+// assumed — PrintDefaults already renders every registered flag, so the
+// swept -h output IS the FlagSet's contents.
+//
+// Nested dispatchers (registry list, skills install, …) resolve to their
+// parent's doc entry, whose flag list is the union across subforms, so
+// the registered names are unioned per doc entry before comparing.
+func TestCLIDocsFlagsMatchFlagSets(t *testing.T) {
+	registered := map[string]map[string]bool{} // doc name -> flag names
+	for _, c := range sweptFlagSets {
+		doc := findCLIDoc(c.name)
+		if doc == nil {
+			continue // the internal `hook` dispatcher has no doc entry
+		}
+		stdout, stderr := captureOutErr(t, func() { c.run(c.args) })
+		if registered[doc.Name] == nil {
+			registered[doc.Name] = map[string]bool{}
+		}
+		for name := range flagNamesInHelp(stdout + "\n" + stderr) {
+			registered[doc.Name][name] = true
+		}
+	}
+
+	for docName, got := range registered {
+		doc := findCLIDoc(docName)
+		documented := map[string]bool{}
+		for _, f := range doc.Flags {
+			// Docs spell some flags with a double dash (--check); the
+			// FlagSet prints one. Compare on the bare name.
+			documented[strings.TrimLeft(f.Name, "-")] = true
+		}
+		for name := range got {
+			if !documented[name] {
+				t.Errorf("wyk %s: -%s is registered on the FlagSet but missing from its cliSubcommandDocs entry (so it never reaches `wyk help` or cli.md)", docName, name)
+			}
+		}
+		for name := range documented {
+			if !got[name] {
+				t.Errorf("wyk %s: -%s is documented in cliSubcommandDocs but not registered on any of its FlagSets", docName, name)
+			}
+		}
+	}
+}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -41,13 +40,10 @@ func runStats(args []string) int {
 	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk stats [-C <dir>] [-all] [-json] [-repo name]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("stats"))
 		return 64
 	}
 

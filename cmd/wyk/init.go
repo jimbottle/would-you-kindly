@@ -107,6 +107,43 @@ Flags:
 //	1   filesystem, git, or bd error
 //	2   .git directory missing — not a git repo
 //	64  usage error or refusal to overwrite a foreign hook without -force
+//
+// perRepoInitFlags names the flags that only mean something on the
+// per-repo install path, so every alternate mode (-scan, -uninstall,
+// -fix-foreign-hooks) must reject all of them.
+//
+// It exists as ONE list because it used to be three hand-copied switch
+// statements, and `-skills` — added later — was missed by all three:
+// `wyk init -uninstall -skills` parsed fine and silently did nothing
+// with the flag (would-you-kindly-6gjb). A new per-repo flag now has a
+// single place to be registered.
+var perRepoInitFlags = []string{
+	"force", "chain", "skip-bd-init", "skip-register", "skip-claude-md", "skills",
+}
+
+// setIncompatibleFlags returns the "-name" forms of the per-repo-only
+// flags (plus any alsoBad, for the alternate modes that exclude each
+// other) that the user ACTUALLY set. fs.Visit walks only the flags
+// present on the command line, so a flag left at its default never
+// triggers the error, and it walks them lexicographically, so the
+// message is deterministic.
+func setIncompatibleFlags(fs *flag.FlagSet, alsoBad ...string) []string {
+	reject := make(map[string]bool, len(perRepoInitFlags)+len(alsoBad))
+	for _, n := range perRepoInitFlags {
+		reject[n] = true
+	}
+	for _, n := range alsoBad {
+		reject[n] = true
+	}
+	var bad []string
+	fs.Visit(func(f *flag.Flag) {
+		if reject[f.Name] {
+			bad = append(bad, "-"+f.Name)
+		}
+	})
+	return bad
+}
+
 func runInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	force := fs.Bool("force", false, "overwrite an existing post-commit hook (destructive — drops the existing hook entirely)")
@@ -148,14 +185,8 @@ func runInit(args []string) int {
 		// -fix-foreign-hooks is a registry-wide alternate mode; reject
 		// combinations that only make sense in the per-repo install
 		// path so the user gets a clear error rather than silent
-		// ignores.
-		var bad []string
-		fs.Visit(func(f *flag.Flag) {
-			switch f.Name {
-			case "force", "chain", "skip-bd-init", "skip-register", "skip-claude-md", "scan", "uninstall":
-				bad = append(bad, "-"+f.Name)
-			}
-		})
+		// ignores. (-scan and -uninstall are the other alternate modes.)
+		bad := setIncompatibleFlags(fs, "scan", "uninstall")
 		if len(bad) > 0 {
 			fmt.Fprintf(os.Stderr,
 				"wyk init: -fix-foreign-hooks is incompatible with %s\n",
@@ -168,13 +199,7 @@ func runInit(args []string) int {
 		// -uninstall is the inverse path; reject combinations that
 		// only make sense in the install direction so the user gets
 		// a clear "either X or Y, not both" instead of silent ignores.
-		var bad []string
-		fs.Visit(func(f *flag.Flag) {
-			switch f.Name {
-			case "force", "chain", "skip-bd-init", "skip-register", "skip-claude-md", "scan":
-				bad = append(bad, "-"+f.Name)
-			}
-		})
+		bad := setIncompatibleFlags(fs, "scan")
 		if len(bad) > 0 {
 			fmt.Fprintf(os.Stderr,
 				"wyk init: -uninstall is incompatible with %s\n",
@@ -188,13 +213,7 @@ func runInit(args []string) int {
 	// Reject flag combinations that don't make sense with -scan so
 	// the user gets a clear error instead of silently-ignored options.
 	if *scanRoot != "" {
-		var bad []string
-		fs.Visit(func(f *flag.Flag) {
-			switch f.Name {
-			case "force", "chain", "skip-bd-init", "skip-register", "skip-claude-md":
-				bad = append(bad, "-"+f.Name)
-			}
-		})
+		bad := setIncompatibleFlags(fs)
 		if len(bad) > 0 {
 			fmt.Fprintf(os.Stderr,
 				"wyk init: -scan is incompatible with %s (the scan path only registers; per-repo flags apply to per-repo init)\n",
@@ -558,6 +577,12 @@ func findGitPaths() (gitDir, repoRoot string, err error) {
 	}
 	gitDir = strings.TrimSpace(lines[0])
 	repoRoot = strings.TrimSpace(lines[1])
+	// Check emptiness BEFORE normalising: filepath.Join(cwd, "") returns
+	// cwd, so an empty gitDir would silently become the working directory
+	// and the check below it could never fire.
+	if gitDir == "" || repoRoot == "" {
+		return "", "", errors.New("git rev-parse returned empty paths")
+	}
 	if !filepath.IsAbs(gitDir) {
 		// `git rev-parse --git-dir` may emit a relative path when run
 		// from inside the working tree; resolve against cwd.
@@ -566,9 +591,6 @@ func findGitPaths() (gitDir, repoRoot string, err error) {
 			return "", "", fmt.Errorf("getwd: %w", werr)
 		}
 		gitDir = filepath.Join(cwd, gitDir)
-	}
-	if gitDir == "" || repoRoot == "" {
-		return "", "", errors.New("git rev-parse returned empty paths")
 	}
 	return gitDir, repoRoot, nil
 }
@@ -1459,10 +1481,15 @@ func runScanAndRegisterWithProbe(root string, dryRun bool, probe probeBDFunc) in
 		return 1
 	}
 
-	found, err := scanForBeadsRepos(abs)
+	found, skippedPaths, err := scanForBeadsRepos(abs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk init -scan: walk:", err)
 		return 1
+	}
+	// Name what the scan couldn't read. Without this a tree that is half
+	// permission-denied reports "0 new repos" and looks conclusive.
+	for _, s := range skippedPaths {
+		fmt.Fprintln(os.Stderr, "wyk init -scan: skipped unreadable path:", s)
 	}
 
 	var newOnes, alreadyRegistered, skipped []string
@@ -1541,17 +1568,30 @@ func runScanAndRegisterWithProbe(root string, dryRun bool, probe probeBDFunc) in
 // into common heavy directories (node_modules, vendor) to keep the
 // walk responsive on large project trees. We never descend into a
 // found .beads/ itself either — bd's own internals aren't repos.
-func scanForBeadsRepos(root string) ([]string, error) {
+// It returns the workspace roots it found, the paths it had to skip
+// (each with the reason), and a fatal error.
+//
+// Skipping an unreadable SUBTREE is right — a permission-denied
+// directory shouldn't abort a whole home-directory scan — but skipping
+// it silently is not: the user gets "0 repos found" with no hint that
+// half the tree was unreadable. Those paths now come back for the
+// caller to report. A failure on the scan ROOT is still fatal, which is
+// what makes the documented exit-1 filesystem-error branch reachable at
+// all (would-you-kindly-6gjb).
+func scanForBeadsRepos(root string) (found, skippedPaths []string, err error) {
 	var out []string
 	skipDirs := map[string]bool{
 		"node_modules": true,
 		"vendor":       true,
 	}
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			// Permission errors and unreadable directories: skip
-			// silently rather than abort the whole scan. The user
-			// can fix and re-run.
+			if path == root {
+				// Nothing below this to salvage: an empty result here
+				// would read as "scanned fine, found nothing".
+				return err
+			}
+			skippedPaths = append(skippedPaths, fmt.Sprintf("%s: %v", path, err))
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -1581,7 +1621,7 @@ func scanForBeadsRepos(root string) ([]string, error) {
 		}
 		return nil
 	})
-	return out, err
+	return out, skippedPaths, walkErr
 }
 
 // preWykExists reports whether a .pre-wyk preservation file is

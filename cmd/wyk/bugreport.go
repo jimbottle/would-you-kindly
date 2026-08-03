@@ -33,13 +33,10 @@ func runBugreport(args []string) int {
 	outPath := fs.String("o", "", "write the report to this file instead of stdout")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk bugreport [-tail N] [-o file]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("bugreport"))
 		return 64
 	}
 

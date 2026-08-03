@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -361,6 +362,39 @@ func findCLIDoc(name string) *cliSubcommandDoc {
 		}
 	}
 	return nil
+}
+
+// usageLine returns a subcommand's canonical usage string from
+// cliSubcommandDocs — the same source `-h` and the generated cli.md read
+// — so an error path can't drift from the published reference. Nested
+// dispatchers ("registry list") resolve to their parent's entry, whose
+// usage covers every subform.
+//
+// Hand-written copies in the stray-positional branches had already
+// drifted: four of them omitted their own -compact flag
+// (would-you-kindly-6gjb). Falling back to a terse line keeps a renamed
+// or missing doc entry from turning an error path into a panic.
+func usageLine(name string) string {
+	if doc := findCLIDoc(name); doc != nil {
+		return doc.Usage
+	}
+	return "wyk " + name + " [flags]"
+}
+
+// flagParseExit maps a FlagSet.Parse error to this package's exit-code
+// convention: 0 for -h/--help — a successful request for help, and the
+// FlagSet has already printed the usage — and 64 for a genuine usage
+// error.
+//
+// Centralised because every subcommand hand-rolled the check and several
+// omitted the ErrHelp branch entirely, so `wyk export -h` exited 64 while
+// `wyk inbox -h` exited 0 (would-you-kindly-6gjb). A shared helper makes
+// the convention the path of least resistance for the next subcommand.
+func flagParseExit(err error) int {
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	return 64
 }
 
 // subcommandUsage returns the fs.Usage hook that gives a subcommand's

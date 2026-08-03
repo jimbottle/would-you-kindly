@@ -257,6 +257,10 @@ func runConventions(args []string) int {
 	fs.Usage = subcommandUsage(fs, "conventions")
 	asJSON := fs.Bool("json", false, "emit a stable structured JSON schema instead of the human-readable block")
 	if err := fs.Parse(args); err != nil {
+		return flagParseExit(err)
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("conventions"))
 		return 64
 	}
 	if *asJSON {

@@ -107,13 +107,10 @@ func runDoctor(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "with -fix, print the plan without installing")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk doctor [-json] [-fix [-dry-run]]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("doctor"))
 		return 64
 	}
 	if *asJSON && *fix {

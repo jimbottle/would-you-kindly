@@ -42,7 +42,7 @@ internal/tui/keymap.go (`DocsKeymap`).
 | `n` | note |
 | `N` | new issue |
 | `d` | defer |
-| `O` | owner |
+| `O` | assignee |
 | `L` | label |
 | `e` | edit |
 | `+` | ↑prio |

@@ -34,10 +34,10 @@ func runHelp(args []string) int {
 	asCLIMarkdown := fs.Bool("cli-markdown", false, "emit a markdown CLI-flag reference for every subcommand (single source of truth: cliSubcommandDocs)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk help [--markdown] [--cli-markdown]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("help"))
 		return 64
 	}
 	if *asMarkdown && *asCLIMarkdown {

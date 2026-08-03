@@ -43,7 +43,7 @@ func TestScanForBeadsRepos_FindsNestedWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := scanForBeadsRepos(root)
+	got, _, err := scanForBeadsRepos(root)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestScanForBeadsRepos_SkipsHeavyDirsAndHidden(t *testing.T) {
 	_ = mkBeads(t, root, "vendor/dep")
 	_ = mkBeads(t, root, ".cache/orphan")
 
-	got, err := scanForBeadsRepos(root)
+	got, _, err := scanForBeadsRepos(root)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestScanForBeadsRepos_SkipsHeavyDirsAndHidden(t *testing.T) {
 
 func TestScanForBeadsRepos_EmptyDirReturnsEmpty(t *testing.T) {
 	root := t.TempDir()
-	got, err := scanForBeadsRepos(root)
+	got, _, err := scanForBeadsRepos(root)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestScanForBeadsRepos_NestedRepoIsAlsoRecorded(t *testing.T) {
 	outer := mkBeads(t, root, "outer")
 	inner := mkBeads(t, root, "outer/fixtures/inner")
 
-	got, err := scanForBeadsRepos(root)
+	got, _, err := scanForBeadsRepos(root)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}

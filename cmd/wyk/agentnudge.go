@@ -56,10 +56,7 @@ func runHookInstallNudge(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print what would change without writing")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 64
+		return flagParseExit(err)
 	}
 
 	path, err := nudgeSettingsPath(*project)

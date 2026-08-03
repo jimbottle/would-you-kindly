@@ -2,14 +2,24 @@
 // tracker. It surfaces tasks an agent has handed to a human — see
 // docs/CONTRACT.md for the convention it follows.
 //
-// Modes:
+// Entry points:
 //
 //	wyk                      TUI (default)
-//	wyk --version            print version and exit
 //	wyk --probe              non-TTY one-shot listing the human-flagged issues
-//	wyk handoff <id>         hand <id> back to a human; runbook read from stdin
-//	wyk init                 install the post-commit auto-close hook
-//	wyk hook post-commit     called by the installed hook; closes referenced issues
+//	wyk <subcommand> [args]  one of the subcommands below
+//
+// Subcommands, by what they're for. This list is a map, not a
+// reference — `wyk help` and docs/generated/cli.md carry the flags and
+// are generated from cliSubcommandDocs, so they cannot drift.
+//
+//	Handoff loop:  handoff, create, inbox, conventions
+//	Reporting:     stats, dashboard, activity, depgraph, export, import
+//	Setup:         init, registry, config, skills, hook
+//	Diagnostics:   doctor, bugreport, version, update
+//	Help:          help, completion
+//
+// The dispatch table itself is subcommandHandlers below;
+// TestWykSubcommandsMatchDispatch pins it against the completion list.
 package main
 
 import (
@@ -735,6 +745,23 @@ func buildSource(dir, me string) (tui.Source, []string, string, error) {
 	}
 }
 
+// handoffRunbookTemplate is the skeleton `wyk handoff --template` prints.
+// It mirrors the three REQUIRED sections in docs/CONTRACT.md so a human
+// filling in a handoff doesn't have to memorize the headings.
+const handoffRunbookTemplate = `## Why this needs you (please confirm this is accurate)
+<What you tried (three concrete attempts), the boundary you hit, and why
+no workaround exists. Phrased as a claim the human can push back on.>
+
+## Steps
+1. <concrete step with a location>
+2. <…>
+3. Close this issue when complete.
+
+## What unblocks me when this returns
+<The concrete artifact you expect back — a credential at a known path, a
+URL in a constant, a decision recorded here — so the next agent can resume.>
+`
+
 // runHandoff implements `wyk handoff`: read a runbook from stdin
 // (or --file), then call pkg/handoff.BounceToHuman against the bd
 // CLI client. Two modes:
@@ -753,24 +780,6 @@ func buildSource(dir, me string) (tui.Source, []string, string, error) {
 //	1   generic failure (bd error, IO error, …)
 //	2   bd missing or no workspace
 //	64  usage error (bad flags / missing args / TTY-stdin without --allow-empty)
-//
-// handoffRunbookTemplate is the skeleton `wyk handoff --template` prints.
-// It mirrors the three REQUIRED sections in docs/CONTRACT.md so a human
-// filling in a handoff doesn't have to memorize the headings.
-const handoffRunbookTemplate = `## Why this needs you (please confirm this is accurate)
-<What you tried (three concrete attempts), the boundary you hit, and why
-no workaround exists. Phrased as a claim the human can push back on.>
-
-## Steps
-1. <concrete step with a location>
-2. <…>
-3. Close this issue when complete.
-
-## What unblocks me when this returns
-<The concrete artifact you expect back — a credential at a known path, a
-URL in a constant, a decision recorded here — so the next agent can resume.>
-`
-
 func runHandoff(args []string) int {
 	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
 	fs.Usage = subcommandUsage(fs, "handoff")

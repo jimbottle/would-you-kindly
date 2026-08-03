@@ -94,13 +94,7 @@ func runRegistryAdd(args []string) int {
 	fs := flag.NewFlagSet("registry add", flag.ContinueOnError)
 	fs.Usage = subcommandUsage(fs, "registry add")
 	if err := fs.Parse(args); err != nil {
-		// -h is a successful request for help, not a usage error; the
-		// FlagSet already printed. (would-you-kindly-6gjb tracks the same
-		// drift in the older subcommands.)
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() > 1 {
 		fmt.Fprintln(os.Stderr, "wyk registry add: usage: wyk registry add [path]")
@@ -154,6 +148,10 @@ func runRegistryList(args []string) int {
 	fs.Usage = subcommandUsage(fs, "registry list")
 	asJSON := fs.Bool("json", false, "emit structured JSON instead of the plain-text layout")
 	if err := fs.Parse(args); err != nil {
+		return flagParseExit(err)
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("registry list"))
 		return 64
 	}
 	reg, regPath, err := loadRegistryForCmd()
@@ -224,6 +222,10 @@ func runRegistryPrune(args []string, stdin io.Reader) int {
 	yes := fs.Bool("y", false, "skip the [y/N] confirmation prompt")
 	broken := fs.Bool("broken", false, "also drop entries whose path exists but holds no bd workspace (probes bd; only definitive 'no workspace' results qualify, not timeouts)")
 	if err := fs.Parse(args); err != nil {
+		return flagParseExit(err)
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("registry prune"))
 		return 64
 	}
 	reg, regPath, err := loadRegistryForCmd()

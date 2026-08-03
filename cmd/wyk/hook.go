@@ -209,10 +209,7 @@ func runHookPostCommit(args []string) int {
 	dir := fs.String("C", "", "run as if bd had been started in this directory")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 64
+		return flagParseExit(err)
 	}
 
 	ref := "HEAD"

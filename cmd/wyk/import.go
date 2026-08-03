@@ -38,10 +38,10 @@ func runImport(args []string) int {
 	repoName := fs.String("repo", "", "restrict the reconcile to the dump entry with this name (empty = every entry)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk import [-file path] [-dry-run] [-repo name]")
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("import"))
 		return 64
 	}
 
