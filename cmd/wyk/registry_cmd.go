@@ -26,6 +26,9 @@ import (
 //
 // Subcommands:
 //
+//	add [path]       register the bd workspace at path (default: the
+//	                 working directory), so its issues appear in the
+//	                 multi-repo views.
 //	list             dump every entry; -json for structured output.
 //	remove <name>    drop a single entry by its display name.
 //	prune            drop every entry whose path is gone or no
@@ -39,6 +42,8 @@ func runRegistry(args []string) int {
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
+	case "add":
+		return runRegistryAdd(rest)
 	case "list":
 		return runRegistryList(rest)
 	case "remove", "rm":
@@ -59,13 +64,89 @@ func registryUsage(w io.Writer) {
 	fmt.Fprint(w, `usage: wyk registry <subcommand>
 
 Subcommands:
+  add [path]       register the bd workspace at path (default: cwd)
   list             print registered repos (-json for structured output)
   remove <name>    remove the entry with the given display name
   prune            remove entries whose path / .git is missing
                    (-broken also drops present-but-no-bd-workspace entries; -y to skip confirm)
 
 The registry lives at ~/.config/wyk/repos.json (XDG-aware).
+An unregistered workspace is invisible to `+"`wyk inbox`"+`, `+"`wyk dashboard`"+`,
+and the TUI — issues filed there reach nobody.
 `)
+}
+
+// runRegistryAdd implements `wyk registry add [path]`: the supported,
+// headless way to register a bd workspace. Before this existed,
+// registration happened only as a side effect of `wyk init` (which an
+// agent-driven workspace never runs) so hand-editing repos.json was the
+// only option — and a workspace nobody noticed was unregistered silently
+// swallowed every handoff filed in it, including a P0
+// (would-you-kindly-afo3).
+//
+// path may be the workspace root or any directory inside it: the nearest
+// ancestor holding .beads/ is what gets registered, matching bd's own
+// upward discovery, so `wyk registry add` works from a subdirectory.
+//
+// Exit codes: 0 registered (or already present); 1 no bd workspace at or
+// above path, or a registry load/save failure; 64 usage.
+func runRegistryAdd(args []string) int {
+	fs := flag.NewFlagSet("registry add", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "registry add")
+	if err := fs.Parse(args); err != nil {
+		// -h is a successful request for help, not a usage error; the
+		// FlagSet already printed. (would-you-kindly-6gjb tracks the same
+		// drift in the older subcommands.)
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 64
+	}
+	if fs.NArg() > 1 {
+		fmt.Fprintln(os.Stderr, "wyk registry add: usage: wyk registry add [path]")
+		return 64
+	}
+	dir := fs.Arg(0)
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "wyk registry add: resolve working directory:", err)
+			return 1
+		}
+		dir = cwd
+	}
+	if _, err := os.Stat(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk registry add:", err)
+		return 1
+	}
+	root, ok := findBeadsRoot(dir)
+	if !ok {
+		// Refuse rather than register a directory the multi-repo views
+		// would then fail to query on every refresh. Name the remedy.
+		fmt.Fprintf(os.Stderr,
+			"wyk registry add: no bd workspace at or above %s (no .beads/ directory)\n"+
+				"  run `bd init` there first, or `wyk init` to set up bd + the hook + this registration in one step\n", dir)
+		return 1
+	}
+	reg, regPath, err := loadRegistryForCmd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk registry add:", err)
+		return 1
+	}
+	if reg.Has(root) {
+		fmt.Printf("already registered: %s (%s)\n", root, regPath)
+		return 0
+	}
+	if err := reg.Add(root); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk registry add:", err)
+		return 1
+	}
+	if err := reg.Save(regPath); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk registry add:", err)
+		return 1
+	}
+	fmt.Printf("registered %s in %s\n", root, regPath)
+	return 0
 }
 
 func runRegistryList(args []string) int {

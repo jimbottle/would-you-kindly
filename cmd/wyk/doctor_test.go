@@ -197,6 +197,11 @@ func TestRunDoctor_FlagCombinationGuards(t *testing.T) {
 func TestRunDoctorFix_NoRegistryReturns2(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	// Stand outside any bd workspace: -fix registers the cwd's workspace
+	// when there is one, which would itself be fixable work and defeat the
+	// "nothing left to fix" case under test. Without this the test passes
+	// or fails depending on where the source tree lives.
+	t.Chdir(t.TempDir())
 	// Pre-install the user skills so the skills-fix step is a no-op;
 	// then with no registry there's genuinely nothing left to fix → 2.
 	dir := withTempHome(t)
@@ -800,5 +805,158 @@ func TestCheckContractHygiene(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// checkCwdRegistered is the diagnostic half of would-you-kindly-afo3: an
+// unregistered workspace loses handoffs silently, so doctor must say so
+// loudly (FAIL, not WARN) rather than leaving the user to discover it
+// after a P0 goes unseen.
+func TestCheckCwdRegistered_FailsOnUnregisteredWorkspace(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := mkWorkspace(t)
+	t.Chdir(root)
+
+	c, ok := checkCwdRegistered()
+	if !ok {
+		t.Fatal("no check reported for a bd workspace")
+	}
+	if c.status != statusFail {
+		t.Errorf("status = %v, want FAIL", c.status)
+	}
+	if !strings.Contains(c.detail, "wyk registry add") {
+		t.Errorf("detail %q does not name the remedy", c.detail)
+	}
+}
+
+func TestCheckCwdRegistered_PassesOnRegisteredWorkspace(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := mkWorkspace(t)
+	t.Chdir(root)
+	if code := runRegistry([]string{"add"}); code != 0 {
+		t.Fatalf("registry add exit %d", code)
+	}
+
+	c, ok := checkCwdRegistered()
+	if !ok {
+		t.Fatal("no check reported for a bd workspace")
+	}
+	if c.status != statusPass {
+		t.Errorf("status = %v, want PASS (detail %q)", c.status, c.detail)
+	}
+}
+
+// Running doctor from outside any bd workspace (say $HOME) must not
+// invent a failure — there is no repo to register.
+func TestCheckCwdRegistered_SkippedOutsideAWorkspace(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+
+	if _, ok := checkCwdRegistered(); ok {
+		t.Error("reported a check outside any bd workspace")
+	}
+}
+
+func TestFixCwdRegistration(t *testing.T) {
+	t.Run("registers and saves", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		root := mkWorkspace(t)
+		t.Chdir(root)
+		reg, regPath, err := loadRegistryForCmd()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		registered, failed := fixCwdRegistration(reg, regPath, false)
+		if !registered || failed {
+			t.Fatalf("got (registered=%v, failed=%v), want (true, false)", registered, failed)
+		}
+		if got := readRegistry(t); !got.Has(root) {
+			t.Errorf("not persisted; registry = %+v", got.Repos)
+		}
+	})
+
+	t.Run("dry-run reports without writing", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		root := mkWorkspace(t)
+		t.Chdir(root)
+		reg, regPath, err := loadRegistryForCmd()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		registered, failed := fixCwdRegistration(reg, regPath, true)
+		if !registered || failed {
+			t.Fatalf("got (registered=%v, failed=%v), want (true, false)", registered, failed)
+		}
+		if got := readRegistry(t); len(got.Repos) != 0 {
+			t.Errorf("dry-run wrote to the registry: %+v", got.Repos)
+		}
+	})
+
+	t.Run("already registered is a no-op", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		root := mkWorkspace(t)
+		t.Chdir(root)
+		if code := runRegistry([]string{"add"}); code != 0 {
+			t.Fatalf("registry add exit %d", code)
+		}
+		reg, regPath, err := loadRegistryForCmd()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		registered, failed := fixCwdRegistration(reg, regPath, false)
+		if registered || failed {
+			t.Errorf("got (registered=%v, failed=%v), want (false, false)", registered, failed)
+		}
+	})
+
+	t.Run("outside a workspace is a no-op", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Chdir(t.TempDir())
+		reg, regPath, err := loadRegistryForCmd()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		registered, failed := fixCwdRegistration(reg, regPath, false)
+		if registered || failed {
+			t.Errorf("got (registered=%v, failed=%v), want (false, false)", registered, failed)
+		}
+	})
+}
+
+// The headless, agent-driven workspace that loses handoffs is also the one
+// most likely to have an EMPTY registry — so -fix must register it rather
+// than bailing with "no repos registered, nothing to fix".
+func TestRunDoctorFix_RegistersCwdWithEmptyRegistry(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := withTempHome(t)
+	if _, err := installMissingSkills(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	// A real git repo with a bd workspace in it — the shape of the repo
+	// that lost the P0. Once registered, -fix goes on to the hook step for
+	// it, which needs a .git to resolve.
+	root := gitInit(t)
+	if err := os.MkdirAll(filepath.Join(root, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prev := installHookIn
+	installHookIn = func(string, ...string) int { return 0 }
+	t.Cleanup(func() { installHookIn = prev })
+
+	if code := runDoctorFix(false); code != 0 {
+		t.Errorf("exit %d, want 0", code)
+	}
+	if reg := readRegistry(t); !reg.Has(resolved) {
+		t.Errorf("-fix did not register the cwd workspace; registry = %+v", reg.Repos)
 	}
 }

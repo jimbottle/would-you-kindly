@@ -156,6 +156,7 @@ badge — a review issue is still agent-owned work to fix.)
 ### Managing the registry
 
 ```bash
+wyk registry add [path]       # register a workspace (default: cwd)
 wyk registry list             # human-readable list (-json for structured)
 wyk registry remove <name>    # drop one entry by display name
 wyk registry prune            # drop entries whose path or .git is gone
@@ -164,6 +165,17 @@ wyk registry prune            # drop entries whose path or .git is gone
 `prune` asks for `[y/N]` confirmation before writing; pass `-y` to skip
 the prompt in scripts. The registry file lives at
 `~/.config/wyk/repos.json` and stays editable by hand too.
+
+**Registration is not optional bookkeeping.** Every multi-repo view —
+`wyk inbox`, `wyk dashboard`, `wyk stats`, the TUI — reads the registry,
+so an unregistered workspace is omitted from all of them with no
+warning. An agent can follow the handoff convention exactly and the work
+still reaches nobody. wyk therefore registers a workspace for you the
+first time it writes to it (`wyk create`, `wyk handoff`) or reads it
+via `-C`, printing a one-line notice when it does; `wyk doctor` FAILs
+when the repo you're standing in is an unregistered bd workspace, and
+`wyk doctor -fix` registers it. `wyk registry add` is the explicit form
+for scripts and headless setups.
 
 If the registry is empty or has only one entry, `wyk` (no args)
 falls back to running against the current directory — the v0.1.0

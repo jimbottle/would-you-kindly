@@ -6,7 +6,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`wyk registry add [path]`** — register a bd workspace from the
+  command line. Registration previously happened only as a side effect
+  of `wyk init`, so hand-editing `repos.json` was the only headless
+  option. The path may be the workspace root or any directory inside
+  it; the nearest ancestor holding `.beads/` is what gets registered.
+
 ### Fixed
+
+- **An unregistered repo no longer silently swallows handoffs.** Every
+  multi-repo view (`wyk inbox`, `wyk dashboard`, `wyk stats`, the TUI)
+  reads `~/.config/wyk/repos.json`, so a bd workspace missing from it
+  was omitted from all of them with no warning — an agent could follow
+  the handoff convention exactly, with correct labels, and the work
+  still reached nobody. This lost a P0 in the field. Four changes close
+  it: `wyk create` and `wyk handoff` now register the workspace they
+  write to (printing a one-line notice; `-dry-run` still writes
+  nothing); `-C` registers the workspace it resolves, since it has just
+  proved the repo is readable; `wyk doctor` FAILs when the working
+  directory is an unregistered bd workspace, and `wyk doctor -fix`
+  registers it — including when the registry is otherwise empty, the
+  state a headless agent-driven workspace is most likely to be in; and
+  `wyk registry add` provides the explicit form. Registration is
+  best-effort and never changes a command's exit code: the issue being
+  filed matters more than the bookkeeping around it.
 
 - **`wyk create` and bare-id `wyk handoff` now stamp `src:` provenance
   labels** — the two paths previously set no `src:` label (only

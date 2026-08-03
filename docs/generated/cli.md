@@ -152,15 +152,16 @@ wyk doctor -fix    # install missing hooks + skills
 
 ## `wyk registry`
 
-List, remove, or prune entries in the wyk repo registry (~/.config/wyk/repos.json).
+Add, list, remove, or prune entries in the wyk repo registry (~/.config/wyk/repos.json). An unregistered workspace is invisible to every multi-repo view, so issues filed there reach nobody.
 
 ```
-wyk registry <list | remove <name> | prune> [-broken] [-y] [-json]
+wyk registry <add [path] | list | remove <name> | prune> [-broken] [-y] [-json]
 ```
 
 Common case:
 
 ```
+wyk registry add        # register the workspace you're standing in
 wyk registry list
 wyk registry prune -y   # drop entries whose repo is gone
 ```

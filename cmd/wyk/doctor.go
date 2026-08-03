@@ -211,6 +211,14 @@ func runDoctorFix(dryRun bool) int {
 		fmt.Fprintln(os.Stderr, "wyk doctor:", err)
 		return 2
 	}
+	// Register the workspace the user is standing in, if it isn't already.
+	// This runs BEFORE the empty-registry bail below on purpose: the very
+	// case worth fixing — a headless, agent-driven workspace that never ran
+	// `wyk init` — is also the case most likely to have an empty registry,
+	// and bailing first would make `wyk doctor -fix` unable to fix the one
+	// thing that loses handoffs (would-you-kindly-afo3).
+	cwdRegistered, regErr := fixCwdRegistration(reg, regPath, dryRun)
+
 	if len(reg.Repos) == 0 {
 		// No repos to fix, but installing the skills above is itself
 		// fixable work this command performs — so report success rather
@@ -218,14 +226,21 @@ func runDoctorFix(dryRun bool) int {
 		// counts the skills we WOULD install, so the exit code mirrors
 		// what a real run returns (the convention that -dry-run reports
 		// the post-fix state, not the current one).
-		if skillsFixed > 0 {
+		//
+		// A dry run leaves reg.Repos empty even when it reported a
+		// registration it would perform, so cwdRegistered — not the slice
+		// length — is what tells us work is pending.
+		switch {
+		case regErr:
+			return 1
+		case skillsFixed > 0 || cwdRegistered:
 			return 0
 		}
 		fmt.Fprintln(os.Stderr, "wyk doctor: no repos registered — nothing to fix")
 		return 2
 	}
 
-	hadError := false
+	hadError := regErr
 	fixed, skipped := 0, 0
 	for _, r := range reg.Repos {
 		hookPath, herr := resolveGitHookPath(r.Path, "post-commit")
@@ -278,6 +293,39 @@ func runDoctorFix(dryRun bool) int {
 	return 0
 }
 
+// fixCwdRegistration is the `-fix` half of checkCwdRegistered: it adds
+// the bd workspace containing the working directory to reg (saving to
+// regPath) when it isn't registered yet. Returns whether a registration
+// happened — or, under dryRun, would have — and whether it failed.
+//
+// A cwd that can't be read, isn't in a bd workspace, or is already
+// registered is a quiet (false, false): nothing to do is not an error.
+func fixCwdRegistration(reg *registry.Registry, regPath string, dryRun bool) (registered, failed bool) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor: resolve working directory:", err)
+		return false, false
+	}
+	root, ok := findBeadsRoot(cwd)
+	if !ok || reg.Has(root) {
+		return false, false
+	}
+	if dryRun {
+		fmt.Printf("doctor -fix (dry-run): would register %s in %s\n", root, regPath)
+		return true, false
+	}
+	if err := reg.Add(root); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor: register cwd:", err)
+		return false, true
+	}
+	if err := reg.Save(regPath); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk doctor: register cwd:", err)
+		return false, true
+	}
+	fmt.Printf("doctor -fix: registered %s in %s\n", root, regPath)
+	return true, false
+}
+
 // installHookIn shells out to runInit in a child directory via a
 // process-level cwd switch (restored via defer). os.Chdir is
 // process-global, not goroutine-local — fine here because
@@ -317,6 +365,9 @@ func collectDoctorChecks() []check {
 	checks = append(checks, checkWykConfig())
 	regChecks, repos := checkRegistry()
 	checks = append(checks, regChecks...)
+	if c, ok := checkCwdRegistered(); ok {
+		checks = append(checks, c)
+	}
 	for _, r := range repos {
 		checks = append(checks, checkRepo(r)...)
 	}
@@ -706,6 +757,48 @@ func checkRegistry() ([]check, []registry.Repo) {
 		status: statusPass,
 		detail: fmt.Sprintf("%s — %d repo(s) registered", regPath, len(reg.Repos)),
 	}}, reg.Repos
+}
+
+// checkCwdRegistered reports whether the bd workspace the user is
+// standing in is registered. It FAILs when it isn't: an unregistered
+// workspace is omitted from `wyk inbox`, `wyk dashboard`, and the TUI
+// with no warning, so an agent can file and hand off a correctly
+// labelled P0 that no human ever sees (would-you-kindly-afo3). That's a
+// broken install, not a style preference — hence FAIL rather than WARN.
+//
+// The bool is false when there is no check to report: cwd is unreadable,
+// or it isn't inside a bd workspace at all (running `wyk doctor` from
+// $HOME shouldn't invent a failure). `wyk doctor -fix` registers it.
+func checkCwdRegistered() (check, bool) {
+	const name = "current repo registered"
+	cwd, err := os.Getwd()
+	if err != nil {
+		return check{}, false
+	}
+	root, ok := findBeadsRoot(cwd)
+	if !ok {
+		return check{}, false
+	}
+	regPath, err := registry.DefaultPath()
+	if err != nil {
+		// checkRegistry already FAILs on this; don't double-report.
+		return check{}, false
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return check{}, false
+	}
+	if reg.Has(root) {
+		return check{name: name, status: statusPass, detail: root}, true
+	}
+	return check{
+		name:   name,
+		status: statusFail,
+		detail: fmt.Sprintf("%s is a bd workspace but is NOT in %s\n"+
+			"issues filed here are invisible to `wyk inbox`, `wyk dashboard`, and the TUI —\n"+
+			"a handoff would be correctly labelled and still reach nobody\n"+
+			"fix with `wyk registry add %s` (or `wyk doctor -fix`)", root, regPath, root),
+	}, true
 }
 
 // doltRemoteCheck classifies the output of `bd dolt remote list` for a

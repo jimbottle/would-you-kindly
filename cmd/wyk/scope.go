@@ -106,6 +106,14 @@ func reposToQuery(dir, repoName string, allFlag bool) ([]registry.Repo, error) {
 		if err := validateDashC(dir); err != nil {
 			return nil, err
 		}
+		// -C is the one command shape that proves a workspace is real and
+		// usable — it just resolved and read it. Leaving it unregistered
+		// meant the single command that demonstrated the repo works also
+		// left it invisible to every other view (would-you-kindly-afo3),
+		// so registration rides along. Best-effort: a registry failure
+		// never fails the read the user actually asked for, and this is a
+		// no-op when dir isn't a bd workspace or is already registered.
+		maybeAutoRegister("wyk", dir, os.Stderr)
 		return []registry.Repo{{Path: dir}}, nil
 	}
 

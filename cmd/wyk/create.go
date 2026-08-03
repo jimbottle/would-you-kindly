@@ -165,6 +165,13 @@ func runCreate(args []string) int {
 		labels = append(labels, sl)
 	}
 
+	// Filing into an unregistered workspace files into a void: every
+	// multi-repo view reads the registry (would-you-kindly-afo3). Register
+	// BEFORE the write so the notice precedes the "created <id>" line and
+	// still lands if bd then fails. Best-effort — never changes the exit
+	// code, and a no-op when this isn't a bd workspace at all.
+	maybeAutoRegister("wyk create", "", os.Stderr)
+
 	id, err := runBDCreateWithLabels("", args, labels)
 	if id == "" {
 		// The create itself failed — nothing was filed.

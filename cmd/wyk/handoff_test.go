@@ -290,3 +290,78 @@ func TestRunHandoff_WrongArityPrintsCanonicalUsage(t *testing.T) {
 		t.Errorf("usage should include the -template form; got %q", stderr)
 	}
 }
+
+// stubAutoRegister swaps the auto-registration seam and records the
+// (cmdName, dir) it was called with, so a test can assert the wiring
+// without touching a real repos.json.
+type capturedAutoRegister struct {
+	called  bool
+	cmdName string
+	dir     string
+}
+
+func stubAutoRegister(t *testing.T) *capturedAutoRegister {
+	t.Helper()
+	cap := &capturedAutoRegister{}
+	prev := maybeAutoRegister
+	maybeAutoRegister = func(cmdName, dir string, _ io.Writer) {
+		cap.called = true
+		cap.cmdName = cmdName
+		cap.dir = dir
+	}
+	t.Cleanup(func() { maybeAutoRegister = prev })
+	return cap
+}
+
+// A handoff into an unregistered workspace is correctly labelled and
+// completely invisible — the failure that lost a P0
+// (would-you-kindly-afo3). runHandoff must register the workspace it is
+// writing to, honouring -C.
+func TestRunHandoff_RegistersTargetWorkspace(t *testing.T) {
+	clearAmbientIdentity(t)
+	cap := stubAutoRegister(t)
+
+	dir := t.TempDir()
+	runbook := filepath.Join(t.TempDir(), "runbook.md")
+	if err := os.WriteFile(runbook, []byte("do the thing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// bd will fail against an empty temp dir; the exit code is not what
+	// this test is about — registration must have been attempted first.
+	captureHandoffStdout(t, func() {
+		runHandoff([]string{"-C", dir, "-file", runbook, "demo-1"})
+	})
+
+	if !cap.called {
+		t.Fatal("runHandoff did not attempt to register the target workspace")
+	}
+	if cap.dir != dir {
+		t.Errorf("registered dir %q, want the -C target %q", cap.dir, dir)
+	}
+	if cap.cmdName != "wyk handoff" {
+		t.Errorf("notice prefix %q, want %q", cap.cmdName, "wyk handoff")
+	}
+}
+
+// -dry-run promises no writes of any kind. The registry is a write.
+func TestRunHandoff_DryRunDoesNotRegister(t *testing.T) {
+	clearAmbientIdentity(t)
+	cap := stubAutoRegister(t)
+
+	dir := t.TempDir()
+	runbook := filepath.Join(t.TempDir(), "runbook.md")
+	if err := os.WriteFile(runbook, []byte("do the thing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	captureHandoffStdout(t, func() {
+		if code := runHandoff([]string{"-dry-run", "-C", dir, "-file", runbook, "demo-1"}); code != 0 {
+			t.Errorf("dry-run exit %d, want 0", code)
+		}
+	})
+
+	if cap.called {
+		t.Error("-dry-run touched the registry")
+	}
+}

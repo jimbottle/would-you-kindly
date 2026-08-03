@@ -326,3 +326,92 @@ func mustResolve(t *testing.T, p string) string {
 	}
 	return r
 }
+
+func TestRunRegistryAdd_RegistersCwdWorkspace(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := mkWorkspace(t)
+	t.Chdir(root)
+
+	if code := runRegistry([]string{"add"}); code != 0 {
+		t.Fatalf("registry add exit %d, want 0", code)
+	}
+	if reg := readRegistry(t); !reg.Has(root) {
+		t.Fatalf("not registered; registry = %+v", reg.Repos)
+	}
+}
+
+// A path argument may point anywhere inside the workspace: what gets
+// registered is the root that holds .beads/, never the subdirectory —
+// otherwise the multi-repo views would query a directory bd can't own.
+func TestRunRegistryAdd_PathArgResolvesToWorkspaceRoot(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := mkWorkspace(t)
+	nested := filepath.Join(root, "deep", "inside")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runRegistry([]string{"add", nested}); code != 0 {
+		t.Fatalf("registry add exit %d, want 0", code)
+	}
+	reg := readRegistry(t)
+	if len(reg.Repos) != 1 || reg.Repos[0].Path != root {
+		t.Fatalf("registered %+v, want the single root %s", reg.Repos, root)
+	}
+}
+
+func TestRunRegistryAdd_IsIdempotent(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := mkWorkspace(t)
+
+	if code := runRegistry([]string{"add", root}); code != 0 {
+		t.Fatalf("first add exit %d, want 0", code)
+	}
+	// A repeat is success, not an error — scripts and agents shouldn't
+	// have to check first.
+	stdout := captureStdout(t, func() {
+		if code := runRegistry([]string{"add", root}); code != 0 {
+			t.Errorf("second add exit %d, want 0", code)
+		}
+	})
+	if !strings.Contains(stdout, "already registered") {
+		t.Errorf("second add said %q, want an 'already registered' line", stdout)
+	}
+	if reg := readRegistry(t); len(reg.Repos) != 1 {
+		t.Errorf("registry has %d entries, want 1: %+v", len(reg.Repos), reg.Repos)
+	}
+}
+
+// Registering a directory with no bd workspace would add an entry every
+// multi-repo refresh then fails to query — refuse, and name the remedy.
+func TestRunRegistryAdd_RejectsNonWorkspace(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+
+	stderr := captureStderr(t, func() {
+		if code := runRegistry([]string{"add", dir}); code != 1 {
+			t.Errorf("add non-workspace exit %d, want 1", code)
+		}
+	})
+	if !strings.Contains(stderr, "bd init") {
+		t.Errorf("error %q does not name the remedy", stderr)
+	}
+	if reg := readRegistry(t); len(reg.Repos) != 0 {
+		t.Errorf("non-workspace was registered: %+v", reg.Repos)
+	}
+}
+
+func TestRunRegistryAdd_RejectsMissingPath(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	missing := filepath.Join(t.TempDir(), "nope")
+	if code := runRegistry([]string{"add", missing}); code != 1 {
+		t.Errorf("add missing path exit %d, want 1", code)
+	}
+}
+
+func TestRunRegistryAdd_RejectsStrayPositionals(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if code := runRegistry([]string{"add", "a", "b"}); code != 64 {
+		t.Errorf("two positionals exit %d, want 64", code)
+	}
+}

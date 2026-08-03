@@ -952,6 +952,16 @@ func runHandoff(args []string) int {
 	client := beads.NewClient()
 	client.Dir = *dir
 
+	// A handoff into an unregistered workspace never reaches a human:
+	// `wyk inbox`, `wyk dashboard`, and the TUI all read the registry, so
+	// the issue is correctly labelled and completely invisible — the exact
+	// failure that lost a P0 (would-you-kindly-afo3). Register the
+	// workspace first, so the notice precedes the created/handed lines and
+	// still lands if the bd writes below fail. Best-effort: it never
+	// changes this command's exit code. Deliberately after -dry-run's
+	// return above — a dry run performs no writes of any kind.
+	maybeAutoRegister("wyk handoff", *dir, os.Stderr)
+
 	// -create mode: file the issue first, then hand off the resulting ID.
 	var id string
 	createdViaFlag := false

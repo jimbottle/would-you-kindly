@@ -157,9 +157,10 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	},
 	{
 		Name:    "registry",
-		Summary: "List, remove, or prune entries in the wyk repo registry (~/.config/wyk/repos.json).",
-		Usage:   "wyk registry <list | remove <name> | prune> [-broken] [-y] [-json]",
+		Summary: "Add, list, remove, or prune entries in the wyk repo registry (~/.config/wyk/repos.json). An unregistered workspace is invisible to every multi-repo view, so issues filed there reach nobody.",
+		Usage:   "wyk registry <add [path] | list | remove <name> | prune> [-broken] [-y] [-json]",
 		Examples: []string{
+			"wyk registry add        # register the workspace you're standing in",
 			"wyk registry list",
 			"wyk registry prune -y   # drop entries whose repo is gone",
 		},
