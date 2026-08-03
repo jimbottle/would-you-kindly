@@ -380,7 +380,7 @@ func TestQuickAdd_RefusesWhenOwnerUnset(t *testing.T) {
 	if len(s.created) != 0 {
 		t.Errorf("Create should not have been called; got %v", s.created)
 	}
-	if !strings.Contains(m.status, "no owner") {
+	if !strings.Contains(m.status, "no assignee") {
 		t.Errorf("status should explain the refusal; got %q", m.status)
 	}
 }

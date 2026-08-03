@@ -165,16 +165,15 @@ func runInit(args []string) int {
 	// for now they stay flags but are grouped distinctly here.
 	fs.Usage = func() { printInitUsage(fs) }
 	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 64
+		return flagParseExit(err)
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk init [-force | -chain] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-claude-md]")
-		fmt.Fprintln(os.Stderr, "   or: wyk init -scan <root> [-dry-run]")
-		fmt.Fprintln(os.Stderr, "   or: wyk init -uninstall [-dry-run]")
-		fmt.Fprintln(os.Stderr, "   or: wyk init -fix-foreign-hooks [-dry-run]")
+		// Sourced from cliSubcommandDocs like every other subcommand. The
+		// four hand-written lines this replaces had drifted exactly the way
+		// usageLine exists to prevent: they omitted -skills — the same flag
+		// whose omission from three copied switch statements motivated
+		// perRepoInitFlags (roborev #3045).
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("init"))
 		return 64
 	}
 	if *force && *chain {

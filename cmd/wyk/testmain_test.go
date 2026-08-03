@@ -37,5 +37,20 @@ func runTests(m *testing.M) int {
 			return 1
 		}
 	}
+
+	// Neuter the hook installer for the whole package. The $XDG_CONFIG_HOME
+	// floor above only protects repos.json; installHookIn chdirs into a real
+	// repo and runs runInit, which writes .git/hooks/post-commit, the
+	// conventions block in CLAUDE.md, and .claude/settings.json — inside the
+	// developer's own working tree.
+	//
+	// That became reachable when `wyk doctor -fix` started registering the
+	// cwd's workspace: a -fix test that had never touched the hook loop (the
+	// registry was empty) suddenly had one entry, the repo under test
+	// (roborev #3041). Individual tests still override this to observe the
+	// calls; the default just guarantees no test can reach the real thing by
+	// accident.
+	installHookIn = func(string, ...string) int { return 0 }
+
 	return m.Run()
 }

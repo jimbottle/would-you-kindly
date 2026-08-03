@@ -161,10 +161,12 @@ type keyMap struct {
 	TypeCycle key.Binding // T — cycle issue type
 
 	// AssignOwner opens a textinput prompt for a new assignee
-	// (bd's --assignee). Empty submission clears the owner. Bulk-
-	// aware: with marks present, the value applies to every
-	// marked row.
-	AssignOwner key.Binding // O — change owner
+	// (bd's --assignee). Empty submission clears the assignee.
+	// Bulk-aware: with marks present, the value applies to every
+	// marked row. Deliberately NOT the Owner column, which is a
+	// label-driven HUMAN/AGENT badge — hence the assignee wording
+	// everywhere the user sees this (roborev #3045).
+	AssignOwner key.Binding // O — change assignee
 
 	// Label opens a textinput prompt for a label name; on submit,
 	// the cursor row toggles that label (add if absent, remove if

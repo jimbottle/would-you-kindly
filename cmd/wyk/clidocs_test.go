@@ -60,7 +60,16 @@ func TestSubcommandHelp_NoMultiwordFlagPlaceholders(t *testing.T) {
 	// flag-definition line with a multiword placeholder.
 	for _, c := range sweptFlagSets {
 		t.Run(c.name, func(t *testing.T) {
-			stdout, stderr := captureOutErr(t, func() { c.run(c.args) })
+			var code int
+			stdout, stderr := captureOutErr(t, func() { code = c.run(c.args) })
+			// -h is a successful request for help, not a usage error. The
+			// sweep already invokes every subcommand's -h, so asserting the
+			// code here pins the convention across all of them (and every
+			// future entry) — it previously went unchecked, which is how
+			// seven subcommands sat on exit 64 (roborev #3045).
+			if code != 0 {
+				t.Errorf("%s -h exited %d, want 0 (see flagParseExit)", c.name, code)
+			}
 			for _, line := range strings.Split(stdout+"\n"+stderr, "\n") {
 				// PrintDefaults flag lines: two spaces, the flag,
 				// then at most a one-word value placeholder. For
@@ -234,5 +243,47 @@ func TestCLIDocsFlagsMatchFlagSets(t *testing.T) {
 				t.Errorf("wyk %s: -%s is documented in cliSubcommandDocs but not registered on any of its FlagSets", docName, name)
 			}
 		}
+	}
+}
+
+// TestSubcommands_RejectStrayPositionals pins the other half of the
+// argument contract. A subcommand that accepts and ignores a stray
+// positional silently does the wrong thing — `wyk registry prune extra`
+// looks like it pruned "extra" and actually pruned everything. Seven
+// subcommands were missing the guard (roborev #3045); this table keeps
+// them honest and gives a new one an obvious place to be added.
+func TestSubcommands_RejectStrayPositionals(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func([]string) int
+		args []string
+	}{
+		{"update", runUpdate, []string{"stray"}},
+		{"conventions", runConventions, []string{"stray"}},
+		{"registry list", runRegistry, []string{"list", "stray"}},
+		{"registry prune", runRegistry, []string{"prune", "stray"}},
+		{"registry add", runRegistry, []string{"add", "one", "two"}},
+		{"skills list", runSkills, []string{"list", "stray"}},
+		{"skills install", runSkills, []string{"install", "stray"}},
+		{"skills uninstall", runSkills, []string{"uninstall", "stray"}},
+		{"doctor", runDoctor, []string{"stray"}},
+		{"inbox", runInbox, []string{"stray"}},
+		{"stats", runStats, []string{"stray"}},
+		{"dashboard", runDashboard, []string{"stray"}},
+		{"activity", runActivity, []string{"stray"}},
+		{"export", runExport, []string{"stray"}},
+		{"import", runImport, []string{"stray"}},
+		{"depgraph", runDepgraph, []string{"stray"}},
+		{"bugreport", runBugreport, []string{"stray"}},
+		{"init", runInit, []string{"stray"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var code int
+			captureOutErr(t, func() { code = c.run(c.args) })
+			if code != 64 {
+				t.Errorf("wyk %s stray-positional exit %d, want 64", c.name, code)
+			}
+		})
 	}
 }

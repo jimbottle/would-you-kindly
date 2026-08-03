@@ -44,6 +44,14 @@ func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {
 	// Three registered repos in a tempdir-rooted registry: one with
 	// no hook (the fix target), one with wyk's hook (skip), one
 	// with a foreign hook (skip with notice).
+	// Stand outside any bd workspace. runDoctorFix registers the cwd's
+	// workspace, and the test binary runs in cmd/wyk — whose repo root IS
+	// a bd workspace (.beads/ is tracked). Without this the repo under
+	// test is appended to reg.Repos and the hook loop processes it, so the
+	// assertions below depend on whether the developer's checkout happens
+	// to have a post-commit hook. A clean clone (i.e. CI) has none, so the
+	// install branch fires and the counts are off by one (roborev #3041).
+	t.Chdir(t.TempDir())
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	withTempHome(t) // isolate the skills install from the real ~/.claude
@@ -108,6 +116,14 @@ func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {
 }
 
 func TestRunDoctorFix_DryRunSkipsWrites(t *testing.T) {
+	// Stand outside any bd workspace. runDoctorFix registers the cwd's
+	// workspace, and the test binary runs in cmd/wyk — whose repo root IS
+	// a bd workspace (.beads/ is tracked). Without this the repo under
+	// test is appended to reg.Repos and the hook loop processes it, so the
+	// assertions below depend on whether the developer's checkout happens
+	// to have a post-commit hook. A clean clone (i.e. CI) has none, so the
+	// install branch fires and the counts are off by one (roborev #3041).
+	t.Chdir(t.TempDir())
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	withTempHome(t) // isolate skills install
@@ -136,6 +152,14 @@ func TestRunDoctorFix_PartialFailureExits1(t *testing.T) {
 	// first one and succeeds on the second. Exit 1 reflects the
 	// aggregated failure; the second install still ran (no
 	// short-circuit on first error).
+	// Stand outside any bd workspace. runDoctorFix registers the cwd's
+	// workspace, and the test binary runs in cmd/wyk — whose repo root IS
+	// a bd workspace (.beads/ is tracked). Without this the repo under
+	// test is appended to reg.Repos and the hook loop processes it, so the
+	// assertions below depend on whether the developer's checkout happens
+	// to have a post-commit hook. A clean clone (i.e. CI) has none, so the
+	// install branch fires and the counts are off by one (roborev #3041).
+	t.Chdir(t.TempDir())
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	withTempHome(t) // isolate skills install
@@ -225,6 +249,14 @@ func TestRunDoctorFix_NoRegistryReturns2(t *testing.T) {
 // return 0 (the "we fixed the skills even though there were no repos"
 // branch), writing the skills to disk.
 func TestRunDoctorFix_NoRegistryInstallsMissingSkillsReturns0(t *testing.T) {
+	// Stand outside any bd workspace. runDoctorFix registers the cwd's
+	// workspace, and the test binary runs in cmd/wyk — whose repo root IS
+	// a bd workspace (.beads/ is tracked). Without this the repo under
+	// test is appended to reg.Repos and the hook loop processes it, so the
+	// assertions below depend on whether the developer's checkout happens
+	// to have a post-commit hook. A clean clone (i.e. CI) has none, so the
+	// install branch fires and the counts are off by one (roborev #3041).
+	t.Chdir(t.TempDir())
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	dir := withTempHome(t) // fresh temp HOME → skills start missing

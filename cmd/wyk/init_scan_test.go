@@ -333,3 +333,77 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// A permission-denied SUBTREE must not abort the scan — a single
+// unreadable directory shouldn't sink a whole home-directory sweep — but
+// it must be reported, or the user gets "0 repos found" with no hint that
+// part of the tree was never read (roborev #3045).
+func TestScanForBeadsRepos_UnreadableSubtreeIsReportedNotFatal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read a 0000 directory, so the skip can't be reproduced")
+	}
+	root := t.TempDir()
+	want := mkBeads(t, root, "readable")
+	bad := filepath.Join(root, "locked")
+	if err := os.Mkdir(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bad, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bad, 0o755) }) // let TempDir clean up
+
+	got, skipped, err := scanForBeadsRepos(root)
+	if err != nil {
+		t.Fatalf("an unreadable subtree must not be fatal; got %v", err)
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("scan returned %v, want the readable workspace [%s]", got, want)
+	}
+	if len(skipped) == 0 {
+		t.Fatal("the unreadable subtree was skipped silently — no entry in skippedPaths")
+	}
+	joined := strings.Join(skipped, "\n")
+	if !strings.Contains(joined, bad) {
+		t.Errorf("skippedPaths %q does not name the unreadable path %s", joined, bad)
+	}
+}
+
+// A failure on the scan ROOT is fatal: returning an empty result would
+// read as "scanned fine, found nothing". This is what makes the
+// documented exit-1 filesystem-error branch reachable at all.
+func TestScanForBeadsRepos_UnreadableRootIsFatal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read a 0000 directory, so the failure can't be reproduced")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	got, _, err := scanForBeadsRepos(root)
+	if err == nil {
+		t.Fatalf("an unreadable root must be fatal; got %v with nil error", got)
+	}
+}
+
+// The exit-code half of the above: runScanAndRegister must surface the
+// fatal walk error as exit 1, not the exit 0 an empty-but-clean scan gets.
+func TestRunScanAndRegister_UnreadableRootExits1(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read a 0000 directory, so the failure can't be reproduced")
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	// Stat must succeed (that path already exits 1 via its own branch) —
+	// it's the WALK that has to fail, so drop only the read bit.
+	if err := os.Chmod(root, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	if code := runScanAndRegisterWithProbe(root, false, alwaysProbeOK); code != 1 {
+		t.Errorf("unreadable-root scan exit %d, want 1", code)
+	}
+}

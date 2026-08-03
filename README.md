@@ -447,10 +447,10 @@ to restore the original.
 | `a`   | Close the cursor issue (asks `[y/N]` to confirm)            |
 | `H`   | Toggle the `human` label on the cursor issue                |
 | `n`   | Append a note to the cursor issue (multi-line textarea)     |
-| `N`   | File a new issue in the cursor's repo (QuickAdd; refuses without an owner) |
+| `N`   | File a new issue in the cursor's repo (QuickAdd; refuses without an assignee) |
 | `e`   | Edit the cursor issue's description in `$EDITOR`            |
 | `L`   | Toggle an arbitrary label on the cursor issue               |
-| `O`   | Change the cursor issue's owner                             |
+| `O`   | Change the cursor issue's assignee                          |
 | `d`   | Defer the cursor issue (`bd update --defer`)                |
 | `T`   | Cycle the cursor issue's type (task → bug → feat → …)       |
 | `+`/`-` | Bump the cursor issue's priority                          |

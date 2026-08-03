@@ -1993,7 +1993,7 @@ func (m Model) updateQuickAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// names the fix so a user surprised by the refusal knows
 		// what to do.
 		if m.me == "" {
-			m.setStatus("quick-add cancelled: no owner. Re-launch with -me=you@example.com (or set git user.email / $USER)")
+			m.setStatus("quick-add cancelled: no assignee. Re-launch with -me=you@example.com (or set git user.email / $USER)")
 			return m, nil
 		}
 		assignee := m.me
