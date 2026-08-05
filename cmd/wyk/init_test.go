@@ -75,8 +75,11 @@ func TestInit_IdempotentReinstallNoForce(t *testing.T) {
 	}
 }
 
-func TestInit_RefusesToOverwriteForeignHook(t *testing.T) {
-	dir := gitInit(t)
+// writeForeignHook plants a non-wyk post-commit hook in dir's default
+// hooks dir and returns its path — the roborev-in-a-beads-repo shape
+// that motivated would-you-kindly-7kly.
+func writeForeignHook(t *testing.T, dir string) string {
+	t.Helper()
 	hookPath := filepath.Join(dir, ".git", "hooks", "post-commit")
 	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -84,10 +87,21 @@ func TestInit_RefusesToOverwriteForeignHook(t *testing.T) {
 	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\n# some other tool's hook\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return hookPath
+}
 
-	// Without -force: refuse with usage exit code 64.
-	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 64 {
-		t.Errorf("expected 64 when overwriting foreign hook without -force; got %d", code)
+func TestInit_LeavesForeignHookAloneWithoutForce(t *testing.T) {
+	dir := gitInit(t)
+	hookPath := writeForeignHook(t, dir)
+
+	// Without -force: decline, but exit 0 — wyk chose not to clobber, so
+	// nothing failed. It used to exit 64, which aborted the run before
+	// registration (would-you-kindly-7kly).
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Errorf("expected 0 (declined with a warning) on a foreign hook; got %d", code)
+	}
+	if body, _ := os.ReadFile(hookPath); strings.Contains(string(body), hookMarker) {
+		t.Errorf("foreign hook should be untouched; got:\n%s", body)
 	}
 
 	// With -force: replace.
@@ -97,6 +111,99 @@ func TestInit_RefusesToOverwriteForeignHook(t *testing.T) {
 	body, _ := os.ReadFile(hookPath)
 	if !strings.Contains(string(body), "wyk hook post-commit") {
 		t.Errorf("after -force, hook should be the wyk one; got:\n%s", body)
+	}
+}
+
+// TestInit_RegistersDespiteForeignHook is the regression test for
+// would-you-kindly-7kly. Registration is what makes a repo visible to
+// `wyk inbox` / the dashboard / the TUI; a foreign post-commit hook used
+// to abort init at exit 64 before the registry write, so handoffs filed
+// in that repo reported success and no human could ever see them.
+// Registration must not be gated on the hook step.
+func TestInit_RegistersDespiteForeignHook(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	dir := gitInit(t)
+	writeForeignHook(t, dir)
+
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md"); code != 0 {
+		t.Fatalf("init exit %d, want 0", code)
+	}
+	regPath, err := registry.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if !reg.Has(dir) {
+		t.Fatalf("repo with a foreign hook was not registered; registry = %+v", reg.Repos)
+	}
+}
+
+// TestInit_DryRunMatchesRealRunOnForeignHook pins the preview/real-run
+// agreement the bug report called out: -dry-run promised registration
+// while the real run aborted before it. Both must now register.
+func TestInit_DryRunMatchesRealRunOnForeignHook(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	dir := gitInit(t)
+	writeForeignHook(t, dir)
+
+	out := captureStdout(t, func() {
+		if code := runInitIn(t, dir, "-dry-run", "-skip-bd-init", "-skip-claude-md"); code != 0 {
+			t.Errorf("dry-run exit %d, want 0", code)
+		}
+	})
+	if !strings.Contains(out, "would register") {
+		t.Fatalf("dry-run should promise registration; got:\n%s", out)
+	}
+	if code := runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md"); code != 0 {
+		t.Fatalf("real run exit %d, want 0", code)
+	}
+	regPath, _ := registry.DefaultPath()
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if !reg.Has(dir) {
+		t.Error("dry-run promised registration but the real run did not deliver it")
+	}
+}
+
+// TestInit_SkipHook registers and enriches without touching git hooks —
+// the escape hatch for a repo whose post-commit belongs to another tool.
+func TestInit_SkipHook(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	dir := gitInit(t)
+
+	if code := runInitIn(t, dir, "-skip-hook", "-skip-bd-init", "-skip-claude-md"); code != 0 {
+		t.Fatalf("init -skip-hook exit %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "hooks", "post-commit")); !os.IsNotExist(err) {
+		t.Errorf("-skip-hook wrote a hook; stat err = %v", err)
+	}
+	regPath, _ := registry.DefaultPath()
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if !reg.Has(dir) {
+		t.Error("-skip-hook should still register the repo")
+	}
+}
+
+// TestInit_SkipHookRejectsHookFlags: -skip-hook says "don't touch hooks"
+// and -chain/-force say "touch them this way"; honouring one silently
+// would leave the user guessing which won.
+func TestInit_SkipHookRejectsHookFlags(t *testing.T) {
+	dir := gitInit(t)
+	for _, flag := range []string{"-chain", "-force"} {
+		if code := runInitIn(t, dir, "-skip-hook", flag, "-skip-bd-init", "-skip-register"); code != 64 {
+			t.Errorf("-skip-hook %s exit %d, want 64", flag, code)
+		}
 	}
 }
 

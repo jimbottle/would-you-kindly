@@ -80,6 +80,7 @@ Common case:
 Preview / opt out of pieces:
   wyk init -dry-run           show what would change, write nothing
   wyk init -skip-claude-md    skip the CLAUDE.md / .claude/settings.json edits
+  wyk init -skip-hook         register + enrich only; don't touch git hooks
   wyk init -chain             keep an existing post-commit hook, chain wyk after it
   wyk init -force             overwrite an existing post-commit hook (destructive)
 
@@ -101,12 +102,24 @@ Flags:
 // it. Each step is independently idempotent — re-running on a
 // fully-set-up repo is a no-op with status messages.
 //
+// Registration is deliberately NOT gated on the hook install: a foreign
+// hook (or a broken core.hooksPath) makes wyk decline to write a hook,
+// but it says nothing about whether the repo should be visible to the
+// multi-repo views. It used to abort the whole run at exit 64, leaving
+// the repo unregistered — so `wyk handoff` in that repo succeeded while
+// `wyk inbox` / the dashboard / the TUI could never show the result, and
+// a P1 handoff sat invisible for days (would-you-kindly-7kly). The hook
+// step now runs LAST and its refusals are warnings.
+//
 // Exit codes:
 //
-//	0   installed / already installed (or, with -dry-run, would have)
+//	0   installed / already installed / hook declined with a warning
+//	    (or, with -dry-run, would have)
 //	1   filesystem, git, or bd error
 //	2   .git directory missing — not a git repo
-//	64  usage error or refusal to overwrite a foreign hook without -force
+//	64  usage error, or an explicit -chain that can't proceed (the
+//	    .pre-wyk slot is occupied). Registration has already happened
+//	    by then.
 //
 // perRepoInitFlags names the flags that only mean something on the
 // per-repo install path, so every alternate mode (-scan, -uninstall,
@@ -118,7 +131,7 @@ Flags:
 // with the flag (would-you-kindly-6gjb). A new per-repo flag now has a
 // single place to be registered.
 var perRepoInitFlags = []string{
-	"force", "chain", "skip-bd-init", "skip-register", "skip-claude-md", "skills",
+	"force", "chain", "skip-bd-init", "skip-register", "skip-claude-md", "skip-hook", "skills",
 }
 
 // setIncompatibleFlags returns the "-name" forms of the per-repo-only
@@ -152,6 +165,7 @@ func runInit(args []string) int {
 	skipBD := fs.Bool("skip-bd-init", false, "do not run 'bd init' even if .beads is missing")
 	skipRegister := fs.Bool("skip-register", false, "do not add this repo to ~/.config/wyk/repos.json")
 	skipClaudeMD := fs.Bool("skip-claude-md", false, "do not seed the agent enrichment: wyk's conventions block in CLAUDE.md AND the bd-create-guard PreToolUse hook in .claude/settings.json (which redirects 'bd create' to 'wyk create')")
+	skipHook := fs.Bool("skip-hook", false, "do not touch git hooks at all — register and enrich only. Use when another tool owns post-commit and you don't want wyk's auto-close (commits with 'Closes: <id>' then won't close anything)")
 	scanRoot := fs.String("scan", "", "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path")
 	uninstall := fs.Bool("uninstall", false, "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks")
 	fixForeignHooks := fs.Bool("fix-foreign-hooks", false, "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)")
@@ -178,6 +192,17 @@ func runInit(args []string) int {
 	}
 	if *force && *chain {
 		fmt.Fprintln(os.Stderr, "wyk init: -force and -chain are mutually exclusive")
+		return 64
+	}
+	// -skip-hook says "don't touch hooks"; -force / -chain say "touch them
+	// this specific way". Silently honouring one over the other would leave
+	// the user guessing which won.
+	if *skipHook && (*force || *chain) {
+		which := "-force"
+		if *chain {
+			which = "-chain"
+		}
+		fmt.Fprintf(os.Stderr, "wyk init: -skip-hook and %s are mutually exclusive\n", which)
 		return 64
 	}
 	if *fixForeignHooks {
@@ -228,23 +253,13 @@ func runInit(args []string) int {
 		return 2
 	}
 
-	// Resolve the hooks dir git ACTUALLY runs, up front. resolveGitHookPath
-	// follows core.hooksPath, so an in-repo redirect (e.g. bd's .beads/hooks)
-	// gets wyk's hook where it'll fire instead of a dead file in .git/hooks;
-	// worktrees / gitlinks resolve correctly too. With core.hooksPath unset
-	// this is the usual .git/hooks/post-commit. Doing it BEFORE bd-init and
-	// the enrichment steps means an out-of-repo (stale) core.hooksPath is
-	// refused before any state is mutated, not half-way through. coreHooksPath
-	// gates the refusal so a normal worktree (whose shared hooks legitimately
-	// live outside the worktree root, but with no core.hooksPath set) isn't
-	// mistaken for a redirect.
-	// Up-front: run the guard for its side effect — refuse a pre-existing
-	// out-of-repo stale redirect BEFORE mutating any state. The resolved
-	// path is intentionally discarded; the authoritative resolution
-	// happens after `bd init` (which can repoint core.hooksPath).
-	if _, code := resolveAndGuardHookPath(repoRoot); code != 0 {
-		return code
-	}
+	// The hook path is resolved once, in the hook step at the bottom.
+	// It used to be resolved up front too, purely so an out-of-repo
+	// core.hooksPath could abort the run before anything was mutated —
+	// but aborting is exactly the behaviour that left repos unregistered
+	// and handoffs invisible (would-you-kindly-7kly). Nothing needs
+	// protecting from a hook problem any more, so the early probe (and
+	// its duplicate warning) is gone.
 
 	// Step 1: bootstrap a bd workspace if there isn't one.
 	if !*skipBD {
@@ -315,134 +330,17 @@ func runInit(args []string) int {
 		}
 	}
 
-	// Re-resolve the active hook path NOW, after bd init. The up-front
-	// resolution (used only to refuse a pre-existing out-of-repo stale
-	// redirect before we mutate anything) predates `bd init`, which
-	// points core.hooksPath at .beads/hooks. On a fresh repo that means
-	// the up-front path is .git/hooks/post-commit while git now reads
-	// from .beads/hooks — so writing there would install wyk's auto-close
-	// hook into a directory git ignores, and Closes:/Fixes: would
-	// silently never fire. Re-resolving makes the hook land where git
-	// actually looks. Re-run the within-repo guard in case bd (or a
-	// pre-existing config) pointed the redirect outside the repo: better
-	// to fail loud than install into a bypassed path.
-	hookPath, code := resolveAndGuardHookPath(repoRoot)
-	if code != 0 {
-		return code
-	}
-
-	// hookPath now reflects git's active hooks dir (re-resolved above,
-	// after bd init may have set core.hooksPath).
-	preWykPath := hookPath + ".pre-wyk"
-
-	// Step 2: install the post-commit hook. Each branch sets
-	// `skipWrite` rather than returning early so step 3 (registry)
-	// still runs — that's what makes init idempotent on repos where
-	// the hook is already in place but the registry write previously
-	// failed. `chainMove` is set when we need to move an existing
-	// foreign hook to its .pre-wyk preservation slot.
-	skipWrite := false
-	chainMove := false
-	switch existing, err := os.ReadFile(hookPath); {
-	case err == nil:
-		if bytes.Contains(existing, []byte(hookMarker)) {
-			if *dryRun {
-				fmt.Printf("wyk init: would reinstall %s (existing hook is from a previous `wyk init`)\n", hookPath)
-				skipWrite = true
-			} else if !*force && !*chain {
-				fmt.Println("wyk init: post-commit hook already installed (use -force to reinstall)")
-				skipWrite = true
-			}
-		} else {
-			// Foreign hook. Three options: refuse (default), overwrite
-			// (-force, destructive), or chain (-chain, preserves the
-			// original at .pre-wyk and runs both).
-			if *dryRun {
-				switch {
-				case *chain:
-					// The real -chain run refuses if .pre-wyk already
-					// exists (would clobber a previously-preserved
-					// hook). Mirror that here so the dry-run accurately
-					// previews the outcome.
-					if _, err := os.Stat(preWykPath); err == nil {
-						fmt.Printf("wyk init: would refuse to chain at %s (because %s already exists — would clobber a previously-preserved hook)\n",
-							hookPath, preWykPath)
-					} else {
-						fmt.Printf("wyk init: would chain foreign hook at %s (move to %s, install wyk wrapper)\n",
-							hookPath, preWykPath)
-					}
-				case *force:
-					fmt.Printf("wyk init: would overwrite foreign hook at %s (-force)\n", hookPath)
-				default:
-					fmt.Printf("wyk init: would refuse to overwrite foreign hook at %s\n", hookPath)
-					fmt.Println("  Re-run with -chain to keep both hooks, or -force to replace.")
-				}
-				skipWrite = true
-			} else if *chain {
-				// Preservation slot already in use? Refuse — we don't
-				// want to silently clobber a previously-chained hook.
-				if _, err := os.Stat(preWykPath); err == nil {
-					fmt.Fprintf(os.Stderr,
-						"wyk init: -chain refused: %s already exists\n  (the foreign hook would overwrite a previously-preserved hook)\n",
-						preWykPath)
-					return 64
-				} else if !errors.Is(err, os.ErrNotExist) {
-					fmt.Fprintln(os.Stderr, "wyk init: stat .pre-wyk:", err)
-					return 1
-				}
-				chainMove = true
-			} else if !*force {
-				fmt.Fprintf(os.Stderr,
-					"wyk init: refusing to overwrite existing %s\n  Use -chain to keep both hooks, or -force to replace.\n",
-					hookPath)
-				return 64
-			}
-		}
-	case !errors.Is(err, os.ErrNotExist):
-		fmt.Fprintln(os.Stderr, "wyk init: stat hook:", err)
-		return 1
-	}
-
-	// If -chain decided to preserve the existing hook, do the move
-	// before writing the wrapper. The wrapper script reads its
-	// dirname at runtime, so the .pre-wyk filename matters.
-	if chainMove {
-		if err := os.Rename(hookPath, preWykPath); err != nil {
-			fmt.Fprintln(os.Stderr, "wyk init: preserve foreign hook:", err)
-			return 1
-		}
-		fmt.Printf("wyk init: preserved existing hook → %s\n", preWykPath)
-	}
-
-	// Pick the hook script body to write: chained wrapper (when -chain
-	// was just applied OR a previously-chained install is being
-	// re-applied) or the plain hook.
-	hookBody := postCommitHook
-	if chainMove || preWykExists(preWykPath) {
-		hookBody = chainedPostCommitHook
-	}
-
-	if !skipWrite {
-		if *dryRun {
-			fmt.Printf("wyk init: would install %s\n", hookPath)
-		} else {
-			if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
-				fmt.Fprintln(os.Stderr, "wyk init: mkdir hooks dir:", err)
-				return 1
-			}
-			if err := os.WriteFile(hookPath, []byte(hookBody), 0o755); err != nil {
-				fmt.Fprintln(os.Stderr, "wyk init: write hook:", err)
-				return 1
-			}
-			fmt.Printf("wyk init: installed post-commit hook at %s\n", hookPath)
-			fmt.Println("  Commits whose message includes `Closes: <id>`, `Fixes: <id>`, or")
-			fmt.Println("  `Resolves: <id>` will now auto-close the referenced bd issue.")
-		}
-	}
-
-	// Step 3: register the repo so wyk's multi-repo TUI finds it.
-	// Runs on EVERY init, including when the hook step was skipped —
-	// that's the idempotency guarantee the doc promises.
+	// Step 2: register the repo so wyk's multi-repo views find it.
+	//
+	// This runs BEFORE the hook step, and that ordering is the whole fix
+	// for would-you-kindly-7kly. Registration is what makes a repo visible
+	// to `wyk inbox`, `wyk dashboard`, `wyk stats` and the TUI; the hook is
+	// an optional auto-close convenience. When registration sat downstream
+	// of the hook step, a single foreign post-commit hook aborted init at
+	// exit 64 and the repo stayed invisible — so agents handed work to a
+	// human, saw "handed <id> to human", and the human structurally could
+	// not receive it. Nothing about the hook decides whether this repo
+	// should be listed, so nothing about the hook may gate the listing.
 	if !*skipRegister {
 		if *dryRun {
 			// Preview must match what the real run would print —
@@ -452,6 +350,15 @@ func runInit(args []string) int {
 		} else if code := registerRepo(repoRoot); code != 0 {
 			return code
 		}
+	}
+
+	// Step 3: install the post-commit hook (unless -skip-hook). Last,
+	// and non-fatal by default: see installPostCommitHook.
+	hookCode := 0
+	if *skipHook {
+		fmt.Println("wyk init: skipping the post-commit hook (-skip-hook); `Closes: <id>` won't auto-close here")
+	} else {
+		hookCode = installPostCommitHook(repoRoot, *dryRun, *force, *chain)
 	}
 
 	// Step 4 (opt-in): install wyk's agent skills into ~/.claude/skills.
@@ -477,7 +384,157 @@ func runInit(args []string) int {
 			fmt.Printf("wyk init: installed %d skill(s) to %s: %s\n", len(written), dir, strings.Join(written, ", "))
 		}
 	}
+	// The hook step's exit code is reported here rather than returned
+	// inline, so a hook problem never skips the skills install either.
+	return hookCode
+}
+
+// installPostCommitHook is `wyk init`'s hook step: resolve the hooks dir
+// git ACTUALLY runs and install wyk's auto-close post-commit hook there,
+// or explain why it didn't.
+//
+// It resolves AFTER `bd init` deliberately: bd points core.hooksPath at
+// .beads/hooks, so a path resolved earlier would be .git/hooks — writing
+// there would install into a directory git ignores and `Closes:` would
+// silently never fire. resolveGitHookPath follows core.hooksPath, so
+// worktrees and gitlinks land correctly too.
+//
+// Refusals are WARNINGS, not failures. wyk declining to clobber another
+// tool's hook is wyk working as designed; the caller has already
+// registered the repo and seeded the enrichment, so there is nothing to
+// abort. Exit codes:
+//
+//	0   installed, already installed, or declined with a warning
+//	1   filesystem error while writing (already reported)
+//	64  an explicit -chain that cannot proceed (.pre-wyk is occupied) —
+//	    the user asked for something wyk can't deliver
+func installPostCommitHook(repoRoot string, dryRun, force, chain bool) int {
+	hookPath, ok := resolveAndGuardHookPath(repoRoot)
+	if !ok {
+		return 0
+	}
+	preWykPath := hookPath + ".pre-wyk"
+
+	// Each branch sets `skipWrite` rather than returning early, so the
+	// write decision is made in one place below.
+	skipWrite := false
+	chainMove := false
+	switch existing, err := os.ReadFile(hookPath); {
+	case err == nil:
+		if bytes.Contains(existing, []byte(hookMarker)) {
+			if dryRun {
+				fmt.Printf("wyk init: would reinstall %s (existing hook is from a previous `wyk init`)\n", hookPath)
+				skipWrite = true
+			} else if !force && !chain {
+				fmt.Println("wyk init: post-commit hook already installed (use -force to reinstall)")
+				skipWrite = true
+			}
+		} else {
+			// Foreign hook. Three options: decline (default), overwrite
+			// (-force, destructive), or chain (-chain, preserves the
+			// original at .pre-wyk and runs both).
+			if dryRun {
+				switch {
+				case chain:
+					// The real -chain run refuses if .pre-wyk already
+					// exists (would clobber a previously-preserved
+					// hook). Mirror that here so the dry-run accurately
+					// previews the outcome.
+					if _, err := os.Stat(preWykPath); err == nil {
+						fmt.Printf("wyk init: would refuse to chain at %s (because %s already exists — would clobber a previously-preserved hook)\n",
+							hookPath, preWykPath)
+					} else {
+						fmt.Printf("wyk init: would chain foreign hook at %s (move to %s, install wyk wrapper)\n",
+							hookPath, preWykPath)
+					}
+				case force:
+					fmt.Printf("wyk init: would overwrite foreign hook at %s (-force)\n", hookPath)
+				default:
+					warnForeignHookLeftAlone(hookPath, true)
+				}
+				skipWrite = true
+			} else if chain {
+				// Preservation slot already in use? Refuse — we don't
+				// want to silently clobber a previously-chained hook.
+				if _, err := os.Stat(preWykPath); err == nil {
+					fmt.Fprintf(os.Stderr,
+						"wyk init: -chain refused: %s already exists\n  (the foreign hook would overwrite a previously-preserved hook)\n",
+						preWykPath)
+					return 64
+				} else if !errors.Is(err, os.ErrNotExist) {
+					fmt.Fprintln(os.Stderr, "wyk init: stat .pre-wyk:", err)
+					return 1
+				}
+				chainMove = true
+			} else if !force {
+				warnForeignHookLeftAlone(hookPath, false)
+				skipWrite = true
+			}
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		fmt.Fprintln(os.Stderr, "wyk init: stat hook:", err)
+		return 1
+	}
+
+	// If -chain decided to preserve the existing hook, do the move
+	// before writing the wrapper. The wrapper script reads its
+	// dirname at runtime, so the .pre-wyk filename matters.
+	if chainMove {
+		if err := os.Rename(hookPath, preWykPath); err != nil {
+			fmt.Fprintln(os.Stderr, "wyk init: preserve foreign hook:", err)
+			return 1
+		}
+		fmt.Printf("wyk init: preserved existing hook → %s\n", preWykPath)
+	}
+
+	if skipWrite {
+		return 0
+	}
+
+	// Pick the hook script body to write: chained wrapper (when -chain
+	// was just applied OR a previously-chained install is being
+	// re-applied) or the plain hook.
+	hookBody := postCommitHook
+	if chainMove || preWykExists(preWykPath) {
+		hookBody = chainedPostCommitHook
+	}
+
+	if dryRun {
+		fmt.Printf("wyk init: would install %s\n", hookPath)
+		return 0
+	}
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: mkdir hooks dir:", err)
+		return 1
+	}
+	if err := os.WriteFile(hookPath, []byte(hookBody), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk init: write hook:", err)
+		return 1
+	}
+	fmt.Printf("wyk init: installed post-commit hook at %s\n", hookPath)
+	fmt.Println("  Commits whose message includes `Closes: <id>`, `Fixes: <id>`, or")
+	fmt.Println("  `Resolves: <id>` will now auto-close the referenced bd issue.")
 	return 0
+}
+
+// warnForeignHookLeftAlone prints the "we didn't touch your hook" notice.
+//
+// This used to be a fatal `return 64` that read, to a human, like a
+// benign skip of an optional feature — while actually aborting init
+// before the registry write. It is now a warning, and its job is to be
+// unmistakable about two things at once: the auto-close hook is NOT
+// installed, and everything that makes the repo visible IS.
+func warnForeignHookLeftAlone(hookPath string, dryRun bool) {
+	verb, tail := "is not installed", "Re-run with"
+	if dryRun {
+		verb, tail = "would not be installed", "Re-run (without -dry-run) with"
+	}
+	fmt.Fprintf(os.Stderr, "wyk init: WARNING: the post-commit auto-close hook %s\n", verb)
+	fmt.Fprintf(os.Stderr, "  %s already exists and isn't wyk's, so wyk left it alone.\n", hookPath)
+	fmt.Fprintln(os.Stderr, "  Commits with `Closes: <id>` will NOT auto-close issues in this repo.")
+	fmt.Fprintln(os.Stderr, "  "+tail+" -chain to keep both hooks, or -force to replace.")
+	fmt.Fprintln(os.Stderr, "  Everything else (bd workspace, registry entry, agent enrichment) is set up —")
+	fmt.Fprintln(os.Stderr, "  this repo IS visible to `wyk inbox`, the dashboard and the TUI.")
 }
 
 // previewRegister inspects the current registry and prints the same
@@ -1070,27 +1127,31 @@ func resolveGitHookPath(repoDir, hook string) (string, error) {
 }
 
 // resolveAndGuardHookPath resolves repoRoot's active post-commit hook
-// path and refuses an out-of-repo core.hooksPath redirect. It returns
-// (path, 0) to continue, or ("", code) where code is the exit status
-// runInit should return (1 = resolve failure, 64 = stale out-of-repo
-// redirect). runInit calls it twice — once up front (to refuse a
-// pre-existing stale redirect before mutating state) and once after
-// `bd init` (which can repoint core.hooksPath at .beads/hooks) — so the
-// resolution and the guard live in one place rather than drifting across
-// two near-identical copies.
-func resolveAndGuardHookPath(repoRoot string) (string, int) {
+// path and declines an out-of-repo core.hooksPath redirect. It returns
+// (path, true) when the hook step may proceed, or ("", false) after
+// printing a warning explaining why wyk isn't writing a hook.
+//
+// coreHooksPath gates the out-of-repo check so a normal worktree (whose
+// shared hooks legitimately live outside the worktree root, but with no
+// core.hooksPath set) isn't mistaken for a redirect.
+//
+// Both failure modes are warnings rather than exit codes: they mean "wyk
+// can't safely place a hook here", never "this repo shouldn't be set up".
+// Returning 64 for the stale-redirect case is what used to abort init
+// before the registry write (would-you-kindly-7kly).
+func resolveAndGuardHookPath(repoRoot string) (string, bool) {
 	hookPath, herr := resolveGitHookPath(repoRoot, "post-commit")
 	if herr != nil {
-		fmt.Fprintln(os.Stderr, "wyk init: resolve hook path:", herr)
-		return "", 1
+		fmt.Fprintln(os.Stderr, "wyk init: WARNING: no post-commit hook installed — resolve hook path:", herr)
+		return "", false
 	}
 	if _, set := coreHooksPath(repoRoot); set && !pathWithin(repoRoot, filepath.Dir(hookPath)) {
-		fmt.Fprintf(os.Stderr, "wyk init: git's core.hooksPath points outside this repo:\n          %s\n", filepath.Dir(hookPath))
-		fmt.Fprintln(os.Stderr, "          That's almost certainly stale — clear it and re-run wyk init:")
+		fmt.Fprintf(os.Stderr, "wyk init: WARNING: no post-commit hook installed — git's core.hooksPath points outside this repo:\n          %s\n", filepath.Dir(hookPath))
+		fmt.Fprintln(os.Stderr, "          That's almost certainly stale. Clear it and re-run wyk init:")
 		fmt.Fprintln(os.Stderr, "          git -C "+repoRoot+" config --unset core.hooksPath")
-		return "", 64
+		return "", false
 	}
-	return hookPath, 0
+	return hookPath, true
 }
 
 // coreHooksPath returns git's configured core.hooksPath for repoDir
@@ -1151,26 +1212,31 @@ func pathWithin(parent, child string) bool {
 }
 
 // hooksPathRedirect classifies how git's core.hooksPath affects the
-// post-commit hook wyk installs in .git/hooks. installDir is wyk's
-// install target (the repo's default hooks dir). Returns redirected =
-// true when git will run hooks from somewhere wyk's hook is NOT, with a
-// human-facing reason and whether the active dir is inside the repo
-// (which decides the remediation: install-there vs unset-the-stale-config).
-func hooksPathRedirect(repoDir string) (active string, redirected, insideRepo, wykHookActive bool) {
+// post-commit hook wyk installs in .git/hooks. Returns redirected = true
+// when git will run hooks from somewhere wyk's hook is NOT, plus enough
+// detail for the caller to name a remediation that actually works:
+// whether the active dir is inside the repo (install-there vs
+// unset-the-stale-config) and whether a foreign hook already occupies the
+// active slot (which decides -chain/-force vs a bare `wyk init`).
+func hooksPathRedirect(repoDir string) (active string, redirected, insideRepo, wykHookActive, foreignHookActive bool) {
 	hp, set := coreHooksPath(repoDir)
 	if !set {
-		return "", false, false, false
+		return "", false, false, false, false
 	}
 	activePost, err := resolveGitHookPath(repoDir, "post-commit")
 	if err != nil {
-		return hp, true, false, false
+		return hp, true, false, false, false
 	}
 	activeDir := filepath.Dir(activePost)
 	insideRepo = pathWithin(repoDir, activeDir)
 	if body, rerr := os.ReadFile(activePost); rerr == nil {
-		wykHookActive = bytes.Contains(body, []byte(hookMarker))
+		if bytes.Contains(body, []byte(hookMarker)) {
+			wykHookActive = true
+		} else {
+			foreignHookActive = true
+		}
 	}
-	return activeDir, true, insideRepo, wykHookActive
+	return activeDir, true, insideRepo, wykHookActive, foreignHookActive
 }
 
 // scanProbeTimeout caps each candidate's bd-readiness probe. Tight

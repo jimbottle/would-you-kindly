@@ -14,7 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   option. The path may be the workspace root or any directory inside
   it; the nearest ancestor holding `.beads/` is what gets registered.
 
+- **`wyk init -skip-hook`** — run the bootstrap without touching git
+  hooks at all. Previously the only paths that reached registration
+  from a repo with a foreign hook were `-chain` and `-force`, both of
+  which mutate hooks; there was no way to register a repo while leaving
+  its hooks alone. Mutually exclusive with `-chain` / `-force`.
+
 ### Changed
+
+- **`wyk init` registers the repo BEFORE installing the post-commit
+  hook**, and a hook it declines to write is now a warning rather than
+  an abort (would-you-kindly-7kly). Declining a foreign hook exits 0
+  with a `WARNING:` block naming what didn't happen; so does an
+  out-of-repo `core.hooksPath`, which used to exit 64. Only an explicit
+  `-chain` that cannot proceed (the `.pre-wyk` slot is occupied) still
+  exits 64 — and by then the repo is already registered.
 
 - **The `O` prompt is now labelled "assignee", not "owner"** — it writes
   bd's `assignee` field, while "owner" in the TUI means the Owner
@@ -23,6 +37,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   help all say assignee now.
 
 ### Fixed
+
+- **`wyk init` aborted before registering when a foreign post-commit
+  hook existed** (would-you-kindly-7kly), so the repo stayed invisible
+  to `wyk inbox`, `wyk dashboard`, `wyk stats`, `wyk activity`,
+  `wyk export`, `wyk depgraph` and the TUI. Because the *cwd-scoped*
+  commands (`wyk handoff`, `wyk create`, `bd`) work fine in an
+  unregistered repo, the failure was silent and asymmetric: an agent
+  filed handoffs, saw `handed <id> to human`, and the human structurally
+  could not receive them — one reporter lost a P1 outage this way for
+  several days. It hits beads repos specifically, since `bd init` points
+  `core.hooksPath` at `.beads/hooks`, making any other commit-hook
+  tool's hook there "foreign" to wyk. `wyk init -dry-run` compounded it
+  by promising registration the real run never reached.
+
+- **`wyk doctor`'s `core.hooksPath redirect` warning suggested a command
+  that could not work** (would-you-kindly-ghng). It recommended a bare
+  `(cd … && wyk init)`, which is precisely what declines when the active
+  hooks dir already holds another tool's hook; the advice now names
+  `-chain` / `-force` in that case. Its `unset core.hooksPath`
+  alternative now carries the caveat that clearing it disables every
+  hook in that dir — including bd's own.
 
 - **Low-severity drift batch from the public-release review**
   (would-you-kindly-6gjb). User-visible pieces: `wyk init -uninstall

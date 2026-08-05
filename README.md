@@ -373,7 +373,16 @@ redirects an agent's raw `bd create` to `wyk create` — so the session
 actually gets recorded instead of relying on the agent reading the docs.
 Every step is idempotent — re-running is safe. Add `-skills` to also
 install the agent skills; `-skip-claude-md` (covers both enrichment
-pieces) / `-skip-register` / `-skip-bd-init` opt out of individual steps.
+pieces) / `-skip-register` / `-skip-bd-init` / `-skip-hook` opt out of
+individual steps.
+
+**Registration is never gated on the hook.** If wyk can't install its
+post-commit hook — another tool already owns it, or `core.hooksPath` is
+stale — it warns, registers the repo anyway, and exits 0. That ordering
+is load-bearing: registration is what makes a repo visible to `wyk
+inbox`, the dashboard and the TUI, so a repo that fails to register is
+one where `wyk handoff` reports success and no human can ever see the
+result.
 
 > **What it touches, and what the guard is.** `wyk init` writes *outside*
 > `.beads/` by default: a `post-commit` git hook (chained after any
@@ -403,16 +412,26 @@ bd-2`) is rejected wholesale — use two separate `Closes:` lines.
 This is deliberate; it avoids closing extras from prose like
 `Closes: bd-1 (we'll handle bd-2 next week)`.
 
-If `.git/hooks/post-commit` already exists from another tool
-(e.g. `roborev`, `husky`, `pre-commit`), you have three options:
+If the active `post-commit` hook already exists from another tool
+(e.g. `roborev`, `husky`, `pre-commit`), a bare `wyk init` leaves it
+alone, warns that auto-close won't run, and finishes the rest of the
+bootstrap. To get the auto-close as well:
 
 - `wyk init -chain` (recommended) — preserves the existing hook
   at `post-commit.pre-wyk` and writes a wrapper that runs both:
   the original first, then wyk's auto-close. Non-destructive.
 - `wyk init -force` — overwrites the existing hook entirely.
   Destructive — only use if you don't need the other tool's hook.
-- `wyk init -dry-run` — preview what either path would do without
+- `wyk init -skip-hook` — don't touch hooks at all, and drop the
+  warning. Register and enrich only.
+- `wyk init -dry-run` — preview what any of these would do without
   writing anything.
+
+Note that `bd init` sets `core.hooksPath` to `.beads/hooks`, so in a
+beads repo this is where *any* other commit-hook tool's hook lives too —
+"beads repo that also uses another hook tool" is the common case, not an
+exotic one. `wyk init -fix-foreign-hooks` chains wyk after every foreign
+hook across the registry in one go.
 
 To uninstall a chained install: `rm .git/hooks/post-commit` and
 (optionally) `mv .git/hooks/post-commit.pre-wyk .git/hooks/post-commit`

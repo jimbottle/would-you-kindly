@@ -47,16 +47,19 @@ func TestInit_InstallsIntoActiveHooksDirWhenRedirectedInRepo(t *testing.T) {
 	}
 }
 
-// TestInit_RefusesWhenHooksPathOutsideRepo verifies wyk init refuses to
+// TestInit_DeclinesWhenHooksPathOutsideRepo verifies wyk init declines to
 // write when core.hooksPath points outside the repo (stale/cross-repo),
-// rather than installing into another location.
-func TestInit_RefusesWhenHooksPathOutsideRepo(t *testing.T) {
+// rather than installing into another location — and that declining is a
+// WARNING, not an abort. A stale redirect says nothing about whether the
+// repo should be set up, so init must still finish successfully
+// (would-you-kindly-7kly).
+func TestInit_DeclinesWhenHooksPathOutsideRepo(t *testing.T) {
 	repo := gitInit(t)
 	outside := t.TempDir()
 	gitConfigSet(t, repo, "core.hooksPath", outside)
 
-	if code := runInitIn(t, repo, "-skip-bd-init", "-skip-register"); code != 64 {
-		t.Errorf("init exit = %d, want 64 (refused)", code)
+	if code := runInitIn(t, repo, "-skip-bd-init", "-skip-register"); code != 0 {
+		t.Errorf("init exit = %d, want 0 (declined with a warning)", code)
 	}
 	if _, err := os.Stat(filepath.Join(outside, "post-commit")); err == nil {
 		t.Error("init must not write into the external hooks dir")
@@ -206,19 +209,31 @@ func TestHooksPathRedirect(t *testing.T) {
 	repo := gitInit(t)
 
 	// Unset core.hooksPath → not redirected.
-	if _, redirected, _, _ := hooksPathRedirect(repo); redirected {
+	if _, redirected, _, _, _ := hooksPathRedirect(repo); redirected {
 		t.Errorf("unset core.hooksPath: redirected = true, want false")
 	}
 
-	// Redirect to an in-repo dir that has no wyk hook yet.
+	// Redirect to an in-repo dir that has no hook at all yet: neither
+	// wyk's nor a foreign one is active.
 	inDir := filepath.Join(repo, ".beads", "hooks")
 	if err := os.MkdirAll(inDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	gitConfigSet(t, repo, "core.hooksPath", inDir)
-	active, redirected, inside, wyk := hooksPathRedirect(repo)
-	if !redirected || !inside || wyk {
-		t.Errorf("in-repo redirect: active=%q redirected=%v inside=%v wyk=%v; want redirected, inside, !wyk", active, redirected, inside, wyk)
+	active, redirected, inside, wyk, foreign := hooksPathRedirect(repo)
+	if !redirected || !inside || wyk || foreign {
+		t.Errorf("in-repo redirect, empty hooks dir: active=%q redirected=%v inside=%v wyk=%v foreign=%v; want redirected, inside, !wyk, !foreign",
+			active, redirected, inside, wyk, foreign)
+	}
+
+	// A foreign hook in the active dir is the case that decides doctor's
+	// remediation: a bare `wyk init` declines it, so the advice must be
+	// -chain/-force (would-you-kindly-ghng).
+	if err := os.WriteFile(filepath.Join(inDir, "post-commit"), []byte("#!/bin/sh\necho roborev\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, wyk, foreign := hooksPathRedirect(repo); wyk || !foreign {
+		t.Errorf("foreign active hook: wyk=%v foreign=%v; want !wyk, foreign", wyk, foreign)
 	}
 
 	// Put a wyk-marked hook at the active location → wykHookActive true,
@@ -227,14 +242,14 @@ func TestHooksPathRedirect(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(inDir, "post-commit"), []byte(hook), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, wyk := hooksPathRedirect(repo); !wyk {
-		t.Errorf("wyk-marked active hook: wykHookActive = false, want true")
+	if _, _, _, wyk, foreign := hooksPathRedirect(repo); !wyk || foreign {
+		t.Errorf("wyk-marked active hook: wyk=%v foreign=%v; want wyk, !foreign", wyk, foreign)
 	}
 
 	// Redirect to a dir OUTSIDE the repo.
 	outDir := t.TempDir()
 	gitConfigSet(t, repo, "core.hooksPath", outDir)
-	if _, redirected, inside, _ := hooksPathRedirect(repo); !redirected || inside {
+	if _, redirected, inside, _, _ := hooksPathRedirect(repo); !redirected || inside {
 		t.Errorf("outside-repo redirect: redirected=%v inside=%v; want redirected, !inside", redirected, inside)
 	}
 }

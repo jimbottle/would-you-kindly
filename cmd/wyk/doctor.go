@@ -1162,13 +1162,29 @@ func checkRepo(r registry.Repo) []check {
 	// .git/hooks never executes. (resolveGitHookPath above already follows
 	// core.hooksPath, so the classification reflects the *active* hook —
 	// but it doesn't explain WHY wyk's hook is bypassed; this does.)
-	if activeDir, redirected, inside, wykActive := hooksPathRedirect(r.Path); redirected && !wykActive {
+	if activeDir, redirected, inside, wykActive, foreignActive := hooksPathRedirect(r.Path); redirected && !wykActive {
 		detail := "git's core.hooksPath redirects post-commit hooks to " + activeDir +
 			", so wyk's hook in .git/hooks is bypassed and `Closes:`/`Fixes:` auto-close won't run. "
-		if inside {
-			detail += "Re-run `(cd " + r.Path + " && wyk init)` to install into the active hooks dir, or unset core.hooksPath."
-		} else {
+		switch {
+		case inside && foreignActive:
+			// A bare `wyk init` declines a foreign hook and installs
+			// nothing, so recommending it here sent the user round a
+			// loop that could not terminate (would-you-kindly-ghng).
+			// Name the flags that actually resolve it.
+			detail += "The active hooks dir already holds another tool's post-commit hook, so a bare `wyk init` will leave it alone — " +
+				"run `(cd " + r.Path + " && wyk init -chain)` to keep both, or `-force` to replace it."
+		case inside:
+			detail += "Re-run `(cd " + r.Path + " && wyk init)` to install into the active hooks dir."
+		default:
 			detail += "That path is outside this repo (likely stale) — clear it: `git -C " + r.Path + " config --unset core.hooksPath`."
+		}
+		if inside {
+			// Unsetting is a real option, but in a beads repo core.hooksPath
+			// is bd's own doing: clearing it disables bd's hooks and any
+			// other tool's living in that dir. Not a remedy to hand over
+			// without the caveat.
+			detail += " (Unsetting core.hooksPath also works, but it disables every hook in " + activeDir +
+				" — including bd's own and any other tool's.)"
 		}
 		out = append(out, check{name: prefix + ": core.hooksPath redirect", status: statusWarn, detail: detail})
 	}

@@ -87,7 +87,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "init",
 		Summary: "Install (or uninstall) the post-commit hook so commits with `Closes: <id>` trailers auto-close the referenced issue.",
-		Usage:   "wyk init [-chain | -force] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-claude-md] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]",
+		Usage:   "wyk init [-chain | -force | -skip-hook] [-dry-run] [-skip-bd-init] [-skip-register] [-skip-claude-md] [-skills] [-scan <root>] [-uninstall] [-fix-foreign-hooks]",
 		Examples: []string{
 			"wyk init                  # bootstrap this repo (idempotent)",
 			"wyk init -scan ~/Projects # register every bd workspace under a tree",
@@ -99,6 +99,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-skip-bd-init", Default: "false", Description: "do not run `bd init` even if .beads is missing"},
 			{Name: "-skip-register", Default: "false", Description: "do not add this repo to ~/.config/wyk/repos.json"},
 			{Name: "-skip-claude-md", Default: "false", Description: "do not seed the agent enrichment: wyk's conventions block in CLAUDE.md AND the bd-create-guard PreToolUse hook in .claude/settings.json (which redirects `bd create` to `wyk create`)"},
+			{Name: "-skip-hook", Default: "false", Description: "do not touch git hooks at all — register and enrich only. Use when another tool owns post-commit and you don't want wyk's auto-close (commits with `Closes: <id>` then won't close anything)"},
 			{Name: "-scan", Default: "", Description: "scan this directory tree for existing bd workspaces and register every one found (skips repos already registered, hidden dirs, node_modules, vendor); mutually exclusive with the per-repo init path"},
 			{Name: "-uninstall", Default: "false", Description: "remove wyk's post-commit hook (restoring post-commit.pre-wyk if present); refuses on foreign hooks"},
 			{Name: "-fix-foreign-hooks", Default: "false", Description: "scan the registered repos for foreign post-commit hooks and chain wyk after each (idempotent; wyk-installed and missing hooks are left alone)"},
