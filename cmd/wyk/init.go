@@ -374,7 +374,18 @@ func runInit(args []string) int {
 	case *skipRegister:
 		visibility = repoRegistryVisibility(repoRoot)
 	case *dryRun:
-		visibility = regWillRegister
+		// A dry run would register — unless the repo is ALREADY registered.
+		// Announcing "would set up … registry entry" there contradicts the
+		// `already registered in …` line previewRegister printed moments
+		// earlier, and "WOULD BE visible" implies the repo isn't currently
+		// reachable when it is: the same mirror-image lie the -skip-register
+		// arm above exists to avoid. An unreadable registry falls through to
+		// the preview wording, matching what previewRegister says about it.
+		if repoRegistryVisibility(repoRoot) == regVisible {
+			visibility = regVisible
+		} else {
+			visibility = regWillRegister
+		}
 	}
 
 	// What the footer may name as established, by ONE rule applied to both
@@ -384,16 +395,18 @@ func runInit(args []string) int {
 	// from a stat while withholding the equally-real enrichment.
 	bdWorkspace := !*skipBD || beadsWorkspaceExists(repoRoot)
 	enrichment := enrichmentOK || wykEnrichmentPresent(repoRoot)
-	if *dryRun && *skipRegister {
-		// The one combination that writes nothing yet still lands in the
-		// past-tense branch: -skip-register means visibility comes from
-		// the registry, so an already-registered repo reads "Set up: …"
-		// for a run that created none of it. Drop the "this run did it"
-		// half — only what is already on disk may be claimed.
+	if *dryRun && visibility != regWillRegister {
+		// A dry run landing in a PAST-tense branch wrote nothing, so the
+		// "this run did it" half of the rule above is a claim about work
+		// that never happened. Only what is already on disk may be named.
 		//
-		// The other dry-run shape keeps the flags deliberately: it lands
-		// in "Would set up: …", where describing what a REAL run would
-		// establish is the whole point of a preview.
+		// The condition is the branch, not a flag: -skip-register is one
+		// way to get here, an already-registered repo is another, and
+		// keying on either flag alone would leave the other lying.
+		//
+		// regWillRegister keeps the flags deliberately — "Would set up: …"
+		// is a preview, where describing what a REAL run would establish
+		// is the whole point.
 		bdWorkspace = beadsWorkspaceExists(repoRoot)
 		enrichment = wykEnrichmentPresent(repoRoot)
 	}

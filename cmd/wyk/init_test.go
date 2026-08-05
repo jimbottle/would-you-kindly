@@ -349,6 +349,30 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 			"-dry-run")
 	})
 
+	t.Run("dry-run on an already-registered repo", func(t *testing.T) {
+		// The preview branch must not fire for a repo that is already in
+		// the registry: "Would set up: … registry entry" contradicts the
+		// `already registered in …` line the same run prints from
+		// previewRegister, and "WOULD BE visible" implies the repo isn't
+		// reachable when it is.
+		//
+		// It also pins the past-tense guard's condition. The setup run
+		// leaves enrichment on disk but no .beads, so a guard still keyed
+		// on -skip-register (rather than on landing in a past-tense
+		// branch) would credit a bd workspace from the flag that isn't
+		// there.
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		withTempHome(t)
+		dir := gitInit(t)
+		writeForeignHook(t, dir)
+		if code := runInitIn(t, dir, "-skip-bd-init"); code != 0 {
+			t.Fatalf("setup init exit %d", code)
+		}
+		assertDeclineFooter(t, dir,
+			footerWant{claim: claimVisible, bdWorkspace: false, enrichment: true},
+			"-dry-run")
+	})
+
 	t.Run("skip-claude-md, enrichment already on disk", func(t *testing.T) {
 		// The skip flags say what this RUN did, not what the repo HAS.
 		// -skip-bd-init already fell back to a .beads stat; -skip-claude-md
