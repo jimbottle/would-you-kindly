@@ -50,6 +50,17 @@ func runTests(m *testing.M) int {
 	// (roborev #3041). Individual tests still override this to observe the
 	// calls; the default just guarantees no test can reach the real thing by
 	// accident.
+	//
+	// It returns 0 while writing NOTHING, which is deliberate and is why it
+	// must not be relied on as "the install succeeded": runDoctorFix now
+	// verifies the wyk marker actually landed, so a test that reaches the
+	// install branch under this default gets a verification failure (exit 1)
+	// for reasons unrelated to what it is testing. Any -fix test that lets
+	// the hook loop reach a hookless repo must install its own stub via
+	// stubInstallHookIn (which writes the marker). The default stays inert
+	// because it cannot know whether `dir` is a throwaway repo or the
+	// developer's own checkout, and writing into the latter is precisely
+	// what this line exists to prevent.
 	installHookIn = func(string, ...string) int { return 0 }
 
 	return m.Run()

@@ -352,6 +352,22 @@ func runInit(args []string) int {
 		}
 	}
 
+	// What the hook-decline notices are allowed to say about this repo's
+	// visibility. Reaching here without -skip-register means registerRepo
+	// returned 0 (a failure returns above), so the repo is in the registry.
+	// With the flag, this run registered nothing — but the repo may well
+	// already BE registered, and `wyk doctor -fix` passes -skip-register
+	// for repos it read straight out of the registry. Keying the claim off
+	// the flag would tell exactly those users their registered repo is
+	// invisible, so ask the registry instead of the flag.
+	visibility := regVisible
+	switch {
+	case *skipRegister:
+		visibility = repoRegistryVisibility(repoRoot)
+	case *dryRun:
+		visibility = regWillRegister
+	}
+
 	// Step 3: install the post-commit hook (unless -skip-hook). Last,
 	// and non-fatal by default: see installPostCommitHook.
 	hookCode := 0
@@ -359,14 +375,10 @@ func runInit(args []string) int {
 		fmt.Println("wyk init: skipping the post-commit hook (-skip-hook); `Closes: <id>` won't auto-close here")
 	} else {
 		hookCode = installPostCommitHook(repoRoot, hookInstallOpts{
-			dryRun: *dryRun,
-			force:  *force,
-			chain:  *chain,
-			// Reaching here with -skip-register absent means registerRepo
-			// returned 0 (a failure returns above), so the decline notices
-			// may safely claim the repo is visible. With the flag set they
-			// must NOT — see hookDeclineFooter.
-			registered: !*skipRegister,
+			dryRun:     *dryRun,
+			force:      *force,
+			chain:      *chain,
+			visibility: visibility,
 		})
 	}
 
@@ -398,18 +410,58 @@ func runInit(args []string) int {
 	return hookCode
 }
 
-// hookInstallOpts carries the per-run flags the hook step needs. It's a
-// struct rather than four positional bools because `registered` is easy
-// to transpose with the others and a wrong value there makes wyk lie to
-// the user about whether their repo is visible.
+// regVisibility is what a hook-decline notice is allowed to say about
+// whether this repo reaches `wyk inbox`, the dashboard and the TUI.
+//
+// It is deliberately NOT a bool derived from -skip-register. That flag
+// describes what this RUN did; the notice needs to describe what the
+// REGISTRY holds, and the two differ on the most common path there is —
+// `wyk doctor -fix` passes -skip-register for repos it just read out of
+// the registry.
+type regVisibility int
+
+const (
+	// regVisible: the repo is in the registry, whether this run put it
+	// there or it was already.
+	regVisible regVisibility = iota
+	// regWillRegister: a dry run that would register it.
+	regWillRegister
+	// regAbsent: the registry was readable and this repo is not in it.
+	regAbsent
+	// regUnknown: the registry couldn't be read, so neither claim is
+	// safe to make.
+	regUnknown
+)
+
+// repoRegistryVisibility asks the registry whether repoRoot is already
+// listed. Called only when -skip-register means this run registered
+// nothing and the answer can't be inferred from the flag.
+func repoRegistryVisibility(repoRoot string) regVisibility {
+	path, err := registry.DefaultPath()
+	if err != nil {
+		return regUnknown
+	}
+	reg, err := registry.Load(path)
+	if err != nil {
+		return regUnknown
+	}
+	if reg.Has(repoRoot) {
+		return regVisible
+	}
+	return regAbsent
+}
+
+// hookInstallOpts carries the per-run state the hook step needs. It's a
+// struct rather than positional args because `visibility` is easy to
+// transpose with the bools, and a wrong value there makes wyk lie to the
+// user about whether their repo is reachable.
 type hookInstallOpts struct {
 	dryRun bool
 	force  bool
 	chain  bool
-	// registered is whether this run put the repo in the registry. The
-	// decline notices claim "you're still visible to `wyk inbox`" and
-	// that claim is only true when this is set.
-	registered bool
+	// visibility gates what the decline notices may claim about this
+	// repo reaching the multi-repo views.
+	visibility regVisibility
 }
 
 // installPostCommitHook is `wyk init`'s hook step: resolve the hooks dir
@@ -594,29 +646,34 @@ func warnStaleHooksPathRedirect(repoRoot, activeDir string, opts hookInstallOpts
 // with the state of the thing that actually matters: whether this repo
 // is visible to the multi-repo views.
 //
-// Splitting this out is not cosmetic. The reassurance used to be printed
+// Splitting this out is not cosmetic. The reassurance was once printed
 // unconditionally, so `wyk init -skip-register` on a repo with a foreign
-// hook promised registration that never happened — the exact
-// false-reassurance the surrounding change exists to eliminate, and a
-// live path, since `wyk doctor -fix` invokes init with -skip-register.
-// An agent reading "IS visible to `wyk inbox`" files a handoff no human
-// receives. The footer therefore has to track the run, not assert.
+// hook promised registration that never happened — an agent reading "IS
+// visible to `wyk inbox`" files a handoff no human receives. Keying it
+// off the flag then produced the mirror-image lie: `doctor -fix` passes
+// -skip-register for registry-sourced repos, so it told users their
+// REGISTERED repo was invisible and to `wyk registry add` it (a no-op).
+// Each branch below states only what has actually been established.
+//
+// The capitalised IS / WOULD BE is spelled out per branch rather than
+// interpolated: it's the emphasis that makes the notice scannable, and
+// it doesn't survive a %s.
 func hookDeclineFooter(opts hookInstallOpts) {
-	if !opts.registered {
-		fmt.Fprintln(os.Stderr, "  Registration was skipped (-skip-register), so this repo is NOT visible to")
-		fmt.Fprintln(os.Stderr, "  `wyk inbox`, the dashboard or the TUI either — run `wyk registry add` to fix that.")
-		return
-	}
-	// Spelled out per branch rather than interpolating a verb: the
-	// capitalised IS / WOULD BE is the emphasis that makes the notice
-	// scannable, and it doesn't survive a %s.
-	if opts.dryRun {
+	switch opts.visibility {
+	case regAbsent:
+		fmt.Fprintln(os.Stderr, "  This repo is NOT registered (this run skipped it: -skip-register), so it is")
+		fmt.Fprintln(os.Stderr, "  invisible to `wyk inbox`, the dashboard and the TUI — run `wyk registry add`.")
+	case regUnknown:
+		fmt.Fprintln(os.Stderr, "  This run didn't touch the registry (-skip-register) and the registry couldn't")
+		fmt.Fprintln(os.Stderr, "  be read — check `wyk registry list`; an unregistered repo is invisible to")
+		fmt.Fprintln(os.Stderr, "  `wyk inbox`, the dashboard and the TUI.")
+	case regWillRegister:
 		fmt.Fprintln(os.Stderr, "  Everything else (bd workspace, registry entry, agent enrichment) would be set up —")
 		fmt.Fprintln(os.Stderr, "  this repo WOULD BE visible to `wyk inbox`, the dashboard and the TUI.")
-		return
+	default: // regVisible
+		fmt.Fprintln(os.Stderr, "  Everything else (bd workspace, registry entry, agent enrichment) is set up —")
+		fmt.Fprintln(os.Stderr, "  this repo IS visible to `wyk inbox`, the dashboard and the TUI.")
 	}
-	fmt.Fprintln(os.Stderr, "  Everything else (bd workspace, registry entry, agent enrichment) is set up —")
-	fmt.Fprintln(os.Stderr, "  this repo IS visible to `wyk inbox`, the dashboard and the TUI.")
 }
 
 // previewRegister inspects the current registry and prints the same

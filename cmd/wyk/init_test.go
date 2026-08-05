@@ -195,72 +195,85 @@ func TestInit_SkipHook(t *testing.T) {
 	}
 }
 
-// TestInit_ForeignHookWarningTracksRegistration pins the banner's
-// honesty. The decline notice tells the reader "this repo IS visible to
-// `wyk inbox`" — the reassurance that makes exiting 0 safe. Under
-// -skip-register that claim is false, and it's a live path: `wyk doctor
-// -fix` invokes init with -skip-register. An agent that reads the
-// reassurance and files a handoff into an unregistered repo reproduces
-// the exact silent loss this whole change exists to eliminate.
-func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
-	cfg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfg)
-
-	t.Run("registered", func(t *testing.T) {
-		dir := gitInit(t)
-		writeForeignHook(t, dir)
-		_, stderr := captureStdouterr(t, func() {
-			runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md")
-		})
-		if !strings.Contains(stderr, "IS visible to") {
-			t.Errorf("registered run should reassure that the repo is visible; got:\n%s", stderr)
-		}
-		if strings.Contains(stderr, "NOT visible") {
-			t.Errorf("registered run must not warn about invisibility; got:\n%s", stderr)
+// assertDeclineFooter runs init in dir and checks the hook-decline
+// notice's visibility claim: wantVisible means it must reassure the
+// reader the repo reaches `wyk inbox`, !wantVisible means it must say
+// the repo isn't registered. Exactly one of the two may appear.
+func assertDeclineFooter(t *testing.T, dir string, wantVisible bool, args ...string) {
+	t.Helper()
+	_, stderr := captureStdouterr(t, func() {
+		if code := runInitIn(t, dir, args...); code != 0 {
+			t.Errorf("init %v exit %d, want 0", args, code)
 		}
 	})
+	gotVisible := strings.Contains(stderr, "IS visible to")
+	gotAbsent := strings.Contains(stderr, "NOT registered")
+	if gotVisible == gotAbsent {
+		t.Fatalf("footer must make exactly one claim (visible=%v absent=%v); got:\n%s",
+			gotVisible, gotAbsent, stderr)
+	}
+	if gotVisible != wantVisible {
+		t.Errorf("footer claims visible=%v, want %v; got:\n%s", gotVisible, wantVisible, stderr)
+	}
+}
 
-	t.Run("skip-register", func(t *testing.T) {
+// TestInit_ForeignHookWarningTracksRegistration pins the banner's
+// honesty in both directions. The decline notice tells the reader "this
+// repo IS visible to `wyk inbox`" — the reassurance that makes exiting 0
+// safe — so it must never say that about an unregistered repo (an agent
+// reads it, files a handoff, no human receives it) and must never deny
+// it for a registered one.
+//
+// Both lies were live on the same path: `wyk doctor -fix` invokes init
+// with -skip-register for repos it read straight OUT of the registry, so
+// keying the claim off "did this run register" got it backwards there.
+func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
+	t.Run("registered by this run", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		dir := gitInit(t)
 		writeForeignHook(t, dir)
-		_, stderr := captureStdouterr(t, func() {
-			runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md", "-skip-register")
-		})
-		if strings.Contains(stderr, "IS visible to") {
-			t.Errorf("-skip-register run claimed the repo is visible; got:\n%s", stderr)
+		assertDeclineFooter(t, dir, true, "-skip-bd-init", "-skip-claude-md")
+	})
+
+	t.Run("skip-register, never registered", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		dir := gitInit(t)
+		writeForeignHook(t, dir)
+		assertDeclineFooter(t, dir, false, "-skip-bd-init", "-skip-claude-md", "-skip-register")
+	})
+
+	t.Run("skip-register, already registered", func(t *testing.T) {
+		// The doctor -fix shape: the repo is in the registry and init is
+		// told not to touch it. Reporting "NOT registered ... run `wyk
+		// registry add`" here is a no-op instruction about a repo that is
+		// already fine.
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		dir := gitInit(t)
+		writeForeignHook(t, dir)
+		if code := runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md"); code != 0 {
+			t.Fatalf("setup init exit %d", code)
 		}
-		if !strings.Contains(stderr, "NOT visible") {
-			t.Errorf("-skip-register run should say the repo is NOT visible; got:\n%s", stderr)
-		}
+		assertDeclineFooter(t, dir, true, "-skip-bd-init", "-skip-claude-md", "-skip-register")
 	})
 }
 
 // TestInit_StaleHooksPathWarningTracksRegistration: the out-of-repo
 // decline is the sibling of the foreign-hook decline and must give the
-// same (accurate) reassurance rather than a different one.
+// same (accurate) footer rather than a different one.
 func TestInit_StaleHooksPathWarningTracksRegistration(t *testing.T) {
-	cfg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfg)
-	dir := gitInit(t)
-	gitConfigSet(t, dir, "core.hooksPath", t.TempDir())
-
-	_, stderr := captureStdouterr(t, func() {
-		if code := runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md"); code != 0 {
-			t.Errorf("init exit %d, want 0", code)
-		}
+	t.Run("registered by this run", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		dir := gitInit(t)
+		gitConfigSet(t, dir, "core.hooksPath", t.TempDir())
+		assertDeclineFooter(t, dir, true, "-skip-bd-init", "-skip-claude-md")
 	})
-	if !strings.Contains(stderr, "IS visible to") {
-		t.Errorf("registered run should reassure that the repo is visible; got:\n%s", stderr)
-	}
 
-	dir2 := gitInit(t)
-	gitConfigSet(t, dir2, "core.hooksPath", t.TempDir())
-	_, stderr = captureStdouterr(t, func() {
-		runInitIn(t, dir2, "-skip-bd-init", "-skip-claude-md", "-skip-register")
+	t.Run("skip-register, never registered", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		dir := gitInit(t)
+		gitConfigSet(t, dir, "core.hooksPath", t.TempDir())
+		assertDeclineFooter(t, dir, false, "-skip-bd-init", "-skip-claude-md", "-skip-register")
 	})
-	if !strings.Contains(stderr, "NOT visible") {
-		t.Errorf("-skip-register run should say the repo is NOT visible; got:\n%s", stderr)
-	}
 }
 
 // TestInit_SkipHookRejectsHookFlags: -skip-hook says "don't touch hooks"

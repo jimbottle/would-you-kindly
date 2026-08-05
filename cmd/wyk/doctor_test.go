@@ -176,7 +176,13 @@ func TestRunDoctorFix_PartialFailureExits1(t *testing.T) {
 		if dir == a {
 			return 1 // fail the first
 		}
-		return 0
+		// Succeeding means writing the hook, not just returning 0:
+		// runDoctorFix verifies the marker landed, so a bare `return 0`
+		// would silently route b into the verification-FAILURE branch
+		// while this test's comment claims it exercises the success one.
+		// Both set hadError, so the mis-wiring would be invisible — hence
+		// the `1 installed` assertion below.
+		return writeStubHook(t, dir)
 	}
 	defer func() { installHookIn = prev }()
 
@@ -189,11 +195,19 @@ func TestRunDoctorFix_PartialFailureExits1(t *testing.T) {
 		_ = devnull.Close()
 	}()
 
-	if code := runDoctorFix(false); code != 1 {
-		t.Errorf("partial-failure exit %d, want 1", code)
-	}
+	out := captureStdout(t, func() {
+		if code := runDoctorFix(false); code != 1 {
+			t.Errorf("partial-failure exit %d, want 1", code)
+		}
+	})
 	if len(attempted) != 2 {
 		t.Errorf("installHookIn called %d times, want 2 (no short-circuit on first error)", len(attempted))
+	}
+	// The success half of runDoctorFix's marker verification: b really
+	// installed, so it must be tallied. Asserting only the exit code
+	// can't tell "installed" from "verification failed" — both exit 1.
+	if !strings.Contains(out, "1 installed") {
+		t.Errorf("b installed successfully but wasn't tallied; got:\n%s", out)
 	}
 }
 
@@ -1003,22 +1017,31 @@ func stubInstallHookIn(t *testing.T, installed *[]string) {
 		if installed != nil {
 			*installed = append(*installed, dir)
 		}
-		hookPath, err := resolveGitHookPath(dir, "post-commit")
-		if err != nil {
-			t.Errorf("stubInstallHookIn: resolve hook path in %s: %v", dir, err)
-			return 1
-		}
-		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
-			t.Errorf("stubInstallHookIn: mkdir: %v", err)
-			return 1
-		}
-		if err := os.WriteFile(hookPath, []byte(postCommitHook), 0o755); err != nil {
-			t.Errorf("stubInstallHookIn: write hook: %v", err)
-			return 1
-		}
-		return 0
+		return writeStubHook(t, dir)
 	}
 	t.Cleanup(func() { installHookIn = prev })
+}
+
+// writeStubHook produces the observable effect of a successful install —
+// a wyk-marked post-commit hook at dir's active hook path — and returns
+// the exit code the seam should report. Any installHookIn stub that means
+// "this install succeeded" must go through it; see stubInstallHookIn.
+func writeStubHook(t *testing.T, dir string) int {
+	t.Helper()
+	hookPath, err := resolveGitHookPath(dir, "post-commit")
+	if err != nil {
+		t.Errorf("writeStubHook: resolve hook path in %s: %v", dir, err)
+		return 1
+	}
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Errorf("writeStubHook: mkdir: %v", err)
+		return 1
+	}
+	if err := os.WriteFile(hookPath, []byte(postCommitHook), 0o755); err != nil {
+		t.Errorf("writeStubHook: write hook: %v", err)
+		return 1
+	}
+	return 0
 }
 
 // TestRunDoctorFix_StaleHooksPathIsNotCountedAsInstalled runs the REAL
@@ -1032,8 +1055,21 @@ func stubInstallHookIn(t *testing.T, installed *[]string) {
 // stderr warning in the same run — and swallowed the exit-1 signal the
 // pre-decline behaviour used to give.
 func TestRunDoctorFix_StaleHooksPathIsNotCountedAsInstalled(t *testing.T) {
+	// Stand outside any bd workspace, and isolate HOME. This test restores
+	// the REAL installer, so without these it would run `wyk init` inside
+	// the developer's own checkout: runDoctorFix registers the cwd's
+	// workspace first, and the test binary runs in cmd/wyk, whose repo
+	// root IS a bd workspace (roborev #3041). On a clean clone that repo
+	// has no post-commit hook, so the install branch fires for it — the
+	// real runInit writes .git/hooks/post-commit, the CLAUDE.md
+	// conventions block and .claude/settings.json into the working tree,
+	// and the extra install breaks this test's own tally assertion. The
+	// repo under test comes from the registry file, so neither isolation
+	// weakens what's being pinned.
+	t.Chdir(t.TempDir())
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	withTempHome(t) // isolate skills install
 
 	repo := gitInit(t)
 	outside := t.TempDir()
