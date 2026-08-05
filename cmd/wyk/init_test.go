@@ -311,22 +311,42 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 			"-skip-bd-init", "-skip-claude-md", "-skip-register")
 	})
 
-	t.Run("dry-run + skip-register writes nothing to claim", func(t *testing.T) {
-		// -dry-run -skip-register is the one combination that reaches a
-		// PAST-tense footer while performing no writes at all: the repo is
-		// already registered, so visibility resolves to regVisible rather
-		// than the "would register" preview branch. The enumeration must
-		// therefore describe what is on disk, not what a real run would
-		// have created — .beads is absent and the dry run seeded no
-		// enrichment, so neither may be named.
+	// -dry-run -skip-register is the one combination that reaches a
+	// PAST-tense footer while performing no writes at all: the repo is
+	// already registered, so visibility resolves to regVisible rather than
+	// the "would register" preview branch. The enumeration must therefore
+	// describe what is ON DISK, not what a real run would have created —
+	// which needs pinning from both directions. With only the empty case,
+	// the on-disk fallbacks are indistinguishable from a hardcoded false
+	// and could regress silently.
+	t.Run("dry-run + skip-register, nothing on disk", func(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		withTempHome(t)
 		dir := gitInit(t)
 		writeForeignHook(t, dir)
+		// -skip-claude-md so the setup run seeds no enrichment either.
 		if code := runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md"); code != 0 {
 			t.Fatalf("setup init exit %d", code)
 		}
 		assertDeclineFooter(t, dir, footerWant{visible: true},
+			"-dry-run", "-skip-register")
+	})
+
+	t.Run("dry-run + skip-register, both already on disk", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		withTempHome(t)
+		dir := gitInit(t)
+		writeForeignHook(t, dir)
+		if err := os.MkdirAll(filepath.Join(dir, ".beads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A real run first, so CLAUDE.md and .claude/settings.json really
+		// carry the enrichment the dry run below must recognise.
+		if code := runInitIn(t, dir, "-skip-bd-init"); code != 0 {
+			t.Fatalf("setup init exit %d", code)
+		}
+		assertDeclineFooter(t, dir,
+			footerWant{visible: true, bdWorkspace: true, enrichment: true},
 			"-dry-run", "-skip-register")
 	})
 }

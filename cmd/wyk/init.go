@@ -385,11 +385,12 @@ func runInit(args []string) int {
 		// The one combination that writes nothing yet still lands in the
 		// past-tense branch: -skip-register means visibility comes from
 		// the registry, so an already-registered repo reads "Set up: …"
-		// for a run that created none of it. Fall back to what is
-		// actually on disk — the .beads stat is real state either way,
-		// while a previewed enrichment wrote nothing and can't be claimed.
+		// for a run that created none of it. Ask the disk instead of the
+		// flags — BOTH components, not just the workspace: a repo whose
+		// enrichment is genuinely in place shouldn't be reported as
+		// lacking it any more than one whose .beads is.
 		bdWorkspace = beadsWorkspaceExists(repoRoot)
-		enrichmentOK = false
+		enrichmentOK = wykEnrichmentPresent(repoRoot)
 	}
 
 	// Step 3: install the post-commit hook (unless -skip-hook). Last,
@@ -505,6 +506,24 @@ type hookInstallOpts struct {
 func beadsWorkspaceExists(repoRoot string) bool {
 	fi, err := os.Stat(filepath.Join(repoRoot, beadsDirName))
 	return err == nil && fi.IsDir()
+}
+
+// wykEnrichmentPresent reports whether repoRoot already carries BOTH
+// halves of the agent enrichment: the current conventions block in
+// CLAUDE.md and the bd-create-guard hook in .claude/settings.json. It
+// asks the same questions seedWykConventions / seedClaudeSettings ask to
+// decide "already current", so a run that only PREVIEWED the seeding can
+// still report accurately on what a previous run left behind.
+func wykEnrichmentPresent(repoRoot string) bool {
+	b, err := os.ReadFile(filepath.Join(repoRoot, "CLAUDE.md"))
+	if err != nil || !bytes.Contains(b, []byte(wykConventionsBlock)) {
+		return false
+	}
+	root, err := loadClaudeSettings(filepath.Join(repoRoot, ".claude", "settings.json"))
+	if err != nil {
+		return false
+	}
+	return claudeSettingsHasHook(root, claudeSettingsHook)
 }
 
 // installPostCommitHook is `wyk init`'s hook step: resolve the hooks dir
