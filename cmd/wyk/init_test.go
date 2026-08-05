@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -199,6 +200,12 @@ func TestInit_SkipHook(t *testing.T) {
 // notice's visibility claim: wantVisible means it must reassure the
 // reader the repo reaches `wyk inbox`, !wantVisible means it must say
 // the repo isn't registered. Exactly one of the two may appear.
+//
+// It also pins the "Set up:" enumeration against the skip flags: the
+// footer may only name a component whose step actually ran, so passing
+// -skip-bd-init / -skip-claude-md must drop the corresponding item.
+// Asserting the visibility sentence alone let the enumeration go on
+// claiming a bd workspace and an enrichment that were explicitly skipped.
 func assertDeclineFooter(t *testing.T, dir string, wantVisible bool, args ...string) {
 	t.Helper()
 	_, stderr := captureStdouterr(t, func() {
@@ -214,6 +221,24 @@ func assertDeclineFooter(t *testing.T, dir string, wantVisible bool, args ...str
 	}
 	if gotVisible != wantVisible {
 		t.Errorf("footer claims visible=%v, want %v; got:\n%s", gotVisible, wantVisible, stderr)
+	}
+	if !gotVisible {
+		return // the absent/unknown branches enumerate nothing
+	}
+	skipped := func(flag string) bool { return slices.Contains(args, flag) }
+	// -skip-bd-init only suppresses the claim when .beads really is
+	// absent; the footer falls back to a stat rather than the flag.
+	wantBD := !skipped("-skip-bd-init") || beadsWorkspaceExists(dir)
+	if got := strings.Contains(stderr, "bd workspace"); got != wantBD {
+		t.Errorf("footer names bd workspace = %v, want %v (args %v); got:\n%s", got, wantBD, args, stderr)
+	}
+	wantEnrichment := !skipped("-skip-claude-md")
+	if got := strings.Contains(stderr, "agent enrichment"); got != wantEnrichment {
+		t.Errorf("footer names agent enrichment = %v, want %v (args %v); got:\n%s",
+			got, wantEnrichment, args, stderr)
+	}
+	if !strings.Contains(stderr, "registry entry") {
+		t.Errorf("footer should name the registry entry it established; got:\n%s", stderr)
 	}
 }
 
@@ -240,6 +265,24 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 		dir := gitInit(t)
 		writeForeignHook(t, dir)
 		assertDeclineFooter(t, dir, false, "-skip-bd-init", "-skip-claude-md", "-skip-register")
+	})
+
+	t.Run("full bootstrap names every component", func(t *testing.T) {
+		// The positive side of the enumeration: with the enrichment run
+		// and .beads on disk, all three components are genuinely
+		// established and all three must appear. Without this the other
+		// subtests only ever assert the omissions, so a footer that named
+		// nothing would pass them all.
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		withTempHome(t)
+		dir := gitInit(t)
+		writeForeignHook(t, dir)
+		// -skip-bd-init keeps real `bd` out of the test; the .beads dir
+		// makes the stat fallback report the workspace as present anyway.
+		if err := os.MkdirAll(filepath.Join(dir, ".beads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertDeclineFooter(t, dir, true, "-skip-bd-init")
 	})
 
 	t.Run("skip-register, already registered", func(t *testing.T) {

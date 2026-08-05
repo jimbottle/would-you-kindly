@@ -310,9 +310,17 @@ func runInit(args []string) int {
 	// marker-delimited and refreshed in place, so re-running init keeps
 	// it current. Best-effort: a failure WARNs but doesn't gate the
 	// load-bearing hook install.
+	//
+	// enrichmentOK tracks whether BOTH halves landed, so the hook-decline
+	// footer can list the enrichment among the things this run set up only
+	// when it actually did. Both are best-effort, so either failing leaves
+	// it false without stopping init.
+	enrichmentOK := false
 	if !*skipClaudeMD {
+		enrichmentOK = true
 		action, err := seedWykConventions(repoRoot, *dryRun)
 		if err != nil {
+			enrichmentOK = false
 			fmt.Fprintln(os.Stderr, "wyk init: CLAUDE.md:", err)
 			fmt.Fprintln(os.Stderr, "wyk init: continuing — this enrichment is best-effort, the post-commit hook is the load-bearing install step")
 		} else {
@@ -323,6 +331,7 @@ func runInit(args []string) int {
 		// records the session). Enforces the convention at the harness
 		// level rather than leaving it to docs an agent can skip.
 		if sAction, sErr := seedClaudeSettings(repoRoot, *dryRun); sErr != nil {
+			enrichmentOK = false
 			fmt.Fprintln(os.Stderr, "wyk init: .claude/settings.json:", sErr)
 			fmt.Fprintln(os.Stderr, "wyk init: continuing — best-effort enrichment")
 		} else {
@@ -379,6 +388,15 @@ func runInit(args []string) int {
 			force:      *force,
 			chain:      *chain,
 			visibility: visibility,
+			// The bd workspace counts as established when this run handled
+			// it OR when .beads is already on disk — the same "ask the
+			// state, not the flag" rule visibility follows. Under
+			// -skip-bd-init we never look at .beads, so claiming it
+			// without the stat would assert a workspace that may have been
+			// deleted (which is itself a way handoffs go missing: the TUI
+			// reports the repo as a per-sub fetch failure).
+			bdWorkspace: !*skipBD || beadsWorkspaceExists(repoRoot),
+			enrichment:  enrichmentOK,
 		})
 	}
 
@@ -462,6 +480,20 @@ type hookInstallOpts struct {
 	// visibility gates what the decline notices may claim about this
 	// repo reaching the multi-repo views.
 	visibility regVisibility
+	// bdWorkspace / enrichment gate the other two things the decline
+	// footer used to assert unconditionally. Each is listed only when
+	// this run established it.
+	bdWorkspace bool
+	enrichment  bool
+}
+
+// beadsWorkspaceExists reports whether repoRoot holds a .beads directory.
+// Used to decide whether the decline footer may list the bd workspace
+// among the things that are set up when -skip-bd-init meant init never
+// touched it.
+func beadsWorkspaceExists(repoRoot string) bool {
+	fi, err := os.Stat(filepath.Join(repoRoot, beadsDirName))
+	return err == nil && fi.IsDir()
 }
 
 // installPostCommitHook is `wyk init`'s hook step: resolve the hooks dir
@@ -668,12 +700,37 @@ func hookDeclineFooter(opts hookInstallOpts) {
 		fmt.Fprintln(os.Stderr, "  be read — check `wyk registry list`; an unregistered repo is invisible to")
 		fmt.Fprintln(os.Stderr, "  `wyk inbox`, the dashboard and the TUI.")
 	case regWillRegister:
-		fmt.Fprintln(os.Stderr, "  Everything else (bd workspace, registry entry, agent enrichment) would be set up —")
-		fmt.Fprintln(os.Stderr, "  this repo WOULD BE visible to `wyk inbox`, the dashboard and the TUI.")
+		fmt.Fprintf(os.Stderr, "  Would set up: %s.\n", bootstrapComponents(opts))
+		fmt.Fprintln(os.Stderr, "  This repo WOULD BE visible to `wyk inbox`, the dashboard and the TUI.")
 	default: // regVisible
-		fmt.Fprintln(os.Stderr, "  Everything else (bd workspace, registry entry, agent enrichment) is set up —")
-		fmt.Fprintln(os.Stderr, "  this repo IS visible to `wyk inbox`, the dashboard and the TUI.")
+		fmt.Fprintf(os.Stderr, "  Set up: %s.\n", bootstrapComponents(opts))
+		fmt.Fprintln(os.Stderr, "  This repo IS visible to `wyk inbox`, the dashboard and the TUI.")
 	}
+}
+
+// bootstrapComponents names the pieces of the bootstrap this run
+// established, for the decline footer's leading clause.
+//
+// It enumerates rather than asserting "everything else" because that
+// phrasing was the same over-claim `-skip-register` was fixed for, one
+// layer down: the footer named the bd workspace and the agent enrichment
+// with no visibility into -skip-bd-init / -skip-claude-md, and
+// `doctor -fix` passes -skip-bd-init on every call. A component whose
+// step didn't run (or failed) is omitted, never claimed.
+//
+// The registry entry is unconditional here because the only callers are
+// the regVisible / regWillRegister branches, which are exactly the ones
+// that established it.
+func bootstrapComponents(opts hookInstallOpts) string {
+	parts := make([]string, 0, 3)
+	if opts.bdWorkspace {
+		parts = append(parts, "bd workspace")
+	}
+	parts = append(parts, "registry entry")
+	if opts.enrichment {
+		parts = append(parts, "agent enrichment")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // previewRegister inspects the current registry and prints the same
