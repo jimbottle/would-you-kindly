@@ -377,20 +377,25 @@ func runInit(args []string) int {
 		visibility = regWillRegister
 	}
 
-	// What the footer may name as established. The flags say what a REAL
-	// run does, which is the right answer for the "Would set up:" preview
-	// branch but not for the past-tense one.
+	// What the footer may name as established, by ONE rule applied to both
+	// components: this run did it, or it is already on disk. Anything less
+	// symmetric understates — `wyk init -skip-claude-md` on a repo that
+	// genuinely carries the conventions block would credit the workspace
+	// from a stat while withholding the equally-real enrichment.
 	bdWorkspace := !*skipBD || beadsWorkspaceExists(repoRoot)
+	enrichment := enrichmentOK || wykEnrichmentPresent(repoRoot)
 	if *dryRun && *skipRegister {
 		// The one combination that writes nothing yet still lands in the
 		// past-tense branch: -skip-register means visibility comes from
 		// the registry, so an already-registered repo reads "Set up: …"
-		// for a run that created none of it. Ask the disk instead of the
-		// flags — BOTH components, not just the workspace: a repo whose
-		// enrichment is genuinely in place shouldn't be reported as
-		// lacking it any more than one whose .beads is.
+		// for a run that created none of it. Drop the "this run did it"
+		// half — only what is already on disk may be claimed.
+		//
+		// The other dry-run shape keeps the flags deliberately: it lands
+		// in "Would set up: …", where describing what a REAL run would
+		// establish is the whole point of a preview.
 		bdWorkspace = beadsWorkspaceExists(repoRoot)
-		enrichmentOK = wykEnrichmentPresent(repoRoot)
+		enrichment = wykEnrichmentPresent(repoRoot)
 	}
 
 	// Step 3: install the post-commit hook (unless -skip-hook). Last,
@@ -405,7 +410,7 @@ func runInit(args []string) int {
 			chain:       *chain,
 			visibility:  visibility,
 			bdWorkspace: bdWorkspace,
-			enrichment:  enrichmentOK,
+			enrichment:  enrichment,
 		})
 	}
 

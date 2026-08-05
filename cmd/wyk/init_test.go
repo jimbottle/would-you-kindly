@@ -296,6 +296,30 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 			"-skip-bd-init")
 	})
 
+	t.Run("skip-claude-md, enrichment already on disk", func(t *testing.T) {
+		// The skip flags say what this RUN did, not what the repo HAS.
+		// -skip-bd-init already fell back to a .beads stat; -skip-claude-md
+		// must fall back the same way, or a repo carrying the current
+		// conventions block and the bd-create-guard is told it has neither
+		// while its workspace is credited from disk. Every other
+		// -skip-claude-md case sets up a repo with no enrichment, so false
+		// is correct there and the asymmetry stays invisible without this.
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		withTempHome(t)
+		dir := gitInit(t)
+		writeForeignHook(t, dir)
+		if err := os.MkdirAll(filepath.Join(dir, ".beads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A real run first, so both halves of the enrichment land on disk.
+		if code := runInitIn(t, dir, "-skip-bd-init"); code != 0 {
+			t.Fatalf("setup init exit %d", code)
+		}
+		assertDeclineFooter(t, dir,
+			footerWant{visible: true, bdWorkspace: true, enrichment: true},
+			"-skip-bd-init", "-skip-claude-md")
+	})
+
 	t.Run("skip-register, already registered", func(t *testing.T) {
 		// The doctor -fix shape: the repo is in the registry and init is
 		// told not to touch it. Reporting "NOT registered ... run `wyk
