@@ -202,20 +202,47 @@ func TestInit_SkipHook(t *testing.T) {
 // construction and can't fail, which is how the bd-workspace clause went
 // unpinned while looking covered.
 type footerWant struct {
-	// visible: the footer reassures that the repo reaches `wyk inbox`
-	// (false means it must say the repo is NOT registered instead).
-	visible bool
-	// bdWorkspace / enrichment: whether the "Set up:" enumeration names
-	// each component. Only consulted when visible.
+	// claim is which of the footer's mutually exclusive sentences must
+	// appear.
+	claim footerClaim
+	// bdWorkspace / enrichment: whether the "Set up:" / "Would set up:"
+	// enumeration names each component. Only consulted for the two
+	// enumerating claims.
 	bdWorkspace bool
 	enrichment  bool
 }
 
+// footerClaim identifies the hook-decline footer's mutually exclusive
+// closing sentences. It replaced a bool because that bool couldn't
+// express the preview branch at all — assertDeclineFooter fatal-ed on
+// "neither claim appeared", which is exactly what a dry run prints, so
+// the whole `Would set up:` path was unreachable by any test.
+type footerClaim int
+
+const (
+	claimVisible       footerClaim = iota // "this repo IS visible to …"
+	claimWouldBe                          // "this repo WOULD BE visible to …"
+	claimNotRegistered                    // "This repo is NOT registered …"
+)
+
+// marker is the substring that identifies the claim in the footer. The
+// three are mutually exclusive as substrings, so "exactly one appeared"
+// is a meaningful check.
+func (c footerClaim) marker() string {
+	switch c {
+	case claimWouldBe:
+		return "WOULD BE visible to"
+	case claimNotRegistered:
+		return "NOT registered"
+	default:
+		return "IS visible to"
+	}
+}
+
 // assertDeclineFooter runs init in dir and checks the hook-decline
-// notice against want: the visibility claim (exactly one of the two
-// sentences may appear) and, when visible, the "Set up:" enumeration.
-// The footer may only name a component this run actually established,
-// so the enumeration is what stops it quietly re-acquiring the
+// notice against want: which closing sentence it makes (exactly one may
+// appear) and, for the two that enumerate, which components they name.
+// The enumeration is what stops the footer quietly re-acquiring the
 // "everything else is set up" over-claim.
 func assertDeclineFooter(t *testing.T, dir string, want footerWant, args ...string) {
 	t.Helper()
@@ -224,16 +251,21 @@ func assertDeclineFooter(t *testing.T, dir string, want footerWant, args ...stri
 			t.Errorf("init %v exit %d, want 0", args, code)
 		}
 	})
-	gotVisible := strings.Contains(stderr, "IS visible to")
-	gotAbsent := strings.Contains(stderr, "NOT registered")
-	if gotVisible == gotAbsent {
-		t.Fatalf("footer must make exactly one claim (visible=%v absent=%v); got:\n%s",
-			gotVisible, gotAbsent, stderr)
+	var seen []footerClaim
+	for _, c := range []footerClaim{claimVisible, claimWouldBe, claimNotRegistered} {
+		if strings.Contains(stderr, c.marker()) {
+			seen = append(seen, c)
+		}
 	}
-	if gotVisible != want.visible {
-		t.Errorf("footer claims visible=%v, want %v; got:\n%s", gotVisible, want.visible, stderr)
+	if len(seen) != 1 {
+		t.Fatalf("footer must make exactly one claim, matched %d (args %v); got:\n%s",
+			len(seen), args, stderr)
 	}
-	if !gotVisible {
+	if seen[0] != want.claim {
+		t.Errorf("footer claim = %q, want %q (args %v); got:\n%s",
+			seen[0].marker(), want.claim.marker(), args, stderr)
+	}
+	if want.claim == claimNotRegistered {
 		return // the absent/unknown branches enumerate nothing
 	}
 	if got := strings.Contains(stderr, "bd workspace"); got != want.bdWorkspace {
@@ -264,7 +296,7 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		dir := gitInit(t)
 		writeForeignHook(t, dir)
-		assertDeclineFooter(t, dir, footerWant{visible: true},
+		assertDeclineFooter(t, dir, footerWant{claim: claimVisible},
 			"-skip-bd-init", "-skip-claude-md")
 	})
 
@@ -272,7 +304,7 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		dir := gitInit(t)
 		writeForeignHook(t, dir)
-		assertDeclineFooter(t, dir, footerWant{visible: false},
+		assertDeclineFooter(t, dir, footerWant{claim: claimNotRegistered},
 			"-skip-bd-init", "-skip-claude-md", "-skip-register")
 	})
 
@@ -292,8 +324,29 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertDeclineFooter(t, dir,
-			footerWant{visible: true, bdWorkspace: true, enrichment: true},
+			footerWant{claim: claimVisible, bdWorkspace: true, enrichment: true},
 			"-skip-bd-init")
+	})
+
+	t.Run("dry-run preview names what a real run would establish", func(t *testing.T) {
+		// The `Would set up:` branch, and the ONLY place the flag halves of
+		// bdWorkspace/enrichment are load-bearing: everywhere else the disk
+		// checks run after steps 1 and 1.6 have already written, so they
+		// subsume the flags. Without this, collapsing either OR to the disk
+		// check alone — a plausible-looking simplification, and a no-op on
+		// every other covered path — leaves the suite green while
+		// `wyk init -dry-run` on a fresh repo silently stops previewing the
+		// two components a real run would create.
+		//
+		// Nothing is on disk here (fresh repo, no .beads, no enrichment) and
+		// -dry-run writes nothing, so every named component comes from a flag.
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		withTempHome(t)
+		dir := gitInit(t)
+		writeForeignHook(t, dir)
+		assertDeclineFooter(t, dir,
+			footerWant{claim: claimWouldBe, bdWorkspace: true, enrichment: true},
+			"-dry-run")
 	})
 
 	t.Run("skip-claude-md, enrichment already on disk", func(t *testing.T) {
@@ -316,7 +369,7 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 			t.Fatalf("setup init exit %d", code)
 		}
 		assertDeclineFooter(t, dir,
-			footerWant{visible: true, bdWorkspace: true, enrichment: true},
+			footerWant{claim: claimVisible, bdWorkspace: true, enrichment: true},
 			"-skip-bd-init", "-skip-claude-md")
 	})
 
@@ -331,7 +384,7 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 		if code := runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md"); code != 0 {
 			t.Fatalf("setup init exit %d", code)
 		}
-		assertDeclineFooter(t, dir, footerWant{visible: true},
+		assertDeclineFooter(t, dir, footerWant{claim: claimVisible},
 			"-skip-bd-init", "-skip-claude-md", "-skip-register")
 	})
 
@@ -352,7 +405,7 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 		if code := runInitIn(t, dir, "-skip-bd-init", "-skip-claude-md"); code != 0 {
 			t.Fatalf("setup init exit %d", code)
 		}
-		assertDeclineFooter(t, dir, footerWant{visible: true},
+		assertDeclineFooter(t, dir, footerWant{claim: claimVisible},
 			"-dry-run", "-skip-register")
 	})
 
@@ -370,7 +423,7 @@ func TestInit_ForeignHookWarningTracksRegistration(t *testing.T) {
 			t.Fatalf("setup init exit %d", code)
 		}
 		assertDeclineFooter(t, dir,
-			footerWant{visible: true, bdWorkspace: true, enrichment: true},
+			footerWant{claim: claimVisible, bdWorkspace: true, enrichment: true},
 			"-dry-run", "-skip-register")
 	})
 }
@@ -383,7 +436,7 @@ func TestInit_StaleHooksPathWarningTracksRegistration(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		dir := gitInit(t)
 		gitConfigSet(t, dir, "core.hooksPath", t.TempDir())
-		assertDeclineFooter(t, dir, footerWant{visible: true},
+		assertDeclineFooter(t, dir, footerWant{claim: claimVisible},
 			"-skip-bd-init", "-skip-claude-md")
 	})
 
@@ -391,7 +444,7 @@ func TestInit_StaleHooksPathWarningTracksRegistration(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		dir := gitInit(t)
 		gitConfigSet(t, dir, "core.hooksPath", t.TempDir())
-		assertDeclineFooter(t, dir, footerWant{visible: false},
+		assertDeclineFooter(t, dir, footerWant{claim: claimNotRegistered},
 			"-skip-bd-init", "-skip-claude-md", "-skip-register")
 	})
 }
