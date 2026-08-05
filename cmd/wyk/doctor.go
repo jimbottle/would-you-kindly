@@ -260,6 +260,20 @@ func runDoctorFix(dryRun bool) int {
 				hadError = true
 				continue
 			}
+			// Exit 0 from init means "nothing failed", NOT "a hook was
+			// written": init deliberately DECLINES (with a warning, exit
+			// 0) when core.hooksPath redirects outside the repo — which
+			// is precisely the state that produces the missing hook we
+			// are here to fix. Trusting the code alone made `doctor -fix`
+			// print `N installed` for hooks it never wrote, contradicting
+			// init's own stderr warning in the same run. Confirm the file.
+			if b, verr := os.ReadFile(hookPath); verr != nil || !bytes.Contains(b, []byte(hookMarker)) {
+				fmt.Fprintf(os.Stderr,
+					"wyk doctor: %s: hook still not installed at %s — see the warning above\n",
+					r.Name, hookPath)
+				hadError = true
+				continue
+			}
 			fixed++
 		case rerr != nil:
 			fmt.Fprintf(os.Stderr, "wyk doctor: %s: read hook: %v\n", r.Name, rerr)
@@ -323,14 +337,19 @@ func fixCwdRegistration(reg *registry.Registry, regPath string, dryRun bool) (re
 	return true, false
 }
 
-// installHookIn shells out to runInit in a child directory via a
+// installHookIn is the seam runDoctorFix installs through. It's a
+// package-level var so the fix tests can stub the install side effect
+// without spawning real bd; realInstallHookIn is named (rather than an
+// inline literal) so a test that needs the genuine behaviour can restore
+// it over the package-wide default stub.
+var installHookIn = realInstallHookIn
+
+// realInstallHookIn shells out to runInit in a child directory via a
 // process-level cwd switch (restored via defer). os.Chdir is
 // process-global, not goroutine-local — fine here because
 // runDoctorFix is the only caller and runs single-threaded, but
-// callers that introduce concurrency would race. Implemented as a
-// package-level var so the fix tests can stub the install side
-// effect without spawning real bd.
-var installHookIn = func(dir string, extraArgs ...string) int {
+// callers that introduce concurrency would race.
+func realInstallHookIn(dir string, extraArgs ...string) int {
 	prev, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk doctor: getwd:", err)

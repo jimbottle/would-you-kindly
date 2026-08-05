@@ -92,12 +92,7 @@ func TestRunDoctorFix_InstallsMissingSkipsExistingForeign(t *testing.T) {
 	// the real `bd` binary). Record which dirs the fix attempted
 	// to install into.
 	var installed []string
-	prev := installHookIn
-	installHookIn = func(dir string, _ ...string) int {
-		installed = append(installed, dir)
-		return 0
-	}
-	defer func() { installHookIn = prev }()
+	stubInstallHookIn(t, &installed)
 
 	if code := runDoctorFix(false); code != 0 {
 		t.Errorf("runDoctorFix exit %d, want 0", code)
@@ -981,14 +976,92 @@ func TestRunDoctorFix_RegistersCwdWithEmptyRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prev := installHookIn
-	installHookIn = func(string, ...string) int { return 0 }
-	t.Cleanup(func() { installHookIn = prev })
+	stubInstallHookIn(t, nil)
 
 	if code := runDoctorFix(false); code != 0 {
 		t.Errorf("exit %d, want 0", code)
 	}
 	if reg := readRegistry(t); !reg.Has(resolved) {
 		t.Errorf("-fix did not register the cwd workspace; registry = %+v", reg.Repos)
+	}
+}
+
+// stubInstallHookIn replaces the doctor -fix install seam with one that
+// records the dirs it was called for AND produces the observable effect
+// of a successful install: a wyk-marked hook at the repo's active hook
+// path.
+//
+// The effect is load-bearing, not incidental. `wyk init` exits 0 both
+// when it installs a hook and when it deliberately declines to write one,
+// so runDoctorFix verifies the file exists rather than trusting the exit
+// code — a stub that returns 0 without writing is a stub that lies, and
+// it would mask exactly the mis-tally that verification exists to catch.
+func stubInstallHookIn(t *testing.T, installed *[]string) {
+	t.Helper()
+	prev := installHookIn
+	installHookIn = func(dir string, _ ...string) int {
+		if installed != nil {
+			*installed = append(*installed, dir)
+		}
+		hookPath, err := resolveGitHookPath(dir, "post-commit")
+		if err != nil {
+			t.Errorf("stubInstallHookIn: resolve hook path in %s: %v", dir, err)
+			return 1
+		}
+		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+			t.Errorf("stubInstallHookIn: mkdir: %v", err)
+			return 1
+		}
+		if err := os.WriteFile(hookPath, []byte(postCommitHook), 0o755); err != nil {
+			t.Errorf("stubInstallHookIn: write hook: %v", err)
+			return 1
+		}
+		return 0
+	}
+	t.Cleanup(func() { installHookIn = prev })
+}
+
+// TestRunDoctorFix_StaleHooksPathIsNotCountedAsInstalled runs the REAL
+// install seam against the one repo shape where `wyk init` exits 0
+// without writing a hook: core.hooksPath redirects outside the repo, so
+// the hook is missing (doctor's fixable case) and init declines to
+// write into the external dir.
+//
+// Trusting init's exit code made doctor print `1 installed` for a hook
+// that was never written — a success tally contradicting init's own
+// stderr warning in the same run — and swallowed the exit-1 signal the
+// pre-decline behaviour used to give.
+func TestRunDoctorFix_StaleHooksPathIsNotCountedAsInstalled(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+
+	repo := gitInit(t)
+	outside := t.TempDir()
+	gitConfigSet(t, repo, "core.hooksPath", outside)
+
+	regPath, _ := registry.DefaultPath()
+	reg := &registry.Registry{Repos: []registry.Repo{{Name: "stale", Path: repo}}}
+	if err := reg.Save(regPath); err != nil {
+		t.Fatalf("save registry: %v", err)
+	}
+
+	// Deliberately NOT stubbed: the bug lives in the seam between init's
+	// exit code and doctor's tally, so a stub on either side hides it.
+	// Safe because init is pointed at a throwaway repo and declines to
+	// write into `outside`.
+	prev := installHookIn
+	installHookIn = realInstallHookIn
+	t.Cleanup(func() { installHookIn = prev })
+
+	out := captureStdout(t, func() {
+		if code := runDoctorFix(false); code != 1 {
+			t.Errorf("runDoctorFix exit %d, want 1 (nothing was installed)", code)
+		}
+	})
+	if strings.Contains(out, "1 installed") {
+		t.Errorf("doctor claimed an install that never happened:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "post-commit")); err == nil {
+		t.Error("doctor -fix wrote into the out-of-repo hooks dir")
 	}
 }

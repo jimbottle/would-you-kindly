@@ -358,7 +358,16 @@ func runInit(args []string) int {
 	if *skipHook {
 		fmt.Println("wyk init: skipping the post-commit hook (-skip-hook); `Closes: <id>` won't auto-close here")
 	} else {
-		hookCode = installPostCommitHook(repoRoot, *dryRun, *force, *chain)
+		hookCode = installPostCommitHook(repoRoot, hookInstallOpts{
+			dryRun: *dryRun,
+			force:  *force,
+			chain:  *chain,
+			// Reaching here with -skip-register absent means registerRepo
+			// returned 0 (a failure returns above), so the decline notices
+			// may safely claim the repo is visible. With the flag set they
+			// must NOT — see hookDeclineFooter.
+			registered: !*skipRegister,
+		})
 	}
 
 	// Step 4 (opt-in): install wyk's agent skills into ~/.claude/skills.
@@ -389,6 +398,20 @@ func runInit(args []string) int {
 	return hookCode
 }
 
+// hookInstallOpts carries the per-run flags the hook step needs. It's a
+// struct rather than four positional bools because `registered` is easy
+// to transpose with the others and a wrong value there makes wyk lie to
+// the user about whether their repo is visible.
+type hookInstallOpts struct {
+	dryRun bool
+	force  bool
+	chain  bool
+	// registered is whether this run put the repo in the registry. The
+	// decline notices claim "you're still visible to `wyk inbox`" and
+	// that claim is only true when this is set.
+	registered bool
+}
+
 // installPostCommitHook is `wyk init`'s hook step: resolve the hooks dir
 // git ACTUALLY runs and install wyk's auto-close post-commit hook there,
 // or explain why it didn't.
@@ -399,18 +422,32 @@ func runInit(args []string) int {
 // silently never fire. resolveGitHookPath follows core.hooksPath, so
 // worktrees and gitlinks land correctly too.
 //
-// Refusals are WARNINGS, not failures. wyk declining to clobber another
-// tool's hook is wyk working as designed; the caller has already
-// registered the repo and seeded the enrichment, so there is nothing to
-// abort. Exit codes:
+// DECLINING is a warning; FAILING is not. wyk choosing not to clobber
+// another tool's hook (or not to write through a stale out-of-repo
+// redirect) is wyk working as designed, and the caller has already
+// registered the repo, so there's nothing to abort. A git or filesystem
+// error is a real failure and still reports as one — collapsing the two
+// would let `wyk doctor -fix` tally hooks it never wrote. Exit codes:
 //
 //	0   installed, already installed, or declined with a warning
-//	1   filesystem error while writing (already reported)
+//	1   git/filesystem error (already reported)
 //	64  an explicit -chain that cannot proceed (.pre-wyk is occupied) —
 //	    the user asked for something wyk can't deliver
-func installPostCommitHook(repoRoot string, dryRun, force, chain bool) int {
-	hookPath, ok := resolveAndGuardHookPath(repoRoot)
-	if !ok {
+func installPostCommitHook(repoRoot string, opts hookInstallOpts) int {
+	dryRun, force, chain := opts.dryRun, opts.force, opts.chain
+
+	hookPath, herr := resolveGitHookPath(repoRoot, "post-commit")
+	if herr != nil {
+		// Not a decline: git couldn't tell us where hooks live. Callers
+		// that count installs (doctor -fix) must see this as a failure.
+		fmt.Fprintln(os.Stderr, "wyk init: resolve hook path:", herr)
+		return 1
+	}
+	// coreHooksPath gates the out-of-repo check so a normal worktree
+	// (whose shared hooks legitimately live outside the worktree root,
+	// but with no core.hooksPath set) isn't mistaken for a redirect.
+	if _, set := coreHooksPath(repoRoot); set && !pathWithin(repoRoot, filepath.Dir(hookPath)) {
+		warnStaleHooksPathRedirect(repoRoot, filepath.Dir(hookPath), opts)
 		return 0
 	}
 	preWykPath := hookPath + ".pre-wyk"
@@ -450,7 +487,7 @@ func installPostCommitHook(repoRoot string, dryRun, force, chain bool) int {
 				case force:
 					fmt.Printf("wyk init: would overwrite foreign hook at %s (-force)\n", hookPath)
 				default:
-					warnForeignHookLeftAlone(hookPath, true)
+					warnForeignHookLeftAlone(hookPath, opts)
 				}
 				skipWrite = true
 			} else if chain {
@@ -467,7 +504,7 @@ func installPostCommitHook(repoRoot string, dryRun, force, chain bool) int {
 				}
 				chainMove = true
 			} else if !force {
-				warnForeignHookLeftAlone(hookPath, false)
+				warnForeignHookLeftAlone(hookPath, opts)
 				skipWrite = true
 			}
 		}
@@ -523,16 +560,61 @@ func installPostCommitHook(repoRoot string, dryRun, force, chain bool) int {
 // benign skip of an optional feature — while actually aborting init
 // before the registry write. It is now a warning, and its job is to be
 // unmistakable about two things at once: the auto-close hook is NOT
-// installed, and everything that makes the repo visible IS.
-func warnForeignHookLeftAlone(hookPath string, dryRun bool) {
+// installed, and whether the repo is nonetheless visible.
+func warnForeignHookLeftAlone(hookPath string, opts hookInstallOpts) {
 	verb, tail := "is not installed", "Re-run with"
-	if dryRun {
+	if opts.dryRun {
 		verb, tail = "would not be installed", "Re-run (without -dry-run) with"
 	}
 	fmt.Fprintf(os.Stderr, "wyk init: WARNING: the post-commit auto-close hook %s\n", verb)
 	fmt.Fprintf(os.Stderr, "  %s already exists and isn't wyk's, so wyk left it alone.\n", hookPath)
 	fmt.Fprintln(os.Stderr, "  Commits with `Closes: <id>` will NOT auto-close issues in this repo.")
 	fmt.Fprintln(os.Stderr, "  "+tail+" -chain to keep both hooks, or -force to replace.")
+	hookDeclineFooter(opts)
+}
+
+// warnStaleHooksPathRedirect prints the notice for a core.hooksPath that
+// points outside the repo. wyk won't write there — that's how a stale or
+// cross-repo config silently swallows the auto-close hook — but, like
+// every other decline, it's a warning, not an abort.
+func warnStaleHooksPathRedirect(repoRoot, activeDir string, opts hookInstallOpts) {
+	verb := "is not installed"
+	if opts.dryRun {
+		verb = "would not be installed"
+	}
+	fmt.Fprintf(os.Stderr, "wyk init: WARNING: the post-commit auto-close hook %s\n", verb)
+	fmt.Fprintf(os.Stderr, "  git's core.hooksPath points outside this repo:\n    %s\n", activeDir)
+	fmt.Fprintln(os.Stderr, "  wyk won't write a hook there. Commits with `Closes: <id>` will NOT auto-close.")
+	fmt.Fprintln(os.Stderr, "  That path is almost certainly stale. Clear it and re-run wyk init:")
+	fmt.Fprintln(os.Stderr, "    git -C "+repoRoot+" config --unset core.hooksPath")
+	hookDeclineFooter(opts)
+}
+
+// hookDeclineFooter closes out every "wyk didn't install a hook" notice
+// with the state of the thing that actually matters: whether this repo
+// is visible to the multi-repo views.
+//
+// Splitting this out is not cosmetic. The reassurance used to be printed
+// unconditionally, so `wyk init -skip-register` on a repo with a foreign
+// hook promised registration that never happened — the exact
+// false-reassurance the surrounding change exists to eliminate, and a
+// live path, since `wyk doctor -fix` invokes init with -skip-register.
+// An agent reading "IS visible to `wyk inbox`" files a handoff no human
+// receives. The footer therefore has to track the run, not assert.
+func hookDeclineFooter(opts hookInstallOpts) {
+	if !opts.registered {
+		fmt.Fprintln(os.Stderr, "  Registration was skipped (-skip-register), so this repo is NOT visible to")
+		fmt.Fprintln(os.Stderr, "  `wyk inbox`, the dashboard or the TUI either — run `wyk registry add` to fix that.")
+		return
+	}
+	// Spelled out per branch rather than interpolating a verb: the
+	// capitalised IS / WOULD BE is the emphasis that makes the notice
+	// scannable, and it doesn't survive a %s.
+	if opts.dryRun {
+		fmt.Fprintln(os.Stderr, "  Everything else (bd workspace, registry entry, agent enrichment) would be set up —")
+		fmt.Fprintln(os.Stderr, "  this repo WOULD BE visible to `wyk inbox`, the dashboard and the TUI.")
+		return
+	}
 	fmt.Fprintln(os.Stderr, "  Everything else (bd workspace, registry entry, agent enrichment) is set up —")
 	fmt.Fprintln(os.Stderr, "  this repo IS visible to `wyk inbox`, the dashboard and the TUI.")
 }
@@ -1124,34 +1206,6 @@ func resolveGitHookPath(repoDir, hook string) (string, error) {
 		p = filepath.Join(repoDir, p)
 	}
 	return p, nil
-}
-
-// resolveAndGuardHookPath resolves repoRoot's active post-commit hook
-// path and declines an out-of-repo core.hooksPath redirect. It returns
-// (path, true) when the hook step may proceed, or ("", false) after
-// printing a warning explaining why wyk isn't writing a hook.
-//
-// coreHooksPath gates the out-of-repo check so a normal worktree (whose
-// shared hooks legitimately live outside the worktree root, but with no
-// core.hooksPath set) isn't mistaken for a redirect.
-//
-// Both failure modes are warnings rather than exit codes: they mean "wyk
-// can't safely place a hook here", never "this repo shouldn't be set up".
-// Returning 64 for the stale-redirect case is what used to abort init
-// before the registry write (would-you-kindly-7kly).
-func resolveAndGuardHookPath(repoRoot string) (string, bool) {
-	hookPath, herr := resolveGitHookPath(repoRoot, "post-commit")
-	if herr != nil {
-		fmt.Fprintln(os.Stderr, "wyk init: WARNING: no post-commit hook installed — resolve hook path:", herr)
-		return "", false
-	}
-	if _, set := coreHooksPath(repoRoot); set && !pathWithin(repoRoot, filepath.Dir(hookPath)) {
-		fmt.Fprintf(os.Stderr, "wyk init: WARNING: no post-commit hook installed — git's core.hooksPath points outside this repo:\n          %s\n", filepath.Dir(hookPath))
-		fmt.Fprintln(os.Stderr, "          That's almost certainly stale. Clear it and re-run wyk init:")
-		fmt.Fprintln(os.Stderr, "          git -C "+repoRoot+" config --unset core.hooksPath")
-		return "", false
-	}
-	return hookPath, true
 }
 
 // coreHooksPath returns git's configured core.hooksPath for repoDir
