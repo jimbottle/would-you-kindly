@@ -377,6 +377,21 @@ func runInit(args []string) int {
 		visibility = regWillRegister
 	}
 
+	// What the footer may name as established. The flags say what a REAL
+	// run does, which is the right answer for the "Would set up:" preview
+	// branch but not for the past-tense one.
+	bdWorkspace := !*skipBD || beadsWorkspaceExists(repoRoot)
+	if *dryRun && *skipRegister {
+		// The one combination that writes nothing yet still lands in the
+		// past-tense branch: -skip-register means visibility comes from
+		// the registry, so an already-registered repo reads "Set up: …"
+		// for a run that created none of it. Fall back to what is
+		// actually on disk — the .beads stat is real state either way,
+		// while a previewed enrichment wrote nothing and can't be claimed.
+		bdWorkspace = beadsWorkspaceExists(repoRoot)
+		enrichmentOK = false
+	}
+
 	// Step 3: install the post-commit hook (unless -skip-hook). Last,
 	// and non-fatal by default: see installPostCommitHook.
 	hookCode := 0
@@ -384,18 +399,11 @@ func runInit(args []string) int {
 		fmt.Println("wyk init: skipping the post-commit hook (-skip-hook); `Closes: <id>` won't auto-close here")
 	} else {
 		hookCode = installPostCommitHook(repoRoot, hookInstallOpts{
-			dryRun:     *dryRun,
-			force:      *force,
-			chain:      *chain,
-			visibility: visibility,
-			// The bd workspace counts as established when this run handled
-			// it OR when .beads is already on disk — the same "ask the
-			// state, not the flag" rule visibility follows. Under
-			// -skip-bd-init we never look at .beads, so claiming it
-			// without the stat would assert a workspace that may have been
-			// deleted (which is itself a way handoffs go missing: the TUI
-			// reports the repo as a per-sub fetch failure).
-			bdWorkspace: !*skipBD || beadsWorkspaceExists(repoRoot),
+			dryRun:      *dryRun,
+			force:       *force,
+			chain:       *chain,
+			visibility:  visibility,
+			bdWorkspace: bdWorkspace,
 			enrichment:  enrichmentOK,
 		})
 	}
@@ -489,8 +497,11 @@ type hookInstallOpts struct {
 
 // beadsWorkspaceExists reports whether repoRoot holds a .beads directory.
 // Used to decide whether the decline footer may list the bd workspace
-// among the things that are set up when -skip-bd-init meant init never
-// touched it.
+// among the things that are set up when init didn't establish one itself
+// — either -skip-bd-init meant it never looked, or -dry-run meant it only
+// previewed. Claiming it on the flag alone would vouch for a workspace
+// that may have been deleted, which is itself a way handoffs go missing
+// (the TUI reports such a repo as a per-sub fetch failure).
 func beadsWorkspaceExists(repoRoot string) bool {
 	fi, err := os.Stat(filepath.Join(repoRoot, beadsDirName))
 	return err == nil && fi.IsDir()
