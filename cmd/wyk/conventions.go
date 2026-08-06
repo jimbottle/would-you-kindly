@@ -24,12 +24,17 @@ const humanTasksQuery = "label=human AND status!=closed"
 var conventionsBody = `bd / wyk task labels
 ====================
 
-wyk filters task issues by these labels. Apply them when filing (with wyk create / bd create):
+wyk filters task issues by these labels. Apply them when filing (with wyk create / bd create).
 
-  - Tasks for a HUMAN    → --add-label="human" --add-label="src:agent"
+NOTE the flag is --labels="a,b" (or -l), comma-separated. There is no
+--add-label: bd rejects it, prints its global-flags help, and creates
+NOTHING -- and because that output reads as help rather than an error, the
+issue silently never gets filed.
+
+  - Tasks for a HUMAN    → --labels="human,src:agent"
                            (these surface in the TUI's 'h' view and in 'wyk --probe')
-  - Tasks the AGENT owns → --add-label="src:agent" only
-  - Another AGENT's work → --add-label="agent-handoff" (badge AGENT-HANDOFF):
+  - Tasks the AGENT owns → --labels="src:agent" only
+  - Another AGENT's work → --labels="agent-handoff,src:agent" (badge AGENT-HANDOFF):
                            a different agent is working it; do NOT interfere,
                            a human orchestrates. Excluded from the inbox below.
 
@@ -140,7 +145,7 @@ Example: file a P1 human task directly with bd create
 -----------------------------------------------------
 
     bd create --priority=1 --type=task \
-        --add-label="human" --add-label="src:agent" \
+        --labels="human,src:agent" \
         --title="<imperative>" \
         --description="$(cat <<'RUNBOOK'
     ## Why this needs you (please confirm this is accurate)
@@ -230,7 +235,7 @@ func conventionsStructured() conventionsJSON {
 		{Status: "closed", When: "done; the post-commit hook auto-closes from `Closes:`/`Fixes:`/`Resolves:` trailers"},
 	}
 	c.PreferredCommand = "wyk handoff <id>   (or 'wyk handoff -create \"<title>\"' to file + hand off in one step)"
-	c.BdCreateExample = `bd create --priority=1 --type=task --add-label="human" --add-label="src:agent" --title="<imperative>" --description="<runbook with required sections>"`
+	c.BdCreateExample = `bd create --priority=1 --type=task --labels="human,src:agent" --title="<imperative>" --description="<runbook with required sections>"`
 	c.RunbookSections = []runbookSection{
 		{
 			Heading: "## Why this needs you (please confirm this is accurate)",
