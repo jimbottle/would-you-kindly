@@ -27,7 +27,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -877,20 +876,17 @@ func runHandoff(args []string) int {
 		}
 	}
 
-	// Reading from a TTY would block waiting for user input — easy to
-	// hit by accident when invoked interactively without a redirect.
-	// If the user then closes stdin with ^D, we'd silently wipe the
-	// issue's description. Refuse unless they opted in. Treat a Stat
-	// error as "unknown — refuse" rather than "assume non-TTY", so
-	// the guard fails closed in the rare case Stat fails.
-	if *file == "" && !*allowEmpty {
-		stat, statErr := os.Stdin.Stat()
-		isTTY := statErr != nil || (stat.Mode()&os.ModeCharDevice) != 0
-		if isTTY {
-			fmt.Fprintln(os.Stderr,
-				"wyk handoff: stdin is a TTY (or its mode could not be determined). Pipe a runbook in, pass -file <path>, or use -allow-empty to deliberately clear the description.")
-			return 64
-		}
+	// Reading from a terminal would block waiting for user input —
+	// easy to hit by accident when invoked interactively without a
+	// redirect. If the user then closes stdin with ^D, we'd silently
+	// wipe the issue's description. Refuse unless they opted in.
+	// stdinIsTerminal is a real TTY test; the non-terminal read below
+	// is deadline-bounded, so neither arm can hang a non-interactive
+	// caller (would-you-kindly-l51f).
+	if *file == "" && !*allowEmpty && stdinIsTerminal() {
+		fmt.Fprintln(os.Stderr,
+			"wyk handoff: stdin is a terminal. Pipe a runbook in, pass -file <path>, or use -allow-empty to deliberately clear the description.")
+		return 64
 	}
 
 	var runbookBytes []byte
@@ -898,7 +894,7 @@ func runHandoff(args []string) int {
 	if *file != "" {
 		runbookBytes, err = os.ReadFile(*file)
 	} else {
-		runbookBytes, err = io.ReadAll(os.Stdin)
+		runbookBytes, err = readStdinRunbook()
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk handoff:", err)
