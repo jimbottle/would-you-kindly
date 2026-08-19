@@ -38,6 +38,41 @@ func newTestClient(r *fakeRunner) *Client {
 	return &Client{Binary: "bd", Timeout: 0, runner: r.run}
 }
 
+func TestBulkReads_DisableBDResultLimit(t *testing.T) {
+	// bd 1.0.4 caps query/list at 50 rows and ready at 100 BY DEFAULT,
+	// and --json honors the cap — so without an explicit --limit=0 any
+	// workspace past the cap silently loses rows (would-you-kindly-ec7z).
+	// Pin the flag on every bulk read so a refactor can't quietly
+	// reintroduce the truncation.
+	cases := []struct {
+		name string
+		call func(c *Client) error
+		want []string
+	}{
+		{"Query", func(c *Client) error { _, err := c.Query(context.Background(), "status=open"); return err },
+			[]string{"query", "status=open", "--limit=0", "--json"}},
+		{"Ready", func(c *Client) error { _, err := c.Ready(context.Background()); return err },
+			[]string{"ready", "--limit=0", "--json"}},
+		{"List", func(c *Client) error { _, err := c.List(context.Background()); return err },
+			[]string{"list", "--limit=0", "--json"}},
+		{"ListAll", func(c *Client) error { _, err := c.ListAll(context.Background()); return err },
+			[]string{"list", "--all", "--limit=0", "--json"}},
+	}
+	for _, tc := range cases {
+		r := &fakeRunner{stdout: []byte("[]")}
+		c := newTestClient(r)
+		if err := tc.call(c); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(r.calls) != 1 {
+			t.Fatalf("%s: want 1 bd call, got %d", tc.name, len(r.calls))
+		}
+		if got := strings.Join(r.calls[0].args, " "); got != strings.Join(tc.want, " ") {
+			t.Errorf("%s argv = %q, want %q", tc.name, got, strings.Join(tc.want, " "))
+		}
+	}
+}
+
 func TestParseIssues_Empty(t *testing.T) {
 	cases := []string{"", "  ", "[]", "[]\n"}
 	for _, in := range cases {

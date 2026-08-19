@@ -107,43 +107,52 @@ func BDTimeoutFromEnv() time.Duration {
 
 // --- read methods --------------------------------------------------
 
-// Query runs `bd query <expr> --json` and unmarshals the result.
+// noLimitFlag disables bd's default result cap on the bulk read
+// commands: query and list default to 50 rows, ready to 100 (bd
+// 1.0.4), and --json output honors the cap the same as the human
+// display. Without the explicit 0, any workspace past the cap
+// silently loses rows and the TUI just looks incomplete
+// (would-you-kindly-ec7z).
+const noLimitFlag = "--limit=0"
+
+// Query runs `bd query <expr> --limit=0 --json` and unmarshals the result.
 func (c *Client) Query(ctx context.Context, expr string) ([]Issue, error) {
-	out, err := c.run(ctx, nil, "query", expr, "--json")
+	out, err := c.run(ctx, nil, "query", expr, noLimitFlag, "--json")
 	if err != nil {
 		return nil, err
 	}
 	return parseIssues(out)
 }
 
-// Ready runs `bd ready --json` — the blocker-aware view that
-// PresetReady maps to. Use this rather than reproducing the
+// Ready runs `bd ready --limit=0 --json` — the blocker-aware view
+// that PresetReady maps to. Use this rather than reproducing the
 // semantics with `bd query`.
 func (c *Client) Ready(ctx context.Context) ([]Issue, error) {
-	out, err := c.run(ctx, nil, "ready", "--json")
+	out, err := c.run(ctx, nil, "ready", noLimitFlag, "--json")
 	if err != nil {
 		return nil, err
 	}
 	return parseIssues(out)
 }
 
-// List runs `bd list --json`, returning all non-closed issues. This
-// is what the "all" preset maps to — the TUI's default view should
-// be "everything you might still need to do", not "everything ever
-// filed". Use ListAll when closed issues must be included.
+// List runs `bd list --limit=0 --json`, returning all non-closed
+// issues. This is what the "all" preset maps to — the TUI's default
+// view should be "everything you might still need to do", not
+// "everything ever filed". Use ListAll when closed issues must be
+// included.
 func (c *Client) List(ctx context.Context) ([]Issue, error) {
-	out, err := c.run(ctx, nil, "list", "--json")
+	out, err := c.run(ctx, nil, "list", noLimitFlag, "--json")
 	if err != nil {
 		return nil, err
 	}
 	return parseIssues(out)
 }
 
-// ListAll runs `bd list --all --json`, including closed issues.
-// Kept for future presets (e.g. an explicit "archived" view) or for
-// callers that need the unfiltered history.
+// ListAll runs `bd list --all --limit=0 --json`, including closed
+// issues. Kept for future presets (e.g. an explicit "archived" view)
+// or for callers that need the unfiltered history.
 func (c *Client) ListAll(ctx context.Context) ([]Issue, error) {
-	out, err := c.run(ctx, nil, "list", "--all", "--json")
+	out, err := c.run(ctx, nil, "list", "--all", noLimitFlag, "--json")
 	if err != nil {
 		return nil, err
 	}
