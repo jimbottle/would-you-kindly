@@ -164,7 +164,7 @@ func TestInboxQueryFor(t *testing.T) {
 		t.Errorf("inboxQueryFor('') = %q, want the collective query", got)
 	}
 	got := inboxQueryFor("alice")
-	want := "label=src:agent:alice AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked"
+	want := "label=src:agent:alice AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked AND status!=deferred AND status!=hooked"
 	if got != want {
 		t.Errorf("inboxQueryFor(alice) = %q, want %q", got, want)
 	}

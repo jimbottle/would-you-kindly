@@ -6,6 +6,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`wyk handoff` no longer hangs forever under agent/CI harnesses**
+  (would-you-kindly-l51f, from an external bug report). The stdin
+  guard tested `os.ModeCharDevice` — which is not a terminal test: it
+  is true for `/dev/null` (safe: immediate EOF) and false for pipes
+  and sockets (which block). So `</dev/null` was falsely rejected as
+  "stdin is a TTY" while an inherited harness socket sailed into an
+  unbounded `io.ReadAll` — an unkillable (SIGALRM-immune) silent hang
+  that also meant the `human` label was never applied. The guard now
+  uses a real terminal check (`golang.org/x/term`), and every
+  non-terminal stdin read is deadline-bounded (30s default,
+  `WYK_STDIN_TIMEOUT` overrides — a Go duration or bare seconds) with
+  a clear timeout error instead of a wedged process. `</dev/null` now
+  reads as an empty runbook and gets the accurate "empty runbook…
+  pass -allow-empty" diagnostic.
+
+- **Bulk reads no longer silently truncate at bd's default result
+  limit** (would-you-kindly-ec7z). bd 1.0.4 caps `query`/`list` at 50
+  rows and `ready` at 100 by default, and `--json` honors the cap —
+  so on any workspace past the cap the TUI, `wyk inbox`, `wyk stats`,
+  and friends quietly saw a subset. Every bulk read now passes
+  `--limit=0`.
+
+### Changed
+
+- **The agent inbox additionally excludes `status=deferred` and
+  `status=hooked`** (would-you-kindly-hxd8; wyk-contract/v3 amended
+  2026-08-19). bd 1.0.4's `deferred` (on ice until a date/subsystem)
+  and `hooked` (attached to another agent's hook) carry the same
+  "the blocker is tracked elsewhere" character as the existing
+  `blocked` exclusion — presenting them as work-now was wrong, and
+  for `hooked` risked two agents colliding on one issue. Items
+  reappear the moment their status returns to open. `wyk stats`'
+  inbox count mirrors the new query.
+
+- **Status vocabulary aligned with bd 1.0.4's seven built-in
+  statuses** (would-you-kindly-sbn9). wyk knew five; `pinned`
+  (persistent, never a queue entry) and `hooked` now appear in the
+  TUI's status legend (`hooked` shares the in-progress emphasis;
+  frozen statuses stay dim), in `wyk stats`' by-status breakdown,
+  and in `wyk conventions` / docs/CONTRACT.md's lifecycle table.
+  CONTRACT.md also documents interop with bd's native `bd human`
+  command family (`bd human respond` closes — it is NOT the
+  bounce-back gesture), and the `--add-label` warning is now
+  correctly scoped to `bd create` (bd 1.0.4's `bd update` does
+  accept `--add-label`/`--remove-label`).
+
 ### Added
 
 - **`wyk registry add [path]`** — register a bd workspace from the

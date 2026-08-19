@@ -13,7 +13,7 @@ import (
 // form (conventionsStructured) interpolate the SAME string —
 // previously the two forms duplicated the literal query text and
 // could silently drift.
-const agentInboxQuery = "label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked"
+const agentInboxQuery = "label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked AND status!=deferred AND status!=hooked"
 const humanTasksQuery = "label=human AND status!=closed"
 
 // conventionsBody is the agent-ready tip printed by `wyk conventions`.
@@ -26,10 +26,11 @@ var conventionsBody = `bd / wyk task labels
 
 wyk filters task issues by these labels. Apply them when filing (with wyk create / bd create).
 
-NOTE the flag is --labels="a,b" (or -l), comma-separated. There is no
---add-label: bd rejects it, prints its global-flags help, and creates
-NOTHING -- and because that output reads as help rather than an error, the
-issue silently never gets filed.
+NOTE the create flag is --labels="a,b" (or -l), comma-separated. 'bd
+create' has no --add-label: bd rejects it, prints its global-flags help,
+and creates NOTHING -- and because that output reads as help rather than
+an error, the issue silently never gets filed. (--add-label/--remove-label
+DO exist on 'bd update' — for existing issues only.)
 
   - Tasks for a HUMAN    → --labels="human,src:agent"
                            (these surface in the TUI's 'h' view and in 'wyk --probe')
@@ -94,11 +95,16 @@ Exceptions:
 Status lifecycle (pick the right one when filing or updating)
 -------------------------------------------------------------
 
-bd has five statuses; the convention is when to use each:
+bd (1.0.4) has seven built-in statuses; the convention is when to
+use each:
 
   - open         actionable now; ready to work or to hand off.
   - in_progress  someone has claimed it. 'bd update --claim' is
                  the canonical way to set this; it also assigns.
+  - hooked       attached to an agent's hook — bd's own in-flight
+                 marker for hook-driven agent work. Treat like
+                 in_progress belonging to someone else; excluded
+                 from 'bd ready' and the wyk inbox.
   - blocked      waiting on another tracked bd issue. Use
                  '--add-dependency <other-id>' so the blocker is
                  explicit; the dependency closes → this unblocks.
@@ -109,6 +115,9 @@ bd has five statuses; the convention is when to use each:
                  etc. Deferred issues are hidden from 'bd ready'
                  and the TUI's 'ready' preset; they reappear when
                  you 'bd update --status open'.
+  - pinned       persistent; stays open indefinitely (standing
+                 instructions, recurring checklists). Never a work
+                 queue entry — 'bd close' needs --force on it.
   - closed       done. The post-commit hook auto-closes from
                  'Closes:'/'Fixes:'/'Resolves:' trailers.
 

@@ -929,7 +929,7 @@ const rememberedConventionKey = "wyk-handoff-convention"
 // rememberedConventionMemory is the memory text wyk init stores
 // via bd remember. Kept as a const so a test can assert the labels
 // are present.
-const rememberedConventionMemory = "wyk convention: a human task carries label=human + label=src:agent; agent-owned just label=src:agent. Inbox = `" + agentInboxQuery + "` (run `wyk inbox`) — WORK returned items, don't just note them. Skip HUMAN-BLOCK rows (agent task with a human-flagged dep) and AGENT-HANDOFF rows (label=agent-handoff = another agent's; a human coordinates). File/hand off a human task with `wyk handoff <id>` (or `wyk handoff -create \"<title>\"`), never hand-rolled labels. Multi-agent: route with `wyk handoff --identity <name>` (adds src:agent:<name>), read with `wyk inbox --identity <name>` or $WYK_AGENT_IDENTITY. Statuses: open(default)/in_progress/blocked(+--add-dependency)/deferred(subsystem not ready, hidden from bd ready)/closed; prefer deferred over holding a task open. Full text + runbook format: `wyk conventions`."
+const rememberedConventionMemory = "wyk convention: a human task carries label=human + label=src:agent; agent-owned just label=src:agent. Inbox = `" + agentInboxQuery + "` (run `wyk inbox`) — WORK returned items, don't just note them. Skip HUMAN-BLOCK rows (agent task with a human-flagged dep) and AGENT-HANDOFF rows (label=agent-handoff = another agent's; a human coordinates). File/hand off a human task with `wyk handoff <id>` (or `wyk handoff -create \"<title>\"`), never hand-rolled labels. Multi-agent: route with `wyk handoff --identity <name>` (adds src:agent:<name>), read with `wyk inbox --identity <name>` or $WYK_AGENT_IDENTITY. Statuses: open(default)/in_progress/hooked(another agent's hook)/blocked(+--add-dependency)/deferred(subsystem not ready, hidden from bd ready)/pinned(persistent, never a queue entry)/closed; prefer deferred over holding a task open. Full text + runbook format: `wyk conventions`."
 
 // teachBDConvention writes a single bd memory describing the wyk
 // label convention into repoRoot's bd workspace. The --key makes
@@ -964,10 +964,11 @@ const (
 
 // wykConventionsBlock is the marker-delimited section wyk init writes
 // into CLAUDE.md. It is the canonical, repo-local statement of what
-// "wyk" means to an agent: there is no `wyk create`, planning is
-// `bd create`, the owner column is label-driven, and human work is
-// handed off via `wyk handoff`. Kept as one const so the refresh path
-// can compare the existing block byte-for-byte and skip a no-op write.
+// "wyk" means to an agent: planning is bd issues filed via `wyk
+// create` (never TodoWrite/markdown), the owner column is
+// label-driven, and human work is handed off via `wyk handoff`. Kept
+// as one const so the refresh path can compare the existing block
+// byte-for-byte and skip a no-op write.
 const wykConventionsBlock = wykConventionsBeginMarker + `
 ## wyk — planning & handoff over bd
 

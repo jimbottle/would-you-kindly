@@ -213,13 +213,15 @@ func computeStats(all []beads.Issue, now time.Time) Stats {
 				s.HumanFromHuman++
 			}
 		}
-		// Inbox: src:agent that has lost its human label and isn't
-		// closed, blocked, or fenced off for another agent — the full
-		// mirror of inboxQuery (roborev #2066 caught this count
-		// missing the agent-handoff exclusion inboxQuery has carried
-		// since contract v2).
+		// Inbox: src:agent that has lost its human label, is in a
+		// workable status, and isn't fenced off for another agent —
+		// the full mirror of inboxQuery (roborev #2066 caught this
+		// count missing the agent-handoff exclusion inboxQuery has
+		// carried since contract v2; deferred/hooked joined blocked
+		// in the v3 amendment for bd 1.0.4, would-you-kindly-hxd8).
 		if i.HasLabel("src:agent") && !human && !closed &&
-			i.Status != "blocked" && !i.HasLabel("agent-handoff") {
+			i.Status != "blocked" && i.Status != "deferred" && i.Status != "hooked" &&
+			!i.HasLabel("agent-handoff") {
 			s.InboxCount++
 		}
 		if closed && !i.ClosedAt.IsZero() {
@@ -273,7 +275,7 @@ func renderStatsText(s Stats, subCount int) {
 
 	fmt.Println("By status:")
 	// Stable order regardless of map iteration.
-	for _, st := range []string{"open", "in_progress", "blocked", "deferred", "closed"} {
+	for _, st := range []string{"open", "in_progress", "hooked", "blocked", "deferred", "pinned", "closed"} {
 		if n := s.ByStatus[st]; n > 0 {
 			fmt.Printf("  %-14s %d\n", st, n)
 		}

@@ -39,6 +39,15 @@ or `a` in the TUI). If they cannot complete it and want to bounce it
 back to the agent, they remove the `human` label (`bd label remove
 <id> human`, or `H` in the TUI).
 
+bd (1.0.4) ships a native **`bd human`** command family that reads the
+same `human` label this contract writes, so the two interoperate
+directly: `bd human list` is the human-side view (wyk's `h` preset),
+`bd human stats` summarizes it, and `bd human respond <id>` adds a
+comment **and closes** — equivalent to "done, with an answer". Note the
+asymmetry: `bd human respond` ends the round-trip; it is NOT the
+bounce-back gesture. To return work to the agent's inbox, remove the
+`human` label as above.
+
 The agent discovers bounced-back work via **`wyk inbox`**:
 
 ```bash
@@ -49,18 +58,20 @@ wyk inbox -json    # structured output for LLM ingestion
 `wyk inbox` runs the canonical query
 
 ```
-label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked
+label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked AND status!=deferred AND status!=hooked
 ```
 
 across every registered workspace. The intent: an issue an agent
 filed (`src:agent`) that no longer carries `human`, isn't closed,
-and isn't blocked on another tracked issue is sitting in the
-agent's lap — the human acted on it but left follow-up work.
-`status=blocked` is excluded for the same reason `bd ready`
-excludes it: a task whose blocker is still outstanding isn't
-actionable, and surfacing it as "work this now" sends the agent
-chasing an unblocker that hasn't arrived (it reappears the moment
-its status returns to open). The agent picks it up, either closes it (work is
+and is in a workable status is sitting in the agent's lap — the
+human acted on it but left follow-up work. `blocked`, `deferred`,
+and `hooked` are excluded for the same reason `bd ready` excludes
+them: the blocker is tracked elsewhere — a dependency (`blocked`),
+a future date or unstable subsystem (`deferred`), or another
+agent's hook (`hooked`, bd 1.0.4's in-flight marker) — and
+surfacing the issue as "work this now" sends the agent chasing an
+unblocker that hasn't arrived (it reappears the moment its status
+returns to open). The agent picks it up, either closes it (work is
 done) or re-applies `human` after another step (back to the human
 for another round). The label flips trace the conversation.
 
@@ -97,7 +108,7 @@ colon — labels are colon-namespaced — no space, no uppercase).
 
   ```
   # -strict — bd-expressible, routed work only:
-  label=src:agent:<name> AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked
+  label=src:agent:<name> AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked AND status!=deferred AND status!=hooked
 
   # default — the routed set above UNION the un-routed collective set.
   # bd 1.0.4 can't express `NOT label=src:agent:*`, so wyk fetches the
@@ -172,9 +183,10 @@ consuming the CLI's exit codes should check stderr too.
 ## Acting on the inbox
 
 The inbox query (`label=src:agent AND NOT label=human AND NOT
-label=agent-handoff AND status!=closed AND status!=blocked`) returns
-issues an agent filed that nothing is blocking — neither the human
-nor another tracked issue. The convention is to **work them**, not just note
+label=agent-handoff AND status!=closed AND status!=blocked AND
+status!=deferred AND status!=hooked`) returns issues an agent filed
+that nothing is blocking — neither the human, another tracked
+issue, a defer date, nor another agent's hook. The convention is to **work them**, not just note
 them. If `wyk inbox` returns items, the agent's default next move
 is to pick up the highest-priority one and resume — that's the loop
 the round-trip is designed to enable. Letting inbox items
@@ -212,14 +224,16 @@ resolved and the task is yours to act on.
 
 ## Status lifecycle
 
-bd's five statuses, with the convention for picking each:
+bd 1.0.4's seven built-in statuses, with the convention for picking each:
 
 | Status        | Use when                                                                |
 |---------------|--------------------------------------------------------------------------|
 | `open`        | Actionable now. The default for newly-filed issues.                      |
 | `in_progress` | Someone has claimed it. `bd update --claim` sets this AND assigns.        |
+| `hooked`      | Attached to an agent's hook — bd's own in-flight marker for hook-driven agent work. Treat like `in_progress` belonging to someone else; excluded from `bd ready` and the wyk inbox. |
 | `blocked`     | Waiting on another tracked bd issue. Pair with `--add-dependency <id>`. |
 | `deferred`    | Waiting on a subsystem that hasn't stabilised yet (WIP UI, redesigned API, polish that depends on an unfinished feature). Hidden from `bd ready` and the TUI's `ready` preset. |
+| `pinned`      | Persistent — stays open indefinitely (standing instructions, recurring checklists). Never a queue entry; `bd close` requires `--force` on it. |
 | `closed`      | Done. Post-commit hook auto-closes from `Closes:`/`Fixes:`/`Resolves:` trailers. |
 
 Default to **open**. Reach for **deferred** instead of holding-open
@@ -371,6 +385,12 @@ one-shot relabel command and call it out here explicitly.
 **Schema:** `wyk-contract/v3`
 
 Changelog:
+- **v3 (amended 2026-08-19)** — the inbox queries additionally exclude
+  bd 1.0.4's `status=deferred` and `status=hooked`, on the 2026-06-10
+  amendment's exact rationale: a deferred issue's unblocker (a date, a
+  stabilising subsystem) hasn't arrived, and a hooked issue is already
+  attached to another agent's hook — neither is "work this now". Same
+  additive narrowing; issues reappear when their status returns to open.
 - **v3 (amended 2026-06-10)** — the inbox queries additionally exclude
   `status=blocked`: a task whose tracked blocker is still outstanding
   isn't actionable, and surfacing it as work-now contradicted the

@@ -293,13 +293,17 @@ func statusStyleFor(status string) lipgloss.Style {
 	switch status {
 	case "open":
 		return statusOpen
-	case "in_progress":
+	case "in_progress", "hooked":
+		// hooked is bd 1.0.4's "attached to an agent's hook" — work
+		// actively in flight, so it shares the in-progress emphasis.
 		return statusInProgress
 	case "blocked":
 		return statusBlocked
 	case "closed":
 		return statusClosed
 	default:
+		// deferred, pinned, and anything a future bd adds: dim.
+		// The frozen statuses are deliberately de-emphasized.
 		return statusOther
 	}
 }

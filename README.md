@@ -297,11 +297,13 @@ wyk inbox -json    # structured output for an LLM to ingest
 ```
 
 The canonical query is `label=src:agent AND NOT label=human AND NOT
-label=agent-handoff AND status!=closed AND status!=blocked` — things
-you (the agent) filed that a human has touched but left open, minus
-another agent's work (`agent-handoff`) and issues waiting on a tracked
-blocker (`blocked` reappears when its status returns to open). Use
-this at the start of a session to find what you need to act on next.
+label=agent-handoff AND status!=closed AND status!=blocked AND
+status!=deferred AND status!=hooked` — things you (the agent) filed
+that a human has touched but left open, minus another agent's work
+(`agent-handoff`, and `hooked` — bd's attached-to-an-agent's-hook
+status) and issues whose blocker is tracked elsewhere (`blocked` /
+`deferred` reappear when their status returns to open). Use this at
+the start of a session to find what you need to act on next.
 
 #### Proactive nudge (opt-in Stop hook)
 
@@ -591,7 +593,7 @@ narrow terminal the lower-value ones auto-hide to keep rows intact.
 | `Branch`   | That repo's current git branch. Shown in multi-repo mode.                                                                |
 | `ID`       | The bd issue ID with the repeated workspace prefix trimmed (e.g. `2oa` for `would-you-kindly-2oa`). Yank it with `y`.    |
 | `Type`     | The issue type, abbreviated to four characters: `task`, `bug`, `feat`(ure), `chor`(e), `epic`, `deci`(sion), `spik`(e), `stor`(y), `mile`(stone). |
-| `Status`   | The bd lifecycle state: `open`, `wip` (in&#95;progress), `blocked`, `deferred`, `closed`. Closed rows are dimmed.        |
+| `Status`   | The bd lifecycle state: `open`, `wip` (in&#95;progress), `hooked`, `blocked`, `deferred`, `pinned`, `closed`. Closed rows are dimmed; the frozen states (`deferred`, `pinned`) render de-emphasized. |
 | `Priority` | `P0` (most urgent) through `P4` (backlog). Bump with `+` / `-`; opt into colour emphasis in `ui.json`.                   |
 | `Updated`  | How long since the issue last changed — `now`, `3h ago`, `2d ago`, or a `Jan 2` date once it's older than 30 days.       |
 | `Session`  | The Claude session that filed the issue (first 8 chars of the ID), recorded when it's created via `wyk create`. Blank for issues filed any other way. |

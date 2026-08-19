@@ -4109,8 +4109,10 @@ func (m Model) viewHelp() string {
 	}{
 		{"open", "open", "available for work"},
 		{"wip", "in_progress", "in progress (abbreviated in the table)"},
+		{"hooked", "hooked", "attached to an agent's hook — another agent is on it"},
 		{"blocked", "blocked", "has an open dependency or is human-blocked"},
 		{"deferred", "deferred", "hidden from `bd ready` until a date (set via `d`)"},
+		{"pinned", "pinned", "persistent; stays open indefinitely"},
 		{"closed", "closed", "done; strikethrough"},
 	}
 	for _, e := range legend {

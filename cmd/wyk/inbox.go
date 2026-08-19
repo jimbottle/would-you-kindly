@@ -12,31 +12,41 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 )
 
+// inboxExclusions is the clause tail shared by the collective and
+// identity-scoped inbox queries: not handed to a human, not fenced off
+// for another agent, and in a workable status. Beyond `closed`, three
+// statuses are excluded for the same reason `bd ready` hides them —
+// the blocker is tracked elsewhere and the issue reappears the moment
+// its status returns to open: `blocked` (a tracked dependency),
+// `deferred` (deliberately on ice until a date / subsystem), and
+// `hooked` (attached to another agent's hook — bd 1.0.4's in-flight
+// marker; presenting it as work-now would collide two agents on the
+// same issue). See docs/CONTRACT.md (would-you-kindly-hxd8).
+const inboxExclusions = ` AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked AND status!=deferred AND status!=hooked`
+
 // inboxQuery is the canonical "what's been bounced back to me" query.
 // Issues an agent originally filed (`src:agent`) that no longer carry
-// the `human` label and aren't closed — the convention is: the human
+// the `human` label and are workable — the convention is: the human
 // removes `human` to say "back to you", and the agent picks the issue
 // up from this inbox. `agent-handoff` rows are excluded: another agent
 // owns them and a human orchestrates, so the "work it" imperative must
 // not fire here. Kept in lockstep with cmd/wyk.agentInboxQuery. See
 // docs/CONTRACT.md.
-const inboxQuery = `label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked`
+const inboxQuery = `label=src:agent` + inboxExclusions
 
 // inboxQueryFor builds the agent-inbox query for an optional identity.
 // With no identity it returns the collective umbrella query above
 // (pre-v3 behavior, unchanged). With an identity it scopes strictly to
 // that identity's routing label — phase-1 strict scoping
 // (wyk-contract/v3); the phase-2 client-side unclaimed sweep
-// (would-you-kindly-r4h7) layers on top later. The `NOT label=human`
-// and `NOT label=agent-handoff` / `status!=closed` clauses are
-// preserved verbatim so an identity inbox excludes the same rows the
+// (would-you-kindly-r4h7) layers on top later. The exclusion tail is
+// shared verbatim so an identity inbox excludes the same rows the
 // collective one does.
 func inboxQueryFor(identity string) string {
 	if identity == "" {
 		return inboxQuery
 	}
-	return `label=` + identityLabel(identity) +
-		` AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked`
+	return `label=` + identityLabel(identity) + inboxExclusions
 }
 
 // runInbox implements `wyk inbox`: the agent-side view of the

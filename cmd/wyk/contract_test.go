@@ -17,8 +17,9 @@ import (
 
 // matchesAgentInbox is the label/status predicate form of inboxQuery
 // (cmd/wyk/inbox.go): `label=src:agent AND NOT label=human AND NOT
-// label=agent-handoff AND status!=closed AND status!=blocked`. Kept in
-// sync with that constant by TestInboxQueryMatchesPredicate below.
+// label=agent-handoff AND status!=closed AND status!=blocked AND
+// status!=deferred AND status!=hooked`. Kept in sync with that
+// constant by TestInboxQueryMatchesPredicate below.
 func matchesAgentInbox(labels []string, status string) bool {
 	has := func(want string) bool {
 		for _, l := range labels {
@@ -33,7 +34,7 @@ func matchesAgentInbox(labels []string, status string) bool {
 		return false
 	case has("human"), has("agent-handoff"):
 		return false
-	case status == "closed", status == "blocked":
+	case status == "closed", status == "blocked", status == "deferred", status == "hooked":
 		return false
 	default:
 		return true
@@ -116,6 +117,8 @@ func TestInboxQueryMatchesPredicate(t *testing.T) {
 		"NOT label=agent-handoff",
 		"status!=closed",
 		"status!=blocked",
+		"status!=deferred",
+		"status!=hooked",
 	} {
 		if !strings.Contains(inboxQuery, clause) {
 			t.Errorf("inboxQuery no longer contains %q — update matchesAgentInbox + the contract test to match", clause)
