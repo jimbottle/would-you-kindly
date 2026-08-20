@@ -63,7 +63,7 @@ func TestBulkReads_DisableBDResultLimit(t *testing.T) {
 			r := &fakeRunner{stdout: []byte("[]")}
 			c := newTestClient(r)
 			if err := tc.call(c); err != nil {
-				t.Fatalf("%s: %v", tc.name, err)
+				t.Fatalf("call: %v", err)
 			}
 			if len(r.calls) != 1 {
 				t.Fatalf("want 1 bd call, got %d", len(r.calls))
