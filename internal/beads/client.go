@@ -163,13 +163,108 @@ func (c *Client) ListAll(ctx context.Context) ([]Issue, error) {
 // that block the given id (i.e. its direct dependencies). Each
 // returned Issue carries the full field set including labels, so
 // callers checking "is this blocker a human task?" can answer
-// without a second lookup. Multi-ID batching is intentionally not
-// exposed: bd's batch response is flat and doesn't tag which
-// blocker belongs to which queried id, so callers must do
-// per-issue lookups to maintain the per-row attribution the TUI's
-// HUMAN-BLOCK badge depends on.
+// without a second lookup.
+//
+// This single-ID form is for genuinely one-at-a-time, on-demand
+// lookups (the detail view, depgraph's walk). To resolve MANY issues'
+// dependencies use ListDepsBatch — bd 1.0.4 tags each batch record
+// with its issue_id, so the attribution that once forced a per-issue
+// fan-out is available in one call.
 func (c *Client) ListDeps(ctx context.Context, id string) ([]Issue, error) {
 	out, err := c.run(ctx, nil, "dep", "list", id, "--json")
+	if err != nil {
+		return nil, err
+	}
+	return parseIssues(out)
+}
+
+// Dependency is one edge from bd's batch `dep list` response: the
+// issue that has the dependency, the issue it depends on, and the
+// edge kind ("blocks", "parent-child", …).
+type Dependency struct {
+	IssueID     string
+	DependsOnID string
+	Type        string
+}
+
+// depRow decodes either shape `bd dep list --json` can return. With
+// MULTIPLE ids bd emits dependency records (issue_id/depends_on_id);
+// with a SINGLE id it emits the full blocker issues instead. Decoding
+// both through one tolerant struct means ListDepsBatch doesn't have to
+// branch on arity at the JSON layer, and a future bd that settles on
+// one shape still parses.
+type depRow struct {
+	IssueID     string `json:"issue_id"`
+	DependsOnID string `json:"depends_on_id"`
+	Type        string `json:"type"`
+	ID          string `json:"id"` // set only in the single-id (issue) shape
+}
+
+// ListDepsBatch runs ONE `bd dep list id1 id2 … --json` and returns the
+// direct dependencies of every requested issue, keyed by the issue they
+// belong to.
+//
+// This replaces a per-issue fan-out. wyk used to call ListDeps once per
+// candidate row because bd's batch response was said to be flat and
+// unattributable — as of bd 1.0.4 that is no longer true: each record
+// carries issue_id, so one subprocess answers for the whole batch.
+// The old fan-out spawned 100+ concurrent `bd dep list` processes on a
+// large multi-repo refresh, which saturated Dolt and made the ordinary
+// per-repo `bd list` fetches miss their deadline — the "N repos failed
+// to load" the user actually saw (would-you-kindly-3frr).
+//
+// Issues with no dependencies are simply absent from the map.
+func (c *Client) ListDepsBatch(ctx context.Context, ids []string) (map[string][]Dependency, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// No --limit here: `bd dep list` (unlike list/query/ready) has no
+	// such flag and cobra rejects the whole invocation with "unknown
+	// flag", which markBlockedByHuman would swallow as a best-effort
+	// miss — every HUMAN-BLOCK badge silently gone.
+	args := append([]string{"dep", "list"}, ids...)
+	args = append(args, "--json")
+	out, err := c.run(ctx, nil, args...)
+	if err != nil {
+		return nil, err
+	}
+	b := bytes.TrimSpace(out)
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var rows []depRow
+	if err := json.Unmarshal(b, &rows); err != nil {
+		return nil, fmt.Errorf("parse bd dep list json: %w", err)
+	}
+	deps := make(map[string][]Dependency, len(ids))
+	for _, r := range rows {
+		switch {
+		case r.IssueID != "":
+			// Record shape: attributable on its own.
+			deps[r.IssueID] = append(deps[r.IssueID], Dependency{
+				IssueID: r.IssueID, DependsOnID: r.DependsOnID, Type: r.Type,
+			})
+		case r.ID != "" && len(ids) == 1:
+			// Issue shape: only attributable when we asked about
+			// exactly one issue, which is the only case bd emits it.
+			deps[ids[0]] = append(deps[ids[0]], Dependency{
+				IssueID: ids[0], DependsOnID: r.ID,
+			})
+		}
+	}
+	return deps, nil
+}
+
+// ListByIDs runs `bd list --id a,b,c --all --json` and returns those
+// issues with their full field set. `--all` keeps closed issues in the
+// result: a caller resolving a dependency edge needs to see the blocker
+// whatever state it's in, and deciding what a closed blocker means is
+// the caller's business, not this method's.
+func (c *Client) ListByIDs(ctx context.Context, ids []string) ([]Issue, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out, err := c.run(ctx, nil, "list", "--id", strings.Join(ids, ","), "--all", noLimitFlag, "--json")
 	if err != nil {
 		return nil, err
 	}

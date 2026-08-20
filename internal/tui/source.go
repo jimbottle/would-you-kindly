@@ -61,9 +61,12 @@ var (
 // depLister is the minimum surface markBlockedByHuman needs from
 // a Client — the real *beads.Client satisfies it, and tests inject
 // stubs that return canned dep lists so the dep-scan loop can be
-// exercised without a real bd binary.
+// exercised without a real bd binary. Both methods are BATCHED: the
+// per-issue form they replaced spawned one subprocess per row and
+// starved the list fetches (would-you-kindly-3frr).
 type depLister interface {
-	ListDeps(ctx context.Context, id string) ([]beads.Issue, error)
+	ListDepsBatch(ctx context.Context, ids []string) (map[string][]beads.Dependency, error)
+	ListByIDs(ctx context.Context, ids []string) ([]beads.Issue, error)
 }
 
 // fetchCall identifies which bd subcommand BDSource.Fetch will
@@ -199,50 +202,101 @@ func fetchRetryBackoff(i int) time.Duration {
 	return fetchRetryBaseBackoff + time.Duration(i%fetchConcurrency)*80*time.Millisecond
 }
 
-// markBlockedByHuman runs `bd dep list <id>` for every candidate
-// issue (src:agent + NOT human + DependencyCount > 0) and stamps
-// Issue.BlockedByHuman=true on any whose blocker set includes a
-// human-labeled task. Concurrency is bounded by sem; passing nil
-// allocates a local channel of size markBlockedByHumanConcurrency
-// (the single-repo path). MultiBDSource constructs one shared
-// channel and threads it into every sub's BDSource so the global
-// concurrent-subprocess count stays bounded across the whole
-// fetch. Best-effort: ListDeps errors are swallowed so a flaky
-// bd call only loses the badge for that row, not the whole fetch.
+// markBlockedByHuman stamps Issue.BlockedByHuman=true on every
+// candidate issue (src:agent + NOT human + DependencyCount > 0) whose
+// blocker set includes a human-labeled task — the HUMAN-BLOCK badge.
 //
-// Same-workspace only — the blocker has to be reachable via the
-// same bd Client. Cross-workspace deps (rare in practice) fall
-// through and the row keeps the plain AGENT badge.
+// It costs at most TWO bd subprocesses for the whole slice: one
+// batched `bd dep list id1 id2 …` for the edges, and one batched
+// `bd list --id …` to resolve the labels of blockers that aren't
+// already in the fetched set. It used to be one `bd dep list` PER
+// candidate row, capped at 8 concurrent — on a 24-workspace refresh
+// that meant 100+ subprocess spawns competing with the per-repo list
+// fetches, so those fetches blew their deadline and whole repos
+// reported "failed to load" (would-you-kindly-3frr).
+//
+// sem still bounds the calls so a many-workspace refresh can't put
+// 2*M bd processes in flight at once; nil allocates a local one.
+// Best-effort throughout: a failed lookup loses the badge for the
+// affected rows, never the fetch.
+//
+// Same-workspace only — the blocker has to be reachable via the same
+// bd Client. Cross-workspace deps (rare in practice) fall through and
+// the row keeps the plain AGENT badge.
 func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, sem chan struct{}) {
 	if c == nil {
+		return
+	}
+	candidates := make([]int, 0, len(issues))
+	for i := range issues {
+		if isAgentInboxCandidate(issues[i]) {
+			candidates = append(candidates, i)
+		}
+	}
+	if len(candidates) == 0 {
 		return
 	}
 	if sem == nil {
 		sem = make(chan struct{}, markBlockedByHumanConcurrency)
 	}
-	var wg sync.WaitGroup
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	case <-ctx.Done():
+		return
+	}
+
+	ids := make([]string, len(candidates))
+	for n, i := range candidates {
+		ids[n] = issues[i].ID
+	}
+	deps, err := c.ListDepsBatch(ctx, ids)
+	if err != nil || len(deps) == 0 {
+		return
+	}
+
+	// Resolve which blockers are human-flagged. Most are already in
+	// the fetched slice, so only the remainder needs a bd round-trip
+	// — and a filtered preset (ready/mine) is exactly when that
+	// remainder is non-empty, which is why the fallback exists at all.
+	human := make(map[string]bool, len(issues))
+	known := make(map[string]bool, len(issues))
 	for i := range issues {
-		if !isAgentInboxCandidate(issues[i]) {
-			continue
+		known[issues[i].ID] = true
+		if issues[i].IsHuman() {
+			human[issues[i].ID] = true
 		}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			deps, err := c.ListDeps(ctx, issues[i].ID)
-			if err != nil {
-				return
+	}
+	var unknown []string
+	seen := make(map[string]bool)
+	for _, ds := range deps {
+		for _, d := range ds {
+			if d.DependsOnID == "" || known[d.DependsOnID] || seen[d.DependsOnID] {
+				continue
 			}
-			for _, d := range deps {
-				if d.IsHuman() {
-					issues[i].BlockedByHuman = true
-					return
+			seen[d.DependsOnID] = true
+			unknown = append(unknown, d.DependsOnID)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown) // stable argv → cacheable, and deterministic in tests
+		if blockers, err := c.ListByIDs(ctx, unknown); err == nil {
+			for _, b := range blockers {
+				if b.IsHuman() {
+					human[b.ID] = true
 				}
 			}
-		}(i)
+		}
 	}
-	wg.Wait()
+
+	for _, i := range candidates {
+		for _, d := range deps[issues[i].ID] {
+			if human[d.DependsOnID] {
+				issues[i].BlockedByHuman = true
+				break
+			}
+		}
+	}
 }
 
 // isAgentInboxCandidate reports whether the issue is in scope for
@@ -737,23 +791,31 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 			}
 			continue
 		}
-		// Drop any issue whose longest-prefix-match is not THIS
-		// sub. bd has been observed serving foreign workspace data
-		// when a sub's `.beads/` is broken (e.g. a dead jsonl-only
-		// export alongside other healthy workspaces, bd's daemon
-		// then returns whichever workspace is currently warm).
-		// Without this guard, those foreign rows render attributed
-		// to the wrong repo, hiding a P0 bug as a duplicate-looking
-		// row.
+		// Drop any issue that demonstrably belongs to ANOTHER
+		// registered workspace. bd has been observed serving foreign
+		// workspace data when a sub's `.beads/` is broken (e.g. a dead
+		// jsonl-only export alongside other healthy workspaces, bd's
+		// daemon then returns whichever workspace is currently warm).
+		// Without this guard, those foreign rows render attributed to
+		// the wrong repo, hiding a P0 bug as a duplicate-looking row.
 		//
-		// False positive: a workspace where the user manually set
-		// Name (in repos.json) to something other than the bd
-		// `issue-prefix`. Surfaced as a fetch error pointing them
-		// at the registry; they fix by editing the entry.
+		// The test is "some OTHER sub claims this ID", not "this sub's
+		// name prefixes it". A workspace's bd issue prefix is chosen at
+		// `bd init` and is frequently NOT its directory name — which is
+		// where the registry name comes from. Requiring equality
+		// emptied every such workspace and reported it as a failed repo
+		// ("bd may be serving the wrong workspace") even though bd was
+		// serving exactly the right data: e.g. a repo in
+		// `louisville-open-data-expenditure-bot/` whose issues are
+		// `louisville-open-data-*` lost all 10 rows (would-you-kindly-qp14).
+		// An ID no registered sub claims is simply this workspace's own
+		// prefix, so it is kept; cross-workspace contamination — the
+		// thing the guard exists for — still matches another sub's name
+		// and is still dropped.
 		var clean []beads.Issue
 		var foreign int
 		for j := range r.issues {
-			if longestPrefixMatch(r.issues[j].ID) != sub.name {
+			if owner := longestPrefixMatch(r.issues[j].ID); owner != "" && owner != sub.name {
 				foreign++
 				continue
 			}
@@ -764,7 +826,7 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 		if foreign > 0 {
 			fetchErrs = append(fetchErrs, FetchError{
 				Repo: sub.name,
-				Err:  fmt.Errorf("%d issue(s) had foreign or nested-prefix ID (expected %q*) — bd may be serving the wrong workspace; check `wyk doctor` and ~/.config/wyk/repos.json", foreign, sub.name+"-"),
+				Err:  fmt.Errorf("%d issue(s) belong to another registered workspace — bd may be serving the wrong workspace; check `wyk doctor` and ~/.config/wyk/repos.json", foreign),
 			})
 		}
 		all = append(all, clean...)

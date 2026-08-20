@@ -418,3 +418,72 @@ func TestErrorSink_NotCalledOnSuccess(t *testing.T) {
 		t.Fatalf("ErrorSink should not fire on success; fired %d", calls)
 	}
 }
+
+func TestListDepsBatch_ParsesRecordsAndGroupsByIssue(t *testing.T) {
+	// bd 1.0.4's MULTI-id `dep list --json` emits dependency records
+	// tagged with issue_id — the attribution that lets wyk replace a
+	// per-issue fan-out with one call (would-you-kindly-3frr).
+	r := &fakeRunner{stdout: []byte(`[
+		{"issue_id":"a-1","depends_on_id":"a-9","type":"blocks"},
+		{"issue_id":"a-1","depends_on_id":"a-8","type":"parent-child"},
+		{"issue_id":"a-2","depends_on_id":"a-7","type":"blocks"}
+	]`)}
+	c := newTestClient(r)
+	got, err := c.ListDepsBatch(context.Background(), []string{"a-1", "a-2"})
+	if err != nil {
+		t.Fatalf("ListDepsBatch: %v", err)
+	}
+	if want := "dep list a-1 a-2 --json"; strings.Join(r.calls[0].args, " ") != want {
+		t.Errorf("argv = %q, want %q", strings.Join(r.calls[0].args, " "), want)
+	}
+	if len(got["a-1"]) != 2 || len(got["a-2"]) != 1 {
+		t.Fatalf("grouping wrong: %+v", got)
+	}
+	if got["a-1"][0].DependsOnID != "a-9" || got["a-1"][0].Type != "blocks" {
+		t.Errorf("a-1's first edge = %+v", got["a-1"][0])
+	}
+}
+
+func TestListDepsBatch_ParsesTheSingleIDIssueShape(t *testing.T) {
+	// With ONE id bd returns the blocker ISSUES instead of records.
+	// Attribution is still unambiguous (there's only one queried id),
+	// so the tolerant decode handles both without branching.
+	r := &fakeRunner{stdout: []byte(`[{"id":"a-9","title":"blocker","labels":["human"]}]`)}
+	c := newTestClient(r)
+	got, err := c.ListDepsBatch(context.Background(), []string{"a-1"})
+	if err != nil {
+		t.Fatalf("ListDepsBatch: %v", err)
+	}
+	if len(got["a-1"]) != 1 || got["a-1"][0].DependsOnID != "a-9" {
+		t.Fatalf("single-id shape not attributed to a-1: %+v", got)
+	}
+}
+
+func TestListDepsBatch_EmptyIDsMakesNoCall(t *testing.T) {
+	r := &fakeRunner{stdout: []byte("[]")}
+	c := newTestClient(r)
+	got, err := c.ListDepsBatch(context.Background(), nil)
+	if err != nil || got != nil {
+		t.Fatalf("ListDepsBatch(nil) = %v, %v; want nil, nil", got, err)
+	}
+	if len(r.calls) != 0 {
+		t.Errorf("no ids should mean no bd call; got %d", len(r.calls))
+	}
+}
+
+func TestListByIDs_BatchesAndIncludesClosed(t *testing.T) {
+	// --all is deliberate: resolving a dependency edge means seeing
+	// the blocker whatever state it's in.
+	r := &fakeRunner{stdout: []byte(`[{"id":"a-9","labels":["human"]}]`)}
+	c := newTestClient(r)
+	got, err := c.ListByIDs(context.Background(), []string{"a-9", "a-8"})
+	if err != nil {
+		t.Fatalf("ListByIDs: %v", err)
+	}
+	if want := "list --id a-9,a-8 --all --limit=0 --json"; strings.Join(r.calls[0].args, " ") != want {
+		t.Errorf("argv = %q, want %q", strings.Join(r.calls[0].args, " "), want)
+	}
+	if len(got) != 1 || !got[0].IsHuman() {
+		t.Errorf("parsed issues = %+v", got)
+	}
+}

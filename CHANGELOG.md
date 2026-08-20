@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A workspace whose bd issue prefix differs from its directory name
+  no longer loses every row and reports as a failed repo**
+  (would-you-kindly-qp14). The cross-workspace leak guard required each
+  issue ID to start with the *registry* name — which comes from the
+  folder — but bd picks its own prefix at `bd init`. A repo registered
+  as `louisville-open-data-expenditure-bot` whose issues are all
+  `louisville-open-data-*` therefore had all of them dropped and
+  surfaced "bd may be serving the wrong workspace", while `wyk doctor`
+  reported it perfectly healthy. The guard now drops only rows that a
+  *different registered workspace* claims — the actual contamination
+  signal — so an unclaimed prefix is understood as the workspace's own.
+
+- **The HUMAN-BLOCK dep lookups are batched into at most two bd calls
+  per workspace** (would-you-kindly-3frr), instead of one `bd dep list`
+  per candidate row. The fan-out competed with the per-repo list
+  fetches for the same bd/Dolt capacity, and the resulting `bd dep
+  list … timed out after 10s` entries fill `bd-errors.log`. bd 1.0.4
+  tags each batch `dep list` record with its `issue_id`, so the
+  attribution that once forced per-issue calls is now available in one
+  — the client comment saying otherwise was stale. Measured across a
+  24-workspace registry: dep-related subprocesses 42 → 21, total 66 →
+  45, with the badge count unchanged.
+
 ### Changed
 
 - **The ID column shows the FULL bd issue ID** (would-you-kindly-rvv9).

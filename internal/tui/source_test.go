@@ -429,19 +429,24 @@ func TestMultiBDSource_FetchDoesNotRetryNonTimeout(t *testing.T) {
 }
 
 func TestMultiBDSource_DropsForeignIssueIDs(t *testing.T) {
-	// A sub that returns issues with the wrong prefix (the
-	// cross-workspace leak symptom — bd serving another
-	// workspace's data when this one's .beads is broken). The
-	// matching rows survive and get decorated; foreign rows are
-	// dropped and surface as a FetchError so the user sees the
-	// mis-attribution rather than silently consuming bad data.
+	// A sub that returns rows belonging to ANOTHER REGISTERED
+	// workspace (the cross-workspace leak symptom — bd serving
+	// another workspace's data when this one's .beads is broken).
+	// Those rows are dropped and surface as a FetchError so the user
+	// sees the mis-attribution rather than silently consuming bad
+	// data; this sub's own rows survive and get decorated.
+	//
+	// Note the leaked IDs are `good-*`: the guard's signal is "some
+	// OTHER sub claims this ID", not "the ID lacks my name". An ID no
+	// sub claims is this workspace's own bd prefix — see
+	// TestMultiBDSource_KeepsRowsWhoseBDPrefixIsNotTheRegistryName.
 	clean := &fakeRepoSource{issues: []beads.Issue{
 		{ID: "good-1", Title: "ok-1"},
 		{ID: "good-2", Title: "ok-2"},
 	}}
 	leaky := &fakeRepoSource{issues: []beads.Issue{
-		{ID: "elsewhere-x", Title: "leaked from another workspace"},
-		{ID: "elsewhere-y", Title: "also leaked"},
+		{ID: "good-x", Title: "leaked from the `good` workspace"},
+		{ID: "good-y", Title: "also leaked"},
 		{ID: "leaky-1", Title: "legit row from this workspace"},
 	}}
 	m := newMultiForTest(t,
@@ -480,11 +485,48 @@ func TestMultiBDSource_DropsForeignIssueIDs(t *testing.T) {
 	if errs[0].Repo != "leaky" {
 		t.Errorf("fetch error repo = %q, want %q", errs[0].Repo, "leaky")
 	}
-	if !strings.Contains(errs[0].Err.Error(), "foreign or nested-prefix ID") {
-		t.Errorf("fetch error message = %q, want it to mention 'foreign or nested-prefix ID'", errs[0].Err.Error())
+	if !strings.Contains(errs[0].Err.Error(), "another registered workspace") {
+		t.Errorf("fetch error message = %q, want it to name the cross-workspace cause", errs[0].Err.Error())
 	}
-	if !strings.Contains(errs[0].Err.Error(), "\"leaky-\"") {
-		t.Errorf("fetch error message should name the expected prefix %q; got %q", "leaky-", errs[0].Err.Error())
+	if !strings.Contains(errs[0].Err.Error(), "2 issue(s)") {
+		t.Errorf("fetch error message should count the dropped rows; got %q", errs[0].Err.Error())
+	}
+}
+
+func TestMultiBDSource_KeepsRowsWhoseBDPrefixIsNotTheRegistryName(t *testing.T) {
+	// A workspace's bd issue prefix is chosen at `bd init` and is
+	// often NOT its directory name — which is where the registry name
+	// comes from. Requiring the ID to start with the registry name
+	// emptied every such workspace and reported it as a failed repo,
+	// e.g. a repo registered as `louisville-open-data-expenditure-bot`
+	// (its folder) whose issues are all `louisville-open-data-*` lost
+	// every row while bd was serving exactly the right data
+	// (would-you-kindly-qp14).
+	shortPrefix := &fakeRepoSource{issues: []beads.Issue{
+		{ID: "louisville-open-data-7zo", Title: "real row"},
+		{ID: "louisville-open-data-715", Title: "another real row"},
+	}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"louisville-open-data-expenditure-bot", "main", shortPrefix},
+	)
+	issues, errs, err := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err != nil {
+		t.Fatalf("FetchWithSubErrors: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("expected both rows to survive; got %d (%+v)", len(issues), idsOf(issues))
+	}
+	if len(errs) != 0 {
+		t.Errorf("a workspace using its own bd prefix is not an error; got %+v", errs)
+	}
+	for _, i := range issues {
+		if i.Repo != "louisville-open-data-expenditure-bot" {
+			t.Errorf("%s decorated with Repo=%q, want the registry name", i.ID, i.Repo)
+		}
 	}
 }
 
@@ -997,19 +1039,52 @@ func TestMarkBlockedByHuman_NilClientNoOps(t *testing.T) {
 	}
 }
 
-// stubDepLister returns canned dep lists per candidate ID. Used to
-// pin markBlockedByHuman's dep-scan behaviour without needing a
-// real bd binary or workspace.
+// stubDepLister returns canned dep edges per candidate ID, plus the
+// blocker issues those edges point at. Used to pin
+// markBlockedByHuman's behaviour without needing a real bd binary or
+// workspace. batchCalls/lookupCalls count subprocess-equivalents so a
+// test can assert the fan-out stays batched.
 type stubDepLister struct {
-	byID map[string][]beads.Issue
-	err  error
+	byID     map[string][]beads.Issue // candidate ID → its blocker issues
+	err      error
+	batchIDs []string // ids passed to the last ListDepsBatch
+	batch    int
+	lookups  int
 }
 
-func (s *stubDepLister) ListDeps(_ context.Context, id string) ([]beads.Issue, error) {
+func (s *stubDepLister) ListDepsBatch(_ context.Context, ids []string) (map[string][]beads.Dependency, error) {
+	s.batch++
+	s.batchIDs = append([]string(nil), ids...)
 	if s.err != nil {
 		return nil, s.err
 	}
-	return s.byID[id], nil
+	out := map[string][]beads.Dependency{}
+	for _, id := range ids {
+		for _, b := range s.byID[id] {
+			out[id] = append(out[id], beads.Dependency{IssueID: id, DependsOnID: b.ID, Type: "blocks"})
+		}
+	}
+	return out, nil
+}
+
+func (s *stubDepLister) ListByIDs(_ context.Context, ids []string) ([]beads.Issue, error) {
+	s.lookups++
+	if s.err != nil {
+		return nil, s.err
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	var out []beads.Issue
+	for _, blockers := range s.byID {
+		for _, b := range blockers {
+			if want[b.ID] {
+				out = append(out, b)
+			}
+		}
+	}
+	return out, nil
 }
 
 func TestMarkBlockedByHuman_FlagsRowsWithHumanLabeledBlocker(t *testing.T) {
@@ -1048,6 +1123,51 @@ func TestMarkBlockedByHuman_FlagsRowsWithHumanLabeledBlocker(t *testing.T) {
 	if !issues[2].BlockedByHuman {
 		t.Errorf("ccc: at least one blocker has `human` → should be flagged")
 	}
+	// The whole point of the rewrite: ONE dep call for all three
+	// candidates, not one per row (would-you-kindly-3frr).
+	if stub.batch != 1 {
+		t.Errorf("ListDepsBatch called %d times, want exactly 1 for the whole slice", stub.batch)
+	}
+	if len(stub.batchIDs) != 3 {
+		t.Errorf("batch asked about %d ids, want all 3 candidates in one call", len(stub.batchIDs))
+	}
+	// None of the blockers are in the fetched slice, so exactly one
+	// label-resolution round-trip is expected — never one per blocker.
+	if stub.lookups != 1 {
+		t.Errorf("ListByIDs called %d times, want exactly 1", stub.lookups)
+	}
+}
+
+func TestMarkBlockedByHuman_ResolvesBlockersAlreadyInTheFetchedSet(t *testing.T) {
+	// When the blocker is already on screen, its labels are in hand
+	// and no second bd call is needed at all.
+	issues := []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}, DependencyCount: 1},
+		{ID: "a-blocker", Labels: []string{"human", "src:agent"}},
+	}
+	stub := &stubDepLister{byID: map[string][]beads.Issue{
+		"a-1": {{ID: "a-blocker"}}, // no labels here — they come from the slice
+	}}
+	markBlockedByHuman(context.Background(), stub, issues, nil)
+	if !issues[0].BlockedByHuman {
+		t.Error("a-1's blocker is a human row in the same fetch → should be flagged")
+	}
+	if stub.lookups != 0 {
+		t.Errorf("ListByIDs called %d times; a blocker already in the slice needs no lookup", stub.lookups)
+	}
+}
+
+func TestMarkBlockedByHuman_DepErrorLosesOnlyTheBadge(t *testing.T) {
+	// Best-effort contract: a failing bd call must not panic or
+	// corrupt the fetch, just leave the badge off.
+	issues := []beads.Issue{{ID: "a-1", Labels: []string{"src:agent"}, DependencyCount: 1}}
+	stub := &stubDepLister{err: errors.New("bd: timed out"), byID: map[string][]beads.Issue{
+		"a-1": {{ID: "x", Labels: []string{"human"}}},
+	}}
+	markBlockedByHuman(context.Background(), stub, issues, nil)
+	if issues[0].BlockedByHuman {
+		t.Error("a failed dep lookup must leave BlockedByHuman false, not guess")
+	}
 }
 
 func TestMarkBlockedByHuman_SkipsNonCandidates(t *testing.T) {
@@ -1059,22 +1179,30 @@ func TestMarkBlockedByHuman_SkipsNonCandidates(t *testing.T) {
 		{ID: "no-src-row", Labels: []string{"src:human"}, DependencyCount: 1},
 		{ID: "no-deps-row", Labels: []string{"src:agent"}, DependencyCount: 0},
 	}
-	calls := 0
-	stub := stubDepListerFunc(func(_ context.Context, id string) ([]beads.Issue, error) {
-		calls++
-		t.Errorf("ListDeps called for non-candidate %q", id)
-		return nil, nil
-	})
+	stub := &explodingDepLister{t: t}
 	markBlockedByHuman(context.Background(), stub, issues, nil)
-	if calls != 0 {
-		t.Errorf("expected zero ListDeps calls; got %d", calls)
+	if stub.calls != 0 {
+		t.Errorf("expected zero bd calls; got %d", stub.calls)
 	}
 }
 
-type stubDepListerFunc func(ctx context.Context, id string) ([]beads.Issue, error)
+// explodingDepLister fails the test if markBlockedByHuman shells out
+// at all — used to prove the no-candidate path costs nothing.
+type explodingDepLister struct {
+	t     *testing.T
+	calls int
+}
 
-func (f stubDepListerFunc) ListDeps(ctx context.Context, id string) ([]beads.Issue, error) {
-	return f(ctx, id)
+func (e *explodingDepLister) ListDepsBatch(_ context.Context, ids []string) (map[string][]beads.Dependency, error) {
+	e.calls++
+	e.t.Errorf("ListDepsBatch called for non-candidates %v", ids)
+	return nil, nil
+}
+
+func (e *explodingDepLister) ListByIDs(_ context.Context, ids []string) ([]beads.Issue, error) {
+	e.calls++
+	e.t.Errorf("ListByIDs called for non-candidates %v", ids)
+	return nil, nil
 }
 
 func TestNewMultiBDSource_SharesOneDepSemAcrossSubs(t *testing.T) {
