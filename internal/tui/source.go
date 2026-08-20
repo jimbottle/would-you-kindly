@@ -243,11 +243,24 @@ func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, 
 	if sem == nil {
 		sem = make(chan struct{}, markBlockedByHumanConcurrency)
 	}
-	select {
-	case sem <- struct{}{}:
-		defer func() { <-sem }()
-	case <-ctx.Done():
-		return
+	// withSem runs one bd call against the SHARED budget. Note it wraps
+	// each call rather than being held for the whole function: holding
+	// one token throughout and then fanning out underneath it would let
+	// each of the 8 holders spawn its own extra subprocesses, so the
+	// global bound MultiBDSource's shared DepSem exists to enforce
+	// would multiply by the fan-out width instead of capping it
+	// (roborev #4034). Every bd call below goes through here, so total
+	// in-flight dep subprocesses stay ≤ markBlockedByHumanConcurrency
+	// across every workspace. Reports false when ctx ended first.
+	withSem := func(fn func()) bool {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-ctx.Done():
+			return false
+		}
+		fn()
+		return true
 	}
 
 	// human/known are seeded from the rows we already hold: any blocker
@@ -277,7 +290,11 @@ func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, 
 		missing = append(missing, issues[i].ID)
 	}
 	if len(missing) > 0 {
-		fetched, err := c.ListDepsBatch(ctx, missing)
+		var fetched map[string][]beads.Dependency
+		var err error
+		if !withSem(func() { fetched, err = c.ListDepsBatch(ctx, missing) }) {
+			return
+		}
 		switch {
 		case errors.Is(err, beads.ErrUnattributableDeps):
 			// bd answered in the single-issue shape for a multi-id
@@ -288,16 +305,16 @@ func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, 
 			// ISSUES, labels included, so record their human-ness here
 			// and skip the resolution round-trip below entirely.
 			//
-			// Bounded, not a serial walk: on a query-backed preset
+			// Concurrent, not a serial walk: on a query-backed preset
 			// `missing` can hold dozens of candidates, and doing them
 			// one after another inside BDSource.Fetch is slower than
 			// either the batch it replaces or the 8-wide fan-out that
 			// preceded it — the fetch-time blowout this whole path was
-			// tuned to avoid (roborev #4033). Capped low because we're
-			// already holding a depSem token.
-			const fallbackConcurrency = 4
+			// tuned to avoid (roborev #4033). The width comes from the
+			// SHARED sem via withSem, so this fan-out competes for the
+			// same global budget as every other workspace's rather than
+			// multiplying it.
 			var fallbackWG sync.WaitGroup
-			fallbackSem := make(chan struct{}, fallbackConcurrency)
 			var mu sync.Mutex
 			for _, id := range missing {
 				if ctx.Err() != nil {
@@ -306,10 +323,9 @@ func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, 
 				fallbackWG.Add(1)
 				go func(id string) {
 					defer fallbackWG.Done()
-					fallbackSem <- struct{}{}
-					defer func() { <-fallbackSem }()
-					single, serr := c.ListDeps(ctx, id)
-					if serr != nil {
+					var single []beads.Issue
+					var serr error
+					if !withSem(func() { single, serr = c.ListDeps(ctx, id) }) || serr != nil {
 						return
 					}
 					mu.Lock()
@@ -348,7 +364,10 @@ func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, 
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown) // stable argv → cacheable, and deterministic in tests
-		if blockers, err := c.ListByIDs(ctx, unknown); err == nil {
+		var blockers []beads.Issue
+		var err error
+		withSem(func() { blockers, err = c.ListByIDs(ctx, unknown) })
+		if err == nil {
 			for _, b := range blockers {
 				if b.IsHuman() {
 					human[b.ID] = true
@@ -541,9 +560,10 @@ type subRepo struct {
 // visible in `wyk bugreport` without a second log line here.
 func memoPrefix(probe func(context.Context) (string, error)) func(context.Context) string {
 	var (
-		mu      sync.Mutex
-		prefix  string
-		settled bool
+		mu       sync.Mutex
+		prefix   string
+		settled  bool
+		timeouts int
 	)
 	return func(ctx context.Context) string {
 		mu.Lock()
@@ -555,14 +575,33 @@ func memoPrefix(probe func(context.Context) (string, error)) func(context.Contex
 		switch {
 		case err == nil:
 			prefix, settled = p, true
-		case errors.Is(err, beads.ErrTimedOut), ctx.Err() != nil:
-			// Leave unsettled: retry on the next refresh.
+		case ctx.Err() != nil:
+			// The refresh itself was canceled — that says nothing
+			// about this workspace, so it doesn't count as an attempt.
+		case errors.Is(err, beads.ErrTimedOut):
+			// Retry, but only so many times. A workspace that keeps
+			// timing out is a slow/cold one — precisely the kind whose
+			// `bd list` is also struggling — and re-probing every
+			// refresh burns a full 10s fetch slot ahead of its cache
+			// fast path, starving the other subs and making THEIR
+			// timeouts likelier (roborev #4034). After the cap it
+			// settles onto the name-based guard for good.
+			if timeouts++; timeouts >= maxTransientPrefixProbes {
+				settled = true
+			}
 		default:
 			settled = true // permanent; stop asking
 		}
 		return prefix
 	}
 }
+
+// maxTransientPrefixProbes bounds how many times a timing-out
+// issue_prefix probe is retried across refreshes before the sub gives
+// up and keeps the weaker name-based guard. Small on purpose: the
+// point of retrying at all is to survive ONE cold start, not to keep
+// paying a subprocess per repo per tick forever.
+const maxTransientPrefixProbes = 3
 
 // FetchError pairs a sub-source's display name with the error that
 // sub-source returned. Surfaced atomically with the fetched issues

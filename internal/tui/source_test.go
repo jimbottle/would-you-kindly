@@ -1047,19 +1047,24 @@ func TestMarkBlockedByHuman_NilClientNoOps(t *testing.T) {
 // markBlockedByHuman's behaviour without needing a real bd binary or
 // workspace. batchCalls/lookupCalls count subprocess-equivalents so a
 // test can assert the fan-out stays batched.
+// Counters are atomic because markBlockedByHuman's unattributable
+// fallback calls ListDeps from several goroutines at once; plain ++
+// here is a data race that `make check`'s -race gate catches only
+// intermittently (roborev #4034). byID is written once at
+// construction and only read afterwards, so it needs no lock.
 type stubDepLister struct {
 	byID      map[string][]beads.Issue // candidate ID → its blocker issues
 	err       error                    // returned by ListDepsBatch/ListByIDs
 	singleErr error                    // returned by the per-issue ListDeps fallback
 	batchIDs  []string                 // ids passed to the last ListDepsBatch
-	batch     int
-	lookups   int
-	singles   int
+	batch     atomic.Int32
+	lookups   atomic.Int32
+	singles   atomic.Int32
 	onBatch   func() // fired inside ListDepsBatch, to simulate mid-flight events
 }
 
 func (s *stubDepLister) ListDepsBatch(_ context.Context, ids []string) (map[string][]beads.Dependency, error) {
-	s.batch++
+	s.batch.Add(1)
 	s.batchIDs = append([]string(nil), ids...)
 	if s.onBatch != nil {
 		s.onBatch()
@@ -1077,7 +1082,7 @@ func (s *stubDepLister) ListDepsBatch(_ context.Context, ids []string) (map[stri
 }
 
 func (s *stubDepLister) ListDeps(_ context.Context, id string) ([]beads.Issue, error) {
-	s.singles++
+	s.singles.Add(1)
 	if s.singleErr != nil {
 		return nil, s.singleErr
 	}
@@ -1085,7 +1090,7 @@ func (s *stubDepLister) ListDeps(_ context.Context, id string) ([]beads.Issue, e
 }
 
 func (s *stubDepLister) ListByIDs(_ context.Context, ids []string) ([]beads.Issue, error) {
-	s.lookups++
+	s.lookups.Add(1)
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -1142,16 +1147,16 @@ func TestMarkBlockedByHuman_FlagsRowsWithHumanLabeledBlocker(t *testing.T) {
 	}
 	// The whole point of the rewrite: ONE dep call for all three
 	// candidates, not one per row (would-you-kindly-3frr).
-	if stub.batch != 1 {
-		t.Errorf("ListDepsBatch called %d times, want exactly 1 for the whole slice", stub.batch)
+	if stub.batch.Load() != 1 {
+		t.Errorf("ListDepsBatch called %d times, want exactly 1 for the whole slice", stub.batch.Load())
 	}
 	if len(stub.batchIDs) != 3 {
 		t.Errorf("batch asked about %d ids, want all 3 candidates in one call", len(stub.batchIDs))
 	}
 	// None of the blockers are in the fetched slice, so exactly one
 	// label-resolution round-trip is expected — never one per blocker.
-	if stub.lookups != 1 {
-		t.Errorf("ListByIDs called %d times, want exactly 1", stub.lookups)
+	if stub.lookups.Load() != 1 {
+		t.Errorf("ListByIDs called %d times, want exactly 1", stub.lookups.Load())
 	}
 }
 
@@ -1169,8 +1174,8 @@ func TestMarkBlockedByHuman_ResolvesBlockersAlreadyInTheFetchedSet(t *testing.T)
 	if !issues[0].BlockedByHuman {
 		t.Error("a-1's blocker is a human row in the same fetch → should be flagged")
 	}
-	if stub.lookups != 0 {
-		t.Errorf("ListByIDs called %d times; a blocker already in the slice needs no lookup", stub.lookups)
+	if stub.lookups.Load() != 0 {
+		t.Errorf("ListByIDs called %d times; a blocker already in the slice needs no lookup", stub.lookups.Load())
 	}
 }
 
@@ -1329,8 +1334,8 @@ func TestMarkBlockedByHuman_FallsBackWhenTheBatchIsUnattributable(t *testing.T) 
 	if issues[1].BlockedByHuman {
 		t.Error("a-2 has no human blocker and must stay unflagged")
 	}
-	if stub.singles != 2 {
-		t.Errorf("per-issue fallback ran %d times, want one per candidate", stub.singles)
+	if stub.singles.Load() != 2 {
+		t.Errorf("per-issue fallback ran %d times, want one per candidate", stub.singles.Load())
 	}
 }
 
@@ -1441,6 +1446,39 @@ func TestMemoPrefix_RetriesTransientButSettlesPermanent(t *testing.T) {
 			t.Errorf("probe ran %d times, want a retry after the timeout", calls)
 		}
 	})
+	t.Run("transient failures are capped", func(t *testing.T) {
+		// Retrying forever means a chronically-slow workspace burns a
+		// full 10s fetch slot on every refresh, ahead of its own cache
+		// fast path, starving the other subs (roborev #4034).
+		calls := 0
+		fn := memoPrefix(func(context.Context) (string, error) {
+			calls++
+			return "", fmt.Errorf("bd config get: %w", beads.ErrTimedOut)
+		})
+		for i := 0; i < maxTransientPrefixProbes+5; i++ {
+			fn(context.Background())
+		}
+		if calls != maxTransientPrefixProbes {
+			t.Errorf("probe ran %d times, want it to settle after %d timeouts", calls, maxTransientPrefixProbes)
+		}
+	})
+	t.Run("a canceled refresh does not burn an attempt", func(t *testing.T) {
+		// Cancellation says nothing about the workspace, so it must
+		// not count toward the cap.
+		calls := 0
+		fn := memoPrefix(func(context.Context) (string, error) {
+			calls++
+			return "", errors.New("canceled")
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		for i := 0; i < maxTransientPrefixProbes+2; i++ {
+			fn(ctx)
+		}
+		if calls != maxTransientPrefixProbes+2 {
+			t.Errorf("probe ran %d times; a canceled ctx must not consume the retry budget", calls)
+		}
+	})
 	t.Run("permanent failure settles", func(t *testing.T) {
 		calls := 0
 		fn := memoPrefix(func(context.Context) (string, error) {
@@ -1486,10 +1524,69 @@ func TestMarkBlockedByHuman_FallbackStopsOnCancel(t *testing.T) {
 	}
 	defer cancel()
 	markBlockedByHuman(ctx, stub, issues, nil)
-	if stub.batch != 1 {
-		t.Fatalf("batch ran %d times; the test must reach the fallback path", stub.batch)
+	if stub.batch.Load() != 1 {
+		t.Fatalf("batch ran %d times; the test must reach the fallback path", stub.batch.Load())
 	}
-	if stub.singles != 0 {
-		t.Errorf("dispatched %d per-issue fallbacks after cancellation, want 0", stub.singles)
+	if stub.singles.Load() != 0 {
+		t.Errorf("dispatched %d per-issue fallbacks after cancellation, want 0", stub.singles.Load())
+	}
+}
+
+// concurrencyProbe is a depLister that records the PEAK number of
+// simultaneous bd calls, so a test can assert the shared budget
+// actually bounds them.
+type concurrencyProbe struct {
+	cur, max atomic.Int32
+	blockers []beads.Issue
+}
+
+func (p *concurrencyProbe) enter() func() {
+	n := p.cur.Add(1)
+	for {
+		old := p.max.Load()
+		if n <= old || p.max.CompareAndSwap(old, n) {
+			break
+		}
+	}
+	time.Sleep(2 * time.Millisecond) // hold the slot long enough to overlap
+	return func() { p.cur.Add(-1) }
+}
+
+func (p *concurrencyProbe) ListDepsBatch(context.Context, []string) (map[string][]beads.Dependency, error) {
+	defer p.enter()()
+	return nil, beads.ErrUnattributableDeps
+}
+func (p *concurrencyProbe) ListByIDs(context.Context, []string) ([]beads.Issue, error) {
+	defer p.enter()()
+	return nil, nil
+}
+func (p *concurrencyProbe) ListDeps(context.Context, string) ([]beads.Issue, error) {
+	defer p.enter()()
+	return p.blockers, nil
+}
+
+func TestMarkBlockedByHuman_FallbackHonoursTheSharedBudget(t *testing.T) {
+	// The fallback's width must be drawn from the SHARED semaphore.
+	// A per-invocation cap would let each of the N token-holders spawn
+	// its own extra subprocesses, multiplying the global bd bound that
+	// MultiBDSource's shared DepSem exists to enforce instead of
+	// capping it (roborev #4034).
+	const budget = 2
+	issues := make([]beads.Issue, 12)
+	for i := range issues {
+		issues[i] = beads.Issue{
+			ID:              fmt.Sprintf("a-%d", i),
+			Labels:          []string{"src:agent"},
+			DependencyCount: 1,
+		}
+	}
+	probe := &concurrencyProbe{}
+	sem := make(chan struct{}, budget)
+	markBlockedByHuman(context.Background(), probe, issues, sem)
+	if got := probe.max.Load(); got > budget {
+		t.Errorf("peak %d concurrent bd calls exceeds the shared budget of %d", got, budget)
+	}
+	if probe.max.Load() == 0 {
+		t.Error("test made no bd calls at all — it is not exercising the fallback")
 	}
 }
