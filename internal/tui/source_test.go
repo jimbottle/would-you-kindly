@@ -485,8 +485,11 @@ func TestMultiBDSource_DropsForeignIssueIDs(t *testing.T) {
 	if errs[0].Repo != "leaky" {
 		t.Errorf("fetch error repo = %q, want %q", errs[0].Repo, "leaky")
 	}
-	if !strings.Contains(errs[0].Err.Error(), "another registered workspace") {
-		t.Errorf("fetch error message = %q, want it to name the cross-workspace cause", errs[0].Err.Error())
+	if !strings.Contains(errs[0].Err.Error(), "did not carry this workspace's") {
+		t.Errorf("fetch error message = %q, want it to name the prefix mismatch", errs[0].Err.Error())
+	}
+	if !strings.Contains(errs[0].Err.Error(), `"leaky-"`) {
+		t.Errorf("fetch error message should name the expected prefix; got %q", errs[0].Err.Error())
 	}
 	if !strings.Contains(errs[0].Err.Error(), "2 issue(s)") {
 		t.Errorf("fetch error message should count the dropped rows; got %q", errs[0].Err.Error())
@@ -1045,11 +1048,13 @@ func TestMarkBlockedByHuman_NilClientNoOps(t *testing.T) {
 // workspace. batchCalls/lookupCalls count subprocess-equivalents so a
 // test can assert the fan-out stays batched.
 type stubDepLister struct {
-	byID     map[string][]beads.Issue // candidate ID → its blocker issues
-	err      error
-	batchIDs []string // ids passed to the last ListDepsBatch
-	batch    int
-	lookups  int
+	byID      map[string][]beads.Issue // candidate ID → its blocker issues
+	err       error                    // returned by ListDepsBatch/ListByIDs
+	singleErr error                    // returned by the per-issue ListDeps fallback
+	batchIDs  []string                 // ids passed to the last ListDepsBatch
+	batch     int
+	lookups   int
+	singles   int
 }
 
 func (s *stubDepLister) ListDepsBatch(_ context.Context, ids []string) (map[string][]beads.Dependency, error) {
@@ -1065,6 +1070,14 @@ func (s *stubDepLister) ListDepsBatch(_ context.Context, ids []string) (map[stri
 		}
 	}
 	return out, nil
+}
+
+func (s *stubDepLister) ListDeps(_ context.Context, id string) ([]beads.Issue, error) {
+	s.singles++
+	if s.singleErr != nil {
+		return nil, s.singleErr
+	}
+	return s.byID[id], nil
 }
 
 func (s *stubDepLister) ListByIDs(_ context.Context, ids []string) ([]beads.Issue, error) {
@@ -1205,6 +1218,12 @@ func (e *explodingDepLister) ListByIDs(_ context.Context, ids []string) ([]beads
 	return nil, nil
 }
 
+func (e *explodingDepLister) ListDeps(_ context.Context, id string) ([]beads.Issue, error) {
+	e.calls++
+	e.t.Errorf("ListDeps called for non-candidate %q", id)
+	return nil, nil
+}
+
 func TestNewMultiBDSource_SharesOneDepSemAcrossSubs(t *testing.T) {
 	// Regression for the per-workspace-vs-global concurrency cap.
 	// NewMultiBDSource must allocate ONE semaphore and thread it
@@ -1261,5 +1280,89 @@ func TestFetchConcurrencyFromEnv(t *testing.T) {
 				t.Errorf("fetchConcurrencyFromEnv() with %q = %d, want %d", c.set, got, c.want)
 			}
 		})
+	}
+}
+
+func TestMarkBlockedByHuman_UsesEmbeddedEdgesWithoutAnyBDCall(t *testing.T) {
+	// bd embeds each issue's edge set in `bd list`/`bd ready`, so the
+	// default and ready presets already carry what this scan needs —
+	// asking bd again re-fetches data we were handed (roborev #4031).
+	issues := []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}, DependencyCount: 1,
+			Dependencies: []beads.Dependency{{IssueID: "a-1", DependsOnID: "a-blocker", Type: "blocks"}}},
+		{ID: "a-blocker", Labels: []string{"human", "src:agent"}},
+	}
+	stub := &explodingDepLister{t: t} // any bd call fails the test
+	markBlockedByHuman(context.Background(), stub, issues, nil)
+	if !issues[0].BlockedByHuman {
+		t.Error("embedded edge to a human row should flag a-1")
+	}
+	if stub.calls != 0 {
+		t.Errorf("made %d bd calls; embedded edges + an in-slice blocker need zero", stub.calls)
+	}
+}
+
+func TestMarkBlockedByHuman_FallsBackWhenTheBatchIsUnattributable(t *testing.T) {
+	// bd answers a multi-id `dep list` in the single-issue shape when
+	// any id fails to resolve, which is unattributable. Losing every
+	// badge in the workspace there would be worse than the per-issue
+	// fan-out this replaced, so fall back to it (roborev #4031).
+	issues := []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}, DependencyCount: 1},
+		{ID: "a-2", Labels: []string{"src:agent"}, DependencyCount: 1},
+	}
+	stub := &stubDepLister{
+		err: beads.ErrUnattributableDeps, // ListDepsBatch fails this way
+		byID: map[string][]beads.Issue{
+			"a-1": {{ID: "x", Labels: []string{"human"}}},
+			"a-2": {{ID: "y", Labels: []string{"src:agent"}}},
+		},
+	}
+	markBlockedByHuman(context.Background(), stub, issues, nil)
+	if !issues[0].BlockedByHuman {
+		t.Error("a-1's human blocker should survive the fallback")
+	}
+	if issues[1].BlockedByHuman {
+		t.Error("a-2 has no human blocker and must stay unflagged")
+	}
+	if stub.singles != 2 {
+		t.Errorf("per-issue fallback ran %d times, want one per candidate", stub.singles)
+	}
+}
+
+func TestMultiBDSource_UsesBDsRealPrefixForTheLeakGuard(t *testing.T) {
+	// With the workspace's true bd prefix in hand the guard is exact
+	// in BOTH directions — rows that aren't ours are dropped whoever
+	// they belong to, registered or not. That matters beyond display:
+	// repoForIssue routes WRITES by Issue.Repo, so a leaked row shown
+	// under the wrong repo would send a close to the wrong workspace
+	// (roborev #4031).
+	src := &fakeRepoSource{issues: []beads.Issue{
+		{ID: "short-1", Title: "ours"},
+		{ID: "unregistered-elsewhere-1", Title: "leaked from a workspace wyk doesn't know"},
+	}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"folder-name-differs", "main", src},
+	)
+	// bd reports the real prefix, which is neither the folder name nor
+	// any registered name.
+	m.subs[0].prefixFn = func(context.Context) string { return "short" }
+
+	issues, errs, err := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err != nil {
+		t.Fatalf("FetchWithSubErrors: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ID != "short-1" {
+		t.Fatalf("expected only the workspace's own row; got %+v", idsOf(issues))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("the unregistered leak should surface as a fetch error; got %+v", errs)
+	}
+	if !strings.Contains(errs[0].Err.Error(), `"short-"`) {
+		t.Errorf("error should name bd's real prefix; got %q", errs[0].Err.Error())
 	}
 }

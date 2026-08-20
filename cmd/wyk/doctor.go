@@ -525,7 +525,17 @@ const (
 	// minBDVersion is the oldest bd wyk is known to work against;
 	// below it doctor FAILs. Bump together with any wyk change that
 	// depends on a newer bd flag/shape.
-	minBDVersion = "v1.0.0"
+	//
+	// v1.0.4 is required because the multi-repo fetch now depends on
+	// shapes only that version guarantees: `bd dep list a b --json`
+	// records tagged with issue_id, `bd list --id`, `bd config get
+	// issue_prefix`, and the `dependencies` array embedded in
+	// `bd list`/`bd ready`. On an older bd those calls fail or come
+	// back unattributable, and the HUMAN-BLOCK scan swallows both as
+	// best-effort — leaving a healthy-looking doctor beside silently
+	// missing badges, exactly the failure mode this gate exists to
+	// prevent (roborev #4031).
+	minBDVersion = "v1.0.4"
 	// testedBDMajor is the highest bd major wyk has been tested
 	// against; a newer major WARNs (likely fine, but unverified).
 	testedBDMajor = "v1"

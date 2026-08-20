@@ -67,6 +67,10 @@ var (
 type depLister interface {
 	ListDepsBatch(ctx context.Context, ids []string) (map[string][]beads.Dependency, error)
 	ListByIDs(ctx context.Context, ids []string) ([]beads.Issue, error)
+	// ListDeps is the per-issue fallback for the one case batching
+	// cannot answer: bd replying in the single-issue shape to a
+	// multi-id request (beads.ErrUnattributableDeps).
+	ListDeps(ctx context.Context, id string) ([]beads.Issue, error)
 }
 
 // fetchCall identifies which bd subcommand BDSource.Fetch will
@@ -246,19 +250,8 @@ func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, 
 		return
 	}
 
-	ids := make([]string, len(candidates))
-	for n, i := range candidates {
-		ids[n] = issues[i].ID
-	}
-	deps, err := c.ListDepsBatch(ctx, ids)
-	if err != nil || len(deps) == 0 {
-		return
-	}
-
-	// Resolve which blockers are human-flagged. Most are already in
-	// the fetched slice, so only the remainder needs a bd round-trip
-	// — and a filtered preset (ready/mine) is exactly when that
-	// remainder is non-empty, which is why the fallback exists at all.
+	// human/known are seeded from the rows we already hold: any blocker
+	// that's also on screen needs no lookup at all.
 	human := make(map[string]bool, len(issues))
 	known := make(map[string]bool, len(issues))
 	for i := range issues {
@@ -266,6 +259,57 @@ func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, 
 		if issues[i].IsHuman() {
 			human[issues[i].ID] = true
 		}
+	}
+
+	// bd embeds each issue's edge set in `bd list` / `bd ready`, so the
+	// default and ready presets already carry everything this scan
+	// needs — asking bd again would be re-fetching data we were handed
+	// (roborev #4031). Only issues that arrived WITHOUT edges (the
+	// query-backed presets, whose payload omits `dependencies`) cost a
+	// round-trip.
+	deps := make(map[string][]beads.Dependency, len(candidates))
+	var missing []string
+	for _, i := range candidates {
+		if len(issues[i].Dependencies) > 0 {
+			deps[issues[i].ID] = issues[i].Dependencies
+			continue
+		}
+		missing = append(missing, issues[i].ID)
+	}
+	if len(missing) > 0 {
+		fetched, err := c.ListDepsBatch(ctx, missing)
+		switch {
+		case errors.Is(err, beads.ErrUnattributableDeps):
+			// bd answered in the single-issue shape for a multi-id
+			// request (it does that when any id fails to resolve), so
+			// nothing in the response says which issue owns which edge.
+			// Fall back to the per-issue form rather than lose every
+			// badge in the workspace. That form returns the blocker
+			// ISSUES, labels included, so record their human-ness here
+			// and skip the resolution round-trip below entirely.
+			for _, id := range missing {
+				single, serr := c.ListDeps(ctx, id)
+				if serr != nil {
+					continue
+				}
+				for _, b := range single {
+					known[b.ID] = true
+					if b.IsHuman() {
+						human[b.ID] = true
+					}
+					deps[id] = append(deps[id], beads.Dependency{IssueID: id, DependsOnID: b.ID})
+				}
+			}
+		case err != nil:
+			// Best-effort: keep whatever the embedded edges gave us.
+		default:
+			for id, ds := range fetched {
+				deps[id] = ds
+			}
+		}
+	}
+	if len(deps) == 0 {
+		return
 	}
 	var unknown []string
 	seen := make(map[string]bool)
@@ -446,6 +490,33 @@ type subRepo struct {
 	// fetch always runs live.
 	path     string
 	branchFn func(context.Context) string
+	// prefixFn resolves this workspace's REAL bd issue_prefix, which
+	// is not reliably `name` (that comes from the directory). Probed
+	// at most once per process and memoized — it only changes if
+	// someone runs `bd rename-prefix`. Returns "" when bd can't answer
+	// (older bd, broken workspace), which the leak guard treats as
+	// "fall back to name-based matching". Nil for test stubs.
+	prefixFn func(context.Context) string
+}
+
+// memoPrefix wraps a prefix probe so the bd call happens at most once
+// per sub for the process's lifetime, no matter how many refreshes run.
+// Failures are memoized as "" too: a workspace that can't answer once
+// won't answer on the next tick either, and retrying every refresh
+// would reintroduce a per-refresh subprocess for no benefit.
+func memoPrefix(probe func(context.Context) (string, error)) func(context.Context) string {
+	var (
+		once   sync.Once
+		prefix string
+	)
+	return func(ctx context.Context) string {
+		once.Do(func() {
+			if p, err := probe(ctx); err == nil {
+				prefix = p
+			}
+		})
+		return prefix
+	}
 }
 
 // FetchError pairs a sub-source's display name with the error that
@@ -642,11 +713,13 @@ func NewMultiBDSource(clients []*beads.Client, names []string, me string) (*Mult
 	subs := make([]subRepo, len(clients))
 	for i, c := range clients {
 		dir := c.Dir
+		client := c
 		subs[i] = subRepo{
 			name:     names[i],
 			src:      &BDSource{Client: c, Me: me, DepSem: depSem},
 			path:     dir,
 			branchFn: func(ctx context.Context) string { return gitBranch(ctx, dir) },
+			prefixFn: memoPrefix(client.IssuePrefix),
 		}
 	}
 	return &MultiBDSource{subs: subs}, nil
@@ -679,6 +752,12 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 	}
 	results := make([]result, len(m.subs))
 	branches := make([]string, len(m.subs))
+	// prefixes is resolved inside the SAME fan-out as the fetches, not
+	// in the sequential guard loop below: the probe is a bd subprocess,
+	// and running 24 of them one after another added seconds to first
+	// paint. memoPrefix makes it a once-per-process cost, so every
+	// later refresh finds these already resolved.
+	prefixes := make([]string, len(m.subs))
 
 	// fetchSem bounds how many sub-fetches cold-start at once. It's
 	// allocated per-call rather than held as a shared field (like
@@ -697,6 +776,11 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 		wg.Add(1)
 		go func(i int, sub subRepo) {
 			defer wg.Done()
+			// Resolve this workspace's real bd prefix alongside its
+			// fetch (memoized, so only the first refresh pays).
+			if sub.prefixFn != nil {
+				prefixes[i] = sub.prefixFn(ctx)
+			}
 			// Per-repo cache fast path (would-you-kindly-jipr): if .beads
 			// can be stat'd and a recent entry matches this preset + mtime,
 			// reuse it and SKIP the bd subprocess entirely. A failed stat
@@ -799,23 +883,38 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 		// Without this guard, those foreign rows render attributed to
 		// the wrong repo, hiding a P0 bug as a duplicate-looking row.
 		//
-		// The test is "some OTHER sub claims this ID", not "this sub's
-		// name prefixes it". A workspace's bd issue prefix is chosen at
-		// `bd init` and is frequently NOT its directory name — which is
-		// where the registry name comes from. Requiring equality
-		// emptied every such workspace and reported it as a failed repo
-		// ("bd may be serving the wrong workspace") even though bd was
-		// serving exactly the right data: e.g. a repo in
-		// `louisville-open-data-expenditure-bot/` whose issues are
-		// `louisville-open-data-*` lost all 10 rows (would-you-kindly-qp14).
-		// An ID no registered sub claims is simply this workspace's own
-		// prefix, so it is kept; cross-workspace contamination — the
-		// thing the guard exists for — still matches another sub's name
-		// and is still dropped.
+		// Ask bd for this workspace's real issue_prefix rather than
+		// inferring it from the folder. A workspace's prefix is chosen
+		// at `bd init` and is frequently NOT its directory name — which
+		// is where the registry name comes from — so requiring the ID
+		// to start with the registry name emptied every such workspace
+		// and reported it as failed even though bd was serving exactly
+		// the right data (would-you-kindly-qp14).
+		//
+		// With the true prefix in hand the test is exact and works in
+		// BOTH directions: rows that aren't ours are dropped no matter
+		// whose they are. That matters beyond display, because
+		// repoForIssue routes WRITES by Issue.Repo — a leaked row that
+		// renders under the wrong repo would send a close to the wrong
+		// workspace (roborev #4031).
+		//
+		// When bd can't tell us (older bd, broken workspace), fall back
+		// to the weaker "some OTHER registered sub claims this ID"
+		// rule: it still catches registered-workspace crossover and
+		// still doesn't punish a prefix that merely differs from the
+		// folder name.
+		prefix := prefixes[i]
+		isForeign := func(id string) bool {
+			if prefix != "" {
+				return !strings.HasPrefix(id, prefix+"-")
+			}
+			owner := longestPrefixMatch(id)
+			return owner != "" && owner != sub.name
+		}
 		var clean []beads.Issue
 		var foreign int
 		for j := range r.issues {
-			if owner := longestPrefixMatch(r.issues[j].ID); owner != "" && owner != sub.name {
+			if isForeign(r.issues[j].ID) {
 				foreign++
 				continue
 			}
@@ -824,9 +923,14 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 			clean = append(clean, r.issues[j])
 		}
 		if foreign > 0 {
+			expected := prefix
+			if expected == "" {
+				expected = sub.name
+			}
 			fetchErrs = append(fetchErrs, FetchError{
 				Repo: sub.name,
-				Err:  fmt.Errorf("%d issue(s) belong to another registered workspace — bd may be serving the wrong workspace; check `wyk doctor` and ~/.config/wyk/repos.json", foreign),
+				Err: fmt.Errorf("%d issue(s) did not carry this workspace's %q prefix — bd may be serving the wrong workspace; check `wyk doctor` and ~/.config/wyk/repos.json",
+					foreign, expected+"-"),
 			})
 		}
 		all = append(all, clean...)

@@ -178,14 +178,28 @@ func (c *Client) ListDeps(ctx context.Context, id string) ([]Issue, error) {
 	return parseIssues(out)
 }
 
-// Dependency is one edge from bd's batch `dep list` response: the
-// issue that has the dependency, the issue it depends on, and the
-// edge kind ("blocks", "parent-child", …).
+// Dependency is one dependency edge: the issue that has it, the issue
+// it depends on, and the edge kind ("blocks", "parent-child", …). bd
+// emits these both from a batch `dep list` and inline on each issue in
+// `bd list` / `bd ready`, in the same shape.
 type Dependency struct {
-	IssueID     string
-	DependsOnID string
-	Type        string
+	IssueID     string `json:"issue_id,omitempty"`
+	DependsOnID string `json:"depends_on_id,omitempty"`
+	Type        string `json:"type,omitempty"`
 }
+
+// ErrUnattributableDeps is returned by ListDepsBatch when bd answered
+// with the single-issue shape for a MULTI-id request, leaving no way
+// to tell which requested issue each row belongs to.
+//
+// bd picks its output shape from the number of ids it RESOLVES, not
+// the number asked for: `bd dep list <valid> <bogus>` warns about the
+// unresolvable one and then emits the issue shape. Returning an empty
+// map there would silently drop every dependency edge in the
+// workspace — and since the only caller is best-effort, every
+// HUMAN-BLOCK badge with it. Callers must fall back to per-issue
+// ListDeps on this error.
+var ErrUnattributableDeps = errors.New("bd dep list returned an unattributable response for a multi-id request")
 
 // depRow decodes either shape `bd dep list --json` can return. With
 // MULTIPLE ids bd emits dependency records (issue_id/depends_on_id);
@@ -236,23 +250,59 @@ func (c *Client) ListDepsBatch(ctx context.Context, ids []string) (map[string][]
 	if err := json.Unmarshal(b, &rows); err != nil {
 		return nil, fmt.Errorf("parse bd dep list json: %w", err)
 	}
+	// Shape-driven, NOT arity-driven: bd chooses its shape from the
+	// ids it RESOLVES, so a single unresolvable id in a large batch
+	// flips the whole response to the issue shape. Decide from what
+	// actually came back.
 	deps := make(map[string][]Dependency, len(ids))
+	tagged := false
 	for _, r := range rows {
-		switch {
-		case r.IssueID != "":
-			// Record shape: attributable on its own.
-			deps[r.IssueID] = append(deps[r.IssueID], Dependency{
-				IssueID: r.IssueID, DependsOnID: r.DependsOnID, Type: r.Type,
-			})
-		case r.ID != "" && len(ids) == 1:
-			// Issue shape: only attributable when we asked about
-			// exactly one issue, which is the only case bd emits it.
-			deps[ids[0]] = append(deps[ids[0]], Dependency{
-				IssueID: ids[0], DependsOnID: r.ID,
-			})
+		if r.IssueID == "" {
+			continue
+		}
+		tagged = true
+		deps[r.IssueID] = append(deps[r.IssueID], Dependency{
+			IssueID: r.IssueID, DependsOnID: r.DependsOnID, Type: r.Type,
+		})
+	}
+	if tagged {
+		return deps, nil
+	}
+	// Untagged rows: the issue shape. Attributable only when we asked
+	// about exactly one issue; otherwise say so rather than handing
+	// back a silently-empty map.
+	if len(ids) != 1 {
+		return nil, ErrUnattributableDeps
+	}
+	for _, r := range rows {
+		if r.ID != "" {
+			deps[ids[0]] = append(deps[ids[0]], Dependency{IssueID: ids[0], DependsOnID: r.ID})
 		}
 	}
 	return deps, nil
+}
+
+// IssuePrefix returns the workspace's bd `issue_prefix` — the string
+// every issue ID in it begins with, chosen at `bd init`.
+//
+// It is NOT reliably the directory name, which is where wyk's registry
+// name comes from: a repo in `louisville-open-data-expenditure-bot/`
+// can perfectly legitimately carry `louisville-open-data-*` IDs. Any
+// code deciding "does this row belong to this workspace?" has to ask
+// bd rather than infer it from the folder (would-you-kindly-qp14).
+func (c *Client) IssuePrefix(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, nil, "config", "get", "issue_prefix", "--json")
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &resp); err != nil {
+		return "", fmt.Errorf("parse bd config get issue_prefix: %w", err)
+	}
+	return strings.TrimSpace(resp.Value), nil
 }
 
 // ListByIDs runs `bd list --id a,b,c --all --json` and returns those

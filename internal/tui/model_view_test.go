@@ -756,20 +756,28 @@ func TestIDCell_StaysUniqueOnANarrowTerminal(t *testing.T) {
 	m.cw = m.computeColWidths(m.visible)
 	m.autoHidden = m.computeAutoHidden()
 
-	first := truncID(m.displayID(m.all[0]), m.cw.id)
-	second := truncID(m.displayID(m.all[1]), m.cw.id)
+	// Assert on the RENDERED ROW, not on truncID directly: the
+	// original defect was in the wiring (renderRow routed the ID
+	// column through renderMatchCell/trunc), so a test that calls
+	// truncID itself stays green even after reverting the fix
+	// (roborev #4029). TestTruncID covers the function; this covers
+	// that the column actually uses it.
+	first := stripANSI(m.renderRow(m.visible[0], false))
+	second := stripANSI(m.renderRow(m.visible[1], false))
 	if first == second {
-		t.Fatalf("both rows render the same ID cell %q — the suffix was truncated away", first)
+		t.Fatalf("both rows render identically — the discriminating suffix was truncated away:\n%q", first)
 	}
-	for i, got := range []string{first, second} {
+	for i, row := range []string{first, second} {
 		want := []string{"2oa", "1ej"}[i]
-		if !strings.HasSuffix(got, want) {
-			t.Errorf("ID cell %q should end in the discriminating suffix %q", got, want)
+		// The ID cell is the only place the suffix can appear (titles
+		// here are "a"/"b"), so containment pins the truncation
+		// direction without hard-coding the cell's column offset.
+		if !strings.Contains(row, want) {
+			t.Errorf("row %d lost its discriminating suffix %q:\n%q", i, want, row)
 		}
 	}
-	// And the cell still respects its budget.
-	if w := lipgloss.Width(first); w > m.cw.id {
-		t.Errorf("ID cell %q is %d cells, over the %d-cell column", first, w, m.cw.id)
+	if w := lipgloss.Width(first); w > m.width {
+		t.Errorf("row is %d cells, over the %d-cell terminal", w, m.width)
 	}
 }
 

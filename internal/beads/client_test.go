@@ -487,3 +487,75 @@ func TestListByIDs_BatchesAndIncludesClosed(t *testing.T) {
 		t.Errorf("parsed issues = %+v", got)
 	}
 }
+
+func TestListDepsBatch_MultiIDIssueShapeIsAnError(t *testing.T) {
+	// bd picks its shape from the ids it RESOLVES, not the ones asked
+	// for: `bd dep list <valid> <bogus>` warns about the bogus one and
+	// answers in the ISSUE shape. Nothing there says which requested
+	// issue owns which row, so returning an empty map would silently
+	// erase every dependency edge — and with it every HUMAN-BLOCK
+	// badge in the workspace (roborev #4031). Say so instead.
+	r := &fakeRunner{stdout: []byte(`[{"id":"a-9","title":"blocker"}]`)}
+	c := newTestClient(r)
+	got, err := c.ListDepsBatch(context.Background(), []string{"a-1", "a-bogus"})
+	if !errors.Is(err, ErrUnattributableDeps) {
+		t.Fatalf("err = %v, want ErrUnattributableDeps", err)
+	}
+	if got != nil {
+		t.Errorf("an unattributable response must not yield a partial map; got %+v", got)
+	}
+}
+
+func TestListDepsBatch_MixedRowsKeepTheTaggedOnes(t *testing.T) {
+	// If ANY row is tagged, the response is the record shape and is
+	// attributable; untagged stragglers are simply not edges we can
+	// place, and must not turn the whole call into an error.
+	r := &fakeRunner{stdout: []byte(`[
+		{"issue_id":"a-1","depends_on_id":"a-9","type":"blocks"},
+		{"id":"a-8"}
+	]`)}
+	c := newTestClient(r)
+	got, err := c.ListDepsBatch(context.Background(), []string{"a-1", "a-2"})
+	if err != nil {
+		t.Fatalf("ListDepsBatch: %v", err)
+	}
+	if len(got["a-1"]) != 1 || got["a-1"][0].DependsOnID != "a-9" {
+		t.Errorf("tagged row lost: %+v", got)
+	}
+}
+
+func TestIssuePrefix_AsksBDRatherThanGuessing(t *testing.T) {
+	// A workspace's prefix is chosen at `bd init` and is often not its
+	// folder name — inferring it from the directory emptied whole
+	// workspaces (would-you-kindly-qp14).
+	r := &fakeRunner{stdout: []byte(`{"key":"issue_prefix","schema_version":1,"value":"louisville-open-data"}`)}
+	c := newTestClient(r)
+	got, err := c.IssuePrefix(context.Background())
+	if err != nil {
+		t.Fatalf("IssuePrefix: %v", err)
+	}
+	if want := "config get issue_prefix --json"; strings.Join(r.calls[0].args, " ") != want {
+		t.Errorf("argv = %q, want %q", strings.Join(r.calls[0].args, " "), want)
+	}
+	if got != "louisville-open-data" {
+		t.Errorf("prefix = %q, want louisville-open-data", got)
+	}
+}
+
+func TestParseIssues_ReadsEmbeddedDependencies(t *testing.T) {
+	// bd embeds the edge set in `bd list`/`bd ready`; parsing it lets
+	// the HUMAN-BLOCK scan skip a round-trip for data already in hand.
+	in := []byte(`[{"id":"a-1","dependencies":[
+		{"issue_id":"a-1","depends_on_id":"a-9","type":"blocks"}
+	],"dependency_count":1}]`)
+	got, err := parseIssues(in)
+	if err != nil {
+		t.Fatalf("parseIssues: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Dependencies) != 1 {
+		t.Fatalf("dependencies not parsed: %+v", got)
+	}
+	if got[0].Dependencies[0].DependsOnID != "a-9" || got[0].Dependencies[0].Type != "blocks" {
+		t.Errorf("edge = %+v", got[0].Dependencies[0])
+	}
+}

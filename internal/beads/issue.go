@@ -45,9 +45,21 @@ type Issue struct {
 	Notes     string    `json:"notes,omitempty"`
 	Labels    []string  `json:"labels,omitempty"`
 
-	DependencyCount int `json:"dependency_count,omitempty"`
-	DependentCount  int `json:"dependent_count,omitempty"`
-	CommentCount    int `json:"comment_count,omitempty"`
+	// Dependencies is the issue's outgoing edge set, which bd embeds
+	// inline in `bd list --json` and `bd ready --json` (but NOT in
+	// `bd query --json`). Parsing it means the HUMAN-BLOCK scan can
+	// answer from the payload it already received instead of paying a
+	// second round-trip for data bd already sent — see
+	// markBlockedByHuman, which falls back to a batched ListDepsBatch
+	// only for issues that arrive without edges.
+	//
+	// omitempty keeps it out of the agent-facing -json outputs when a
+	// preset didn't supply it, so those payloads don't change shape
+	// depending on which bd endpoint filled them.
+	Dependencies    []Dependency `json:"dependencies,omitempty"`
+	DependencyCount int          `json:"dependency_count,omitempty"`
+	DependentCount  int          `json:"dependent_count,omitempty"`
+	CommentCount    int          `json:"comment_count,omitempty"`
 
 	// Repo and Branch are decorations a multi-repo Source attaches
 	// after fetching — they are NOT part of bd's JSON. The json:"-"

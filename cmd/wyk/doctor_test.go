@@ -21,8 +21,12 @@ func TestClassifyBDVersion(t *testing.T) {
 		wantInDetail string
 	}{
 		{"current passes", "bd version 1.0.4 (ce242a879: main@ce242a879678)", statusPass, "within the supported range"},
-		{"exact minimum passes", "bd version 1.0.0", statusPass, "supported range"},
-		{"too old fails", "bd version 0.9.9 (abc)", statusFail, "older than the minimum"},
+		{"exact minimum passes", "bd version 1.0.4", statusPass, "supported range"},
+		// 1.0.3 lacks the batch dep-list attribution, `bd list --id`,
+		// `bd config get issue_prefix`, and the embedded dependencies
+		// array the multi-repo fetch now relies on.
+		{"below the minimum fails", "bd version 1.0.3 (abc)", statusFail, "older than the minimum"},
+		{"much older fails", "bd version 0.9.9 (abc)", statusFail, "older than the minimum"},
 		{"newer major warns", "bd version 2.0.0 (xyz)", statusWarn, "newer than the latest tested major"},
 		{"unparseable warns", "bd: command not found", statusWarn, "couldn't parse a version"},
 		{"empty warns", "", statusWarn, "couldn't parse a version"},
