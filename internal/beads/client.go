@@ -268,6 +268,14 @@ func (c *Client) ListDepsBatch(ctx context.Context, ids []string) (map[string][]
 	if tagged {
 		return deps, nil
 	}
+	// No rows at all is a complete answer — bd prints `[]` when none of
+	// the requested issues has edges — NOT an unattributable one.
+	// Conflating them made "no dependencies" fire the per-issue
+	// fallback, turning one definitive subprocess into one per
+	// candidate that each return nothing (roborev #4033).
+	if len(rows) == 0 {
+		return deps, nil
+	}
 	// Untagged rows: the issue shape. Attributable only when we asked
 	// about exactly one issue; otherwise say so rather than handing
 	// back a silently-empty map.

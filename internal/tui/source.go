@@ -287,19 +287,43 @@ func markBlockedByHuman(ctx context.Context, c depLister, issues []beads.Issue, 
 			// badge in the workspace. That form returns the blocker
 			// ISSUES, labels included, so record their human-ness here
 			// and skip the resolution round-trip below entirely.
+			//
+			// Bounded, not a serial walk: on a query-backed preset
+			// `missing` can hold dozens of candidates, and doing them
+			// one after another inside BDSource.Fetch is slower than
+			// either the batch it replaces or the 8-wide fan-out that
+			// preceded it — the fetch-time blowout this whole path was
+			// tuned to avoid (roborev #4033). Capped low because we're
+			// already holding a depSem token.
+			const fallbackConcurrency = 4
+			var fallbackWG sync.WaitGroup
+			fallbackSem := make(chan struct{}, fallbackConcurrency)
+			var mu sync.Mutex
 			for _, id := range missing {
-				single, serr := c.ListDeps(ctx, id)
-				if serr != nil {
-					continue
+				if ctx.Err() != nil {
+					break // a canceled fetch stops dispatching more
 				}
-				for _, b := range single {
-					known[b.ID] = true
-					if b.IsHuman() {
-						human[b.ID] = true
+				fallbackWG.Add(1)
+				go func(id string) {
+					defer fallbackWG.Done()
+					fallbackSem <- struct{}{}
+					defer func() { <-fallbackSem }()
+					single, serr := c.ListDeps(ctx, id)
+					if serr != nil {
+						return
 					}
-					deps[id] = append(deps[id], beads.Dependency{IssueID: id, DependsOnID: b.ID})
-				}
+					mu.Lock()
+					defer mu.Unlock()
+					for _, b := range single {
+						known[b.ID] = true
+						if b.IsHuman() {
+							human[b.ID] = true
+						}
+						deps[id] = append(deps[id], beads.Dependency{IssueID: id, DependsOnID: b.ID})
+					}
+				}(id)
 			}
+			fallbackWG.Wait()
 		case err != nil:
 			// Best-effort: keep whatever the embedded edges gave us.
 		default:
@@ -501,20 +525,41 @@ type subRepo struct {
 
 // memoPrefix wraps a prefix probe so the bd call happens at most once
 // per sub for the process's lifetime, no matter how many refreshes run.
-// Failures are memoized as "" too: a workspace that can't answer once
-// won't answer on the next tick either, and retrying every refresh
-// would reintroduce a per-refresh subprocess for no benefit.
+//
+// TRANSIENT failures are deliberately not memoized. The likeliest
+// failure here is a cold-start timeout — the same condition the fetch
+// below retries — and caching it would silently downgrade that
+// workspace to the weaker name-based guard for the life of the
+// process, exactly when the user believes the exact check is on
+// (roborev #4033). A timeout or cancellation therefore leaves the
+// probe unsettled so the next refresh (by then warm) can retry.
+// Permanent failures settle: a bd that has no `config get
+// issue_prefix` won't grow one, and re-asking every refresh would add
+// a subprocess per repo per tick for nothing. Either way the failure
+// is already recorded — Client.run routes every failed bd call to
+// beads.ErrorSink and the debug log — so the degraded guard is
+// visible in `wyk bugreport` without a second log line here.
 func memoPrefix(probe func(context.Context) (string, error)) func(context.Context) string {
 	var (
-		once   sync.Once
-		prefix string
+		mu      sync.Mutex
+		prefix  string
+		settled bool
 	)
 	return func(ctx context.Context) string {
-		once.Do(func() {
-			if p, err := probe(ctx); err == nil {
-				prefix = p
-			}
-		})
+		mu.Lock()
+		defer mu.Unlock()
+		if settled {
+			return prefix
+		}
+		p, err := probe(ctx)
+		switch {
+		case err == nil:
+			prefix, settled = p, true
+		case errors.Is(err, beads.ErrTimedOut), ctx.Err() != nil:
+			// Leave unsettled: retry on the next refresh.
+		default:
+			settled = true // permanent; stop asking
+		}
 		return prefix
 	}
 }
@@ -777,9 +822,24 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 		go func(i int, sub subRepo) {
 			defer wg.Done()
 			// Resolve this workspace's real bd prefix alongside its
-			// fetch (memoized, so only the first refresh pays).
+			// fetch. Memoized, so only the first refresh pays — but it
+			// IS a cold bd subprocess, so it takes a fetchSem slot like
+			// any other: N unbounded concurrent cold spawns is the
+			// precise thing that saturates Dolt and pushes the per-repo
+			// list past its deadline (would-you-kindly-3frr, roborev
+			// #4033). Done before the cache fast path on purpose — the
+			// guard below needs a prefix on the cache-served path too,
+			// and after the first refresh this costs nothing.
 			if sub.prefixFn != nil {
-				prefixes[i] = sub.prefixFn(ctx)
+				func() {
+					select {
+					case fetchSem <- struct{}{}:
+						defer func() { <-fetchSem }()
+					case <-ctx.Done():
+						return
+					}
+					prefixes[i] = sub.prefixFn(ctx)
+				}()
 			}
 			// Per-repo cache fast path (would-you-kindly-jipr): if .beads
 			// can be stat'd and a recent entry matches this preset + mtime,
@@ -836,26 +896,35 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 	}
 	wg.Wait()
 
-	// Cross-workspace leak guard. Precompute the registered names
-	// sorted longest-first so we can do longest-prefix-match on
-	// each issue ID. A naive "ID starts with sub.name + '-'" check
-	// misroutes when registrations have nested prefixes — e.g.
-	// subs `foo` and `foo-bar`: an issue `foo-bar-1` matches both
-	// `foo-` and `foo-bar-`, and the shorter sub would mis-claim
-	// it. Resolving to the LONGEST matching prefix and requiring
-	// it to equal sub.name catches both classes of leak (foreign-
-	// prefix and nested-prefix collision) in one rule.
-	namesByLen := make([]string, len(m.subs))
+	// Cross-workspace leak guard. Precompute every workspace's claim
+	// token, sorted longest-first, so we can do longest-prefix-match on
+	// each issue ID. A naive "ID starts with my token + '-'" check
+	// misroutes when registrations nest — subs `foo` and `foo-bar`: an
+	// issue `foo-bar-1` matches both `foo-` and `foo-bar-`, and the
+	// shorter sub would mis-claim it. Resolving to the LONGEST matching
+	// token catches foreign-prefix and nested-prefix collisions in one
+	// rule, and the longest-first discipline has to survive the switch
+	// to bd-reported prefixes or nesting silently returns
+	// (roborev #4033).
+	//
+	// A sub's token is its bd-reported issue_prefix when the probe
+	// succeeded, else its registry name as a best guess.
+	claim := make([]string, len(m.subs))
 	for i, sub := range m.subs {
-		namesByLen[i] = sub.name
+		if prefixes[i] != "" {
+			claim[i] = prefixes[i]
+		} else {
+			claim[i] = sub.name
+		}
 	}
-	sort.Slice(namesByLen, func(i, j int) bool { return len(namesByLen[i]) > len(namesByLen[j]) })
+	tokensByLen := append([]string(nil), claim...)
+	sort.Slice(tokensByLen, func(i, j int) bool { return len(tokensByLen[i]) > len(tokensByLen[j]) })
 
-	// longestPrefixMatch returns the longest registered sub name N
-	// such that id begins with N + "-". Empty string means no
-	// registered sub claims this ID.
+	// longestPrefixMatch returns the longest workspace token T such
+	// that id begins with T + "-". Empty string means no registered
+	// workspace claims this ID.
 	longestPrefixMatch := func(id string) string {
-		for _, n := range namesByLen {
+		for _, n := range tokensByLen {
 			if strings.HasPrefix(id, n+"-") {
 				return n
 			}
@@ -905,10 +974,19 @@ func (m *MultiBDSource) FetchWithSubErrors(ctx context.Context, p filter.Preset)
 		// folder name.
 		prefix := prefixes[i]
 		isForeign := func(id string) bool {
-			if prefix != "" {
-				return !strings.HasPrefix(id, prefix+"-")
-			}
 			owner := longestPrefixMatch(id)
+			if prefix != "" {
+				// Probe succeeded: exact. `owner` (not a bare
+				// HasPrefix) so a nested sibling's row — `wyk-web-1`
+				// arriving in the `wyk` sub — resolves to the sibling
+				// and is dropped instead of being stamped Repo=wyk and
+				// making a later close target the wrong workspace.
+				return owner != prefix
+			}
+			// Probe failed: fall back to the weaker "some OTHER
+			// workspace claims this ID" rule, which still catches
+			// crossover without punishing a prefix that merely differs
+			// from the folder name (would-you-kindly-qp14).
 			return owner != "" && owner != sub.name
 		}
 		var clean []beads.Issue

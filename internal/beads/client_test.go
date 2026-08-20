@@ -559,3 +559,20 @@ func TestParseIssues_ReadsEmbeddedDependencies(t *testing.T) {
 		t.Errorf("edge = %+v", got[0].Dependencies[0])
 	}
 }
+
+func TestListDepsBatch_EmptyResultIsNotUnattributable(t *testing.T) {
+	// bd prints `[]` when NONE of the requested issues has edges. That
+	// is a complete answer, not an unattributable one — conflating the
+	// two made "no dependencies" fire the caller's per-issue fallback,
+	// turning one definitive subprocess into one per candidate that
+	// each return nothing (roborev #4033).
+	r := &fakeRunner{stdout: []byte(`[]`)}
+	c := newTestClient(r)
+	got, err := c.ListDepsBatch(context.Background(), []string{"a-1", "a-2"})
+	if err != nil {
+		t.Fatalf("empty batch result should not error; got %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want an empty map, got %+v", got)
+	}
+}

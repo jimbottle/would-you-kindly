@@ -1055,11 +1055,15 @@ type stubDepLister struct {
 	batch     int
 	lookups   int
 	singles   int
+	onBatch   func() // fired inside ListDepsBatch, to simulate mid-flight events
 }
 
 func (s *stubDepLister) ListDepsBatch(_ context.Context, ids []string) (map[string][]beads.Dependency, error) {
 	s.batch++
 	s.batchIDs = append([]string(nil), ids...)
+	if s.onBatch != nil {
+		s.onBatch()
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -1364,5 +1368,128 @@ func TestMultiBDSource_UsesBDsRealPrefixForTheLeakGuard(t *testing.T) {
 	}
 	if !strings.Contains(errs[0].Err.Error(), `"short-"`) {
 		t.Errorf("error should name bd's real prefix; got %q", errs[0].Err.Error())
+	}
+}
+
+func TestMultiBDSource_NestedPrefixesStillResolveToTheLongestOwner(t *testing.T) {
+	// Two workspaces whose bd prefixes nest. A row belonging to the
+	// CHILD that leaks into the parent's fetch must be dropped: a bare
+	// HasPrefix(id, "wyk-") keeps it, stamps Repo=wyk, and a later
+	// close then dispatches against the wrong workspace — the exact
+	// wrong-workspace write the exact-prefix guard exists to stop
+	// (roborev #4033).
+	parent := &fakeRepoSource{issues: []beads.Issue{
+		{ID: "wyk-1", Title: "parent's own row"},
+		{ID: "wyk-web-1", Title: "leaked from the nested child"},
+	}}
+	child := &fakeRepoSource{issues: []beads.Issue{
+		{ID: "wyk-web-2", Title: "child's own row"},
+	}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"wyk", "main", parent},
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"wyk-web", "main", child},
+	)
+	m.subs[0].prefixFn = func(context.Context) string { return "wyk" }
+	m.subs[1].prefixFn = func(context.Context) string { return "wyk-web" }
+
+	issues, errs, err := m.FetchWithSubErrors(context.Background(), filter.PresetAll)
+	if err != nil {
+		t.Fatalf("FetchWithSubErrors: %v", err)
+	}
+	for _, i := range issues {
+		if i.ID == "wyk-web-1" && i.Repo == "wyk" {
+			t.Errorf("child's row leaked into the parent as Repo=%q — a close would hit the wrong workspace", i.Repo)
+		}
+	}
+	if len(issues) != 2 {
+		t.Errorf("expected wyk-1 and wyk-web-2 only; got %v", idsOf(issues))
+	}
+	if len(errs) != 1 || errs[0].Repo != "wyk" {
+		t.Errorf("the leak should surface as a fetch error on wyk; got %+v", errs)
+	}
+}
+
+func TestMemoPrefix_RetriesTransientButSettlesPermanent(t *testing.T) {
+	// A cold-start timeout is transient — the fetch beside it retries
+	// for the same reason. Memoizing it would silently downgrade the
+	// workspace to the weaker name-based guard for the life of the
+	// process (roborev #4033).
+	t.Run("transient failure retries", func(t *testing.T) {
+		calls := 0
+		fn := memoPrefix(func(context.Context) (string, error) {
+			calls++
+			if calls == 1 {
+				return "", fmt.Errorf("bd config get: %w", beads.ErrTimedOut)
+			}
+			return "resolved", nil
+		})
+		if got := fn(context.Background()); got != "" {
+			t.Errorf("first (timed-out) probe = %q, want empty", got)
+		}
+		if got := fn(context.Background()); got != "resolved" {
+			t.Errorf("retry = %q, want the resolved prefix", got)
+		}
+		if calls != 2 {
+			t.Errorf("probe ran %d times, want a retry after the timeout", calls)
+		}
+	})
+	t.Run("permanent failure settles", func(t *testing.T) {
+		calls := 0
+		fn := memoPrefix(func(context.Context) (string, error) {
+			calls++
+			return "", errors.New("unknown command")
+		})
+		fn(context.Background())
+		fn(context.Background())
+		if calls != 1 {
+			t.Errorf("probe ran %d times; a permanent failure must not re-ask every refresh", calls)
+		}
+	})
+	t.Run("success is memoized", func(t *testing.T) {
+		calls := 0
+		fn := memoPrefix(func(context.Context) (string, error) {
+			calls++
+			return "p", nil
+		})
+		fn(context.Background())
+		fn(context.Background())
+		if calls != 1 || fn(context.Background()) != "p" {
+			t.Errorf("probe ran %d times, want exactly 1", calls)
+		}
+	})
+}
+
+func TestMarkBlockedByHuman_FallbackStopsOnCancel(t *testing.T) {
+	// A canceled fetch must stop dispatching per-issue fallbacks
+	// rather than walking every candidate (roborev #4033).
+	issues := []beads.Issue{
+		{ID: "a-1", Labels: []string{"src:agent"}, DependencyCount: 1},
+		{ID: "a-2", Labels: []string{"src:agent"}, DependencyCount: 1},
+		{ID: "a-3", Labels: []string{"src:agent"}, DependencyCount: 1},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel DURING the batch call, not before: a pre-canceled context
+	// returns at the semaphore and never reaches the fallback loop, so
+	// the test would pass without exercising the break at all.
+	stub := &stubDepLister{
+		err:     beads.ErrUnattributableDeps,
+		byID:    map[string][]beads.Issue{},
+		onBatch: cancel,
+	}
+	defer cancel()
+	markBlockedByHuman(ctx, stub, issues, nil)
+	if stub.batch != 1 {
+		t.Fatalf("batch ran %d times; the test must reach the fallback path", stub.batch)
+	}
+	if stub.singles != 0 {
+		t.Errorf("dispatched %d per-issue fallbacks after cancellation, want 0", stub.singles)
 	}
 }
