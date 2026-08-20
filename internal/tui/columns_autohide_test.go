@@ -84,3 +84,67 @@ func TestComputeAutoHidden_RespectsUserHidden(t *testing.T) {
 		t.Error("a non-hidden column should be visible at a wide width")
 	}
 }
+
+// TestRepoImpliedByID pins when the Repo column counts as pure
+// duplication of the full-ID column (would-you-kindly-rvv9).
+func TestRepoImpliedByID(t *testing.T) {
+	cases := []struct {
+		name string
+		rows []beads.Issue
+		want bool
+	}{
+		{"every id carries its repo prefix", []beads.Issue{
+			{ID: "alpha-1", Repo: "alpha"},
+			{ID: "beta-9", Repo: "beta"},
+		}, true},
+		{"a repo whose bd prefix differs is NOT implied", []beads.Issue{
+			{ID: "alpha-1", Repo: "alpha"},
+			{ID: "bd-7", Repo: "some-other-dir-name"},
+		}, false},
+		// Single-repo mode: no Repo column renders at all, so there is
+		// nothing to call redundant.
+		{"undecorated rows", []beads.Issue{{ID: "alpha-1"}, {ID: "alpha-2"}}, false},
+		{"no rows", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var m Model
+			if got := m.repoImpliedByID(c.rows); got != c.want {
+				t.Errorf("repoImpliedByID = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestDropOrder_RedundantRepoGoesFirst verifies the width-pressure
+// order puts a duplicated Repo column ahead of columns that carry
+// information the row shows nowhere else.
+func TestDropOrder_RedundantRepoGoesFirst(t *testing.T) {
+	redundant := []beads.Issue{{ID: "alpha-1", Repo: "alpha"}, {ID: "beta-9", Repo: "beta"}}
+	var m Model
+	if got := m.dropOrderFor(redundant); got[0] != colIDRepo {
+		t.Errorf("drop order starts with %q, want %q when Repo duplicates the ID", got[0], colIDRepo)
+	}
+	// Order is otherwise untouched, and no column is lost or doubled.
+	got := m.dropOrderFor(redundant)
+	if len(got) != len(widthDropOrder) {
+		t.Fatalf("drop order has %d entries, want %d", len(got), len(widthDropOrder))
+	}
+	if got[len(got)-1] != colIDOwner {
+		t.Errorf("Owner must still be the last column dropped; got %q", got[len(got)-1])
+	}
+	seen := map[string]bool{}
+	for _, id := range got {
+		if seen[id] {
+			t.Errorf("column %q appears twice in the drop order", id)
+		}
+		seen[id] = true
+	}
+
+	// Distinct-prefix workspaces keep the stock order — there the Repo
+	// column is the only place the workspace name appears.
+	distinct := []beads.Issue{{ID: "bd-7", Repo: "some-other-dir-name"}}
+	if got := m.dropOrderFor(distinct); got[0] != widthDropOrder[0] {
+		t.Errorf("non-redundant Repo should keep the stock order; got %q first", got[0])
+	}
+}

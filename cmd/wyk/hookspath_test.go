@@ -262,14 +262,17 @@ func TestCheckRepo_WarnsOnHooksPathRedirect(t *testing.T) {
 	outDir := t.TempDir() // outside-repo redirect, no wyk hook there
 	gitConfigSet(t, repo, "core.hooksPath", outDir)
 
-	var got *check
+	// Value + found flag rather than a *check: staticcheck's SA5011
+	// doesn't model t.Fatal as terminating here, so the pointer form
+	// reads as a possible nil dereference and fails `make lint`.
+	var got check
+	var found bool
 	for _, c := range checkRepo(registry.Repo{Name: "x", Path: repo}) {
 		if strings.Contains(c.name, "core.hooksPath redirect") {
-			c := c
-			got = &c
+			got, found = c, true
 		}
 	}
-	if got == nil {
+	if !found {
 		t.Fatal("expected a 'core.hooksPath redirect' check, got none")
 	}
 	if got.status != statusWarn {

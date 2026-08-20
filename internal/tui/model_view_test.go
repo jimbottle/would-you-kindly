@@ -21,37 +21,81 @@ import (
 // Go compiles the package identically either way, so this is navigation
 // only — no test body was changed in the move.
 
-func TestDisplayID_TrimsCommonPrefix(t *testing.T) {
-	// Single-repo: all IDs share `would-you-kindly-`. displayID
-	// strips it down to the suffix.
+func TestDisplayID_ShowsTheFullIDSingleRepo(t *testing.T) {
+	// The ID column exists to match a row against an ID someone
+	// quoted — and agents quote bd IDs in full. Even in single-repo
+	// mode, where every row shares `would-you-kindly-`, the prefix
+	// stays (would-you-kindly-rvv9).
 	src := &stubSource{issues: []beads.Issue{
 		{ID: "would-you-kindly-2oa", Title: "a"},
 		{ID: "would-you-kindly-1ej", Title: "b"},
 		{ID: "would-you-kindly-ma5", Title: "c"},
 	}}
 	m := applyFetched(New(src), src)
-	if got := m.displayID(m.all[0]); got != "2oa" {
-		t.Errorf("displayID single-repo: got %q, want %q", got, "2oa")
-	}
-	if m.commonPrefix != "would-you-kindly-" {
-		t.Errorf("commonPrefix: got %q, want would-you-kindly-", m.commonPrefix)
+	if got := m.displayID(m.all[0]); got != "would-you-kindly-2oa" {
+		t.Errorf("displayID single-repo: got %q, want the full ID", got)
 	}
 }
 
-func TestDisplayID_MultiRepoStripsPerRowRepo(t *testing.T) {
-	// Multi-repo: each issue carries its own Repo and the trim is
-	// per-row, not from a shared prefix.
+func TestDisplayID_ShowsTheFullIDMultiRepo(t *testing.T) {
+	// Multi-repo: the per-row Repo is NOT stripped either — the
+	// prefix is the half of the ID that says which workspace, and
+	// that's exactly what disambiguates two rows an agent named.
 	m := Model{
 		all: []beads.Issue{
 			{ID: "alpha-1", Repo: "alpha", Title: "a"},
 			{ID: "beta-9", Repo: "beta", Title: "b"},
 		},
 	}
-	if got := m.displayID(m.all[0]); got != "1" {
-		t.Errorf("alpha-1 → %q, want %q", got, "1")
+	if got := m.displayID(m.all[0]); got != "alpha-1" {
+		t.Errorf("alpha-1 → %q, want the full ID", got)
 	}
-	if got := m.displayID(m.all[1]); got != "9" {
-		t.Errorf("beta-9 → %q, want %q", got, "9")
+	if got := m.displayID(m.all[1]); got != "beta-9" {
+		t.Errorf("beta-9 → %q, want the full ID", got)
+	}
+}
+
+func TestColWidths_IDColumnFitsTheLongestFullID(t *testing.T) {
+	// The whole point of the change: a long workspace-prefixed ID
+	// must render WITHOUT an ellipsis on a normal-width terminal.
+	// The old flat cap (colID+4 = 16) truncated these.
+	id := "workspace-custom-palette-3f2" // 28 cells
+	m := Model{width: 200, all: []beads.Issue{{ID: id, Repo: "workspace-custom-palette"}}}
+	m.visible = m.all
+	w := m.computeColWidths(m.visible)
+	if w.id < len(id) {
+		t.Errorf("ID column width %d is too narrow for %q (%d cells)", w.id, id, len(id))
+	}
+	if got := trunc(id, w.id); got != id {
+		t.Errorf("ID rendered as %q, want it untruncated", got)
+	}
+}
+
+func TestMaxIDWidth_ScalesWithTerminalAndStaysBounded(t *testing.T) {
+	cases := []struct {
+		name  string
+		width int
+		want  int
+	}{
+		// Unknown width (before the first WindowSizeMsg): don't
+		// truncate blind — allow the hard max.
+		{"unset", 0, idHardMax},
+		// Narrow terminal: floor at the old fixed cap so a small
+		// window is no worse off than before the change.
+		{"narrow", 40, colID + 4},
+		// Mid: a third of the width.
+		{"mid", 90, 30},
+		// Wide: clamped by the hard ceiling, so a pathological ID
+		// can't run away with the row.
+		{"wide", 400, idHardMax},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := Model{width: c.width}
+			if got := m.maxIDWidth(); got != c.want {
+				t.Errorf("maxIDWidth(width=%d) = %d, want %d", c.width, got, c.want)
+			}
+		})
 	}
 }
 

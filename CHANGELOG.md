@@ -6,7 +6,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The ID column shows the FULL bd issue ID** (would-you-kindly-rvv9).
+  It used to strip the repeated workspace prefix (`2oa` for
+  `would-you-kindly-2oa`) and cap the column at 16 cells, which
+  optimized the wrong thing: the column's job is matching a row against
+  an ID someone quoted, and an agent says `would-you-kindly-l51f`,
+  never `l51f` — while a longer ID like `workspace-custom-palette-3f2`
+  came out as `workspace-cust…`, forcing you to open rows one by one to
+  find the issue the agent meant. The column now sizes itself to the
+  widest ID in view, capped at a third of the terminal width (never
+  below the old 16, never above 40). A `Repo` column that merely
+  repeats the ID's own prefix is now the first column dropped when the
+  terminal is too narrow, so the wider IDs don't come out of the title.
+
 ### Fixed
+
+- **Closing a task now gives immediate, row-specific feedback and
+  blocks a second close until it lands** (would-you-kindly-khtw). A bd
+  close takes seconds on a cold multi-repo workspace, and nothing on
+  screen changed during that window — the row sat there unmarked, so a
+  user who assumed the keypress hadn't registered pressed again, by
+  which point the cursor had moved, and closed the wrong task. The
+  target row now reads `closing` in the Status column the instant the
+  write is dispatched and the banner names it; any further close (the
+  `a` prompt, a bulk close, or `.` repeat) is refused with "still
+  closing `<id>` — wait for it to clear" until the write lands. The
+  block lifts on both outcomes: success drops the row from the list,
+  and a failure leaves it retryable with its error banner.
 
 - **`wyk handoff` no longer hangs forever under agent/CI harnesses**
   (would-you-kindly-l51f, from an external bug report). The stdin

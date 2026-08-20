@@ -591,7 +591,7 @@ narrow terminal the lower-value ones auto-hide to keep rows intact.
 | `Owner`    | Whose move it is. `HUMAN` — a human must act. `AGENT` — agent-owned; the default for any issue without a `human` label. `HUMAN-BLOCK` — an agent issue blocked by a human-flagged dependency. `AGENT-HANDOFF` — another agent is working it, so this agent must not interfere (a human orchestrates the coordination). Label-driven; never blank. |
 | `Repo`     | The registered bd workspace the issue lives in. Shown when the view spans more than one repo.                            |
 | `Branch`   | That repo's current git branch. Shown in multi-repo mode.                                                                |
-| `ID`       | The bd issue ID with the repeated workspace prefix trimmed (e.g. `2oa` for `would-you-kindly-2oa`). Yank it with `y`.    |
+| `ID`       | The full bd issue ID (e.g. `would-you-kindly-2oa`) — the same string bd and your agents use, so a quoted ID matches a row on sight. The column sizes itself to the longest ID in view. Yank it with `y`. |
 | `Type`     | The issue type, abbreviated to four characters: `task`, `bug`, `feat`(ure), `chor`(e), `epic`, `deci`(sion), `spik`(e), `stor`(y), `mile`(stone). |
 | `Status`   | The bd lifecycle state: `open`, `wip` (in&#95;progress), `hooked`, `blocked`, `deferred`, `pinned`, `closed`. Closed rows are dimmed; the frozen states (`deferred`, `pinned`) render de-emphasized. |
 | `Priority` | `P0` (most urgent) through `P4` (backlog). Bump with `+` / `-`; opt into colour emphasis in `ui.json`.                   |

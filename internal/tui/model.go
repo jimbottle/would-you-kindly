@@ -483,6 +483,21 @@ type Model struct {
 	// move, not a stack.
 	lastClosed beads.Issue
 
+	// closing holds the issueKeys of closes currently in flight.
+	// A bd close can take seconds on a cold multi-repo workspace,
+	// and until this existed NOTHING on screen changed during that
+	// window: the row sat there un-marked, so a user who thought
+	// the keypress hadn't landed would press again — against
+	// whatever row the cursor was on by then — and close the WRONG
+	// task (would-you-kindly-khtw). Two jobs: the marked rows render
+	// as "closing" for immediate feedback, and closeBlockedBy
+	// refuses to start another close while the set is non-empty.
+	// Populated at dispatch, cleared when the write result lands
+	// (success drops the row from the list via optimisticListUpdate;
+	// failure leaves it with an error banner) — so the block lifts
+	// exactly when the closing row stops being actionable.
+	closing map[string]bool
+
 	// lastAction snapshots the most recent write so `.` can
 	// re-apply it to the cursor row without re-prompting. The
 	// kind tag (close/defer/assign/label/unlabel/priority/flag/
@@ -1830,6 +1845,12 @@ func (m Model) beginClose() (tea.Model, tea.Cmd) {
 	if len(m.visible) == 0 {
 		return m, nil
 	}
+	// Refuse at the PROMPT, not at the confirm: opening a second
+	// close prompt while one is in flight is how the user ends up
+	// confirming a close they didn't mean (would-you-kindly-khtw).
+	if m.refuseIfClosing() {
+		return m, flashClearCmd(m.statusGen)
+	}
 	m.mode = modeConfirmClose
 	// Bulk path: marks are the targets and the confirm prompt
 	// counts them. Single path: snapshot the cursor row into
@@ -1859,9 +1880,18 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// we land back in the list regardless of where the prompt was
 		// opened — there's nothing useful left to show in detail.
 		m.mode = modeList
+		// Backstop for the beginClose gate: a prompt opened before an
+		// earlier close was dispatched could otherwise still confirm.
+		if m.refuseIfClosing() {
+			return m, flashClearCmd(m.statusGen)
+		}
 		if bulk {
 			targets := m.markedIssues()
 			m.marked = nil
+			// Mark BEFORE dispatch so the rows read "closing" on the
+			// very next paint rather than after bd returns.
+			m.markClosing(targets...)
+			m.setStatus(fmt.Sprintf("closing %d rows…", len(targets)))
 			return m, runBulkWrite("close", targets, func(ctx context.Context, i beads.Issue) error {
 				return mu.Close(ctx, i)
 			})
@@ -1876,6 +1906,12 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.lastAction = repeatableAction{kind: "close"}
+		// Immediate, row-specific feedback: the target renders as
+		// "closing" and the banner names it, so the seconds bd spends
+		// closing are legible instead of looking like a dropped
+		// keypress (would-you-kindly-khtw).
+		m.markClosing(target)
+		m.setStatus("closing " + target.ID + "…")
 		return m, runWriteWithIssue("close", target, func(ctx context.Context) error {
 			return mu.Close(ctx, target)
 		})
@@ -1884,6 +1920,76 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.mode = ret
 	m.setStatus("close cancelled")
 	return m, nil
+}
+
+// closingLabel is what the Status cell reads for a row whose close is
+// in flight. Deliberately a status-column word rather than a spinner:
+// it names the row being acted on, which is the thing the user needs
+// when they're about to press the key again.
+const closingLabel = "closing"
+
+// markClosing records the given issues as having an in-flight close.
+func (m *Model) markClosing(issues ...beads.Issue) {
+	if m.closing == nil {
+		m.closing = make(map[string]bool, len(issues))
+	}
+	for _, i := range issues {
+		m.closing[issueKey(i)] = true
+	}
+}
+
+// isClosing reports whether this row has a close in flight.
+func (m Model) isClosing(i beads.Issue) bool {
+	return m.closing[issueKey(i)]
+}
+
+// closeBlockedBy returns the ID of an in-flight close and true when a
+// NEW close must be refused. The user's rule: never let a second close
+// start while the first one is still showing in the list, because the
+// second one lands on whatever row the cursor has drifted to. Returns
+// one representative ID (map order is arbitrary but a bulk close is
+// reported by count at the call site, so any member reads correctly).
+func (m Model) closeBlockedBy() (string, bool) {
+	for key := range m.closing {
+		// issueKey is `repo/id` in multi-repo mode; the ID half is
+		// what the user sees in the ID column and what bd calls it.
+		if _, id, ok := strings.Cut(key, "/"); ok {
+			return id, true
+		}
+		return key, true
+	}
+	return "", false
+}
+
+// refuseIfClosing sets the "wait for it" banner and reports whether the
+// caller must abort. Shared by every close dispatch site (the confirm
+// prompt, the bulk path, and `.` repeat) so none can grow a hole.
+func (m *Model) refuseIfClosing() bool {
+	id, blocked := m.closeBlockedBy()
+	if !blocked {
+		return false
+	}
+	if n := len(m.closing); n > 1 {
+		m.setStatus(fmt.Sprintf("closing %d rows — wait for them to clear before closing anything else", n))
+	} else {
+		m.setStatus("still closing " + id + " — wait for it to clear before closing anything else")
+	}
+	return true
+}
+
+// clearClosing drops the in-flight marks for the given issues (or all
+// of them when none are named), lifting the close block.
+func (m *Model) clearClosing(issues ...beads.Issue) {
+	if len(issues) == 0 {
+		m.closing = nil
+		return
+	}
+	for _, i := range issues {
+		delete(m.closing, issueKey(i))
+	}
+	if len(m.closing) == 0 {
+		m.closing = nil
+	}
 }
 
 // issueExists reports whether the given ID is still present in the
@@ -2114,6 +2220,12 @@ func (m *Model) restoreFilterPrompt() {
 // optimistically clear m.marked; this is the rollback). Refetches
 // after a non-total-failure outcome so the new state is visible.
 func (m Model) handleBulkWriteResult(msg bulkWriteMsg) (tea.Model, tea.Cmd) {
+	// Mirror the single-target path: the bulk close's in-flight marks
+	// lift here, on every outcome (failed rows keep their marks
+	// restored below so the user can retry them).
+	if msg.action == "close" {
+		m.clearClosing()
+	}
 	succeeded := msg.total - len(msg.failed)
 	verb := bulkVerbs[msg.action]
 	if verb == "" {
@@ -2189,6 +2301,13 @@ func (m Model) handleRepeat() (tea.Model, tea.Cmd) {
 	arg := m.lastAction.arg
 	switch m.lastAction.kind {
 	case "close":
+		// `.` re-dispatches without a confirm prompt, so it's the
+		// easiest way to fire a second close into the lag window.
+		if m.refuseIfClosing() {
+			return m, flashClearCmd(m.statusGen)
+		}
+		m.markClosing(target)
+		m.setStatus("closing " + target.ID + "…")
 		return m, runWriteWithIssue("close", target, func(ctx context.Context) error {
 			return mu.Close(ctx, target)
 		})
@@ -2395,6 +2514,12 @@ func (m *Model) optimisticListUpdate(action string, issue beads.Issue) {
 // the list reflects the new state. On error, the banner shows the
 // failure message; the existing data stays so the user can retry.
 func (m Model) handleWriteResult(msg writeMsg) (tea.Model, tea.Cmd) {
+	// Lift the close block first, on BOTH outcomes and before any
+	// early return: a close that failed leaves its row on screen with
+	// an error banner, and the user must be able to retry it.
+	if msg.action == "close" {
+		m.clearClosing(msg.issue)
+	}
 	if msg.err != nil {
 		// Roll back an optimistic detail-view mutation when the write
 		// failed, so the detail body can't contradict the error
@@ -4084,9 +4209,9 @@ func (m Model) viewHelp() string {
 	b.WriteString("\n")
 	b.WriteString(detailLabelStyle.Render("Notes"))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  IDs in the table are shown without the repeated workspace prefix\n"))
-	b.WriteString(helpStyle.Render("  (e.g. \"ma5.2.1\" stands for \"" + exampleFullID(m) + "ma5.2.1\").\n"))
-	b.WriteString(helpStyle.Render("  Press ⏎ to expand a row and see the full ID in the detail view.\n"))
+	b.WriteString(helpStyle.Render("  IDs are shown in full (e.g. \"" + exampleFullID(m) + "ma5.2.1\"), the way\n"))
+	b.WriteString(helpStyle.Render("  bd and your agents refer to them, so a quoted ID matches a row\n"))
+	b.WriteString(helpStyle.Render("  on sight. Press ⏎ to expand a row; y yanks the ID.\n"))
 	b.WriteString(helpStyle.Render("  Mouse: in the list, the wheel scrolls and a click selects a row.\n"))
 	b.WriteString(helpStyle.Render("  The detail view releases the mouse automatically so click-drag\n"))
 	b.WriteString(helpStyle.Render("  selects text; m toggles capture everywhere (shift/option-drag\n"))
@@ -4334,15 +4459,17 @@ func (m Model) viewList() string {
 // The Repo and Branch columns are only rendered in multi-repo mode
 // (when at least one fetched Issue carries a populated Repo field).
 //
-// colID shrank from 22 → 12 once the common prefix trimming landed
-// (commonIDPrefix): with the repeated `<prefix>-` stripped, the
-// remaining suffix is usually ≤ 8 chars (e.g. `ma5.2.1`), so the
-// extra width was just whitespace in every row.
+// colID is only the FLOOR for the ID column now — displayID renders
+// the full `<workspace>-<suffix>` ID (agents quote IDs in full, so a
+// trimmed suffix can't be matched against what they say), and
+// computeColWidths sizes the column to the widest ID in view, capped
+// by maxIDWidth. The const survives as the narrow-terminal floor.
 const (
 	colResp    = 15 // responsibility column: " AGENT ", " HUMAN ", " HUMAN-BLOCK ", " AGENT-HANDOFF ", or blank. 15 = " AGENT-HANDOFF " visual width (Padding(0,1) + 13-char content), the widest variant. Shorter badges get trailing whitespace. Placed second-from-left to put the most important "whose move is it" signal where the eye lands first.
 	colRepo    = 18
 	colBranch  = 10
 	colID      = 12
+	idHardMax  = 40 // absolute ceiling for the content-sized ID column: fits the longest real workspace-prefixed ID seen in practice ("louisville-open-data-expenditure-bot-4jm") without letting a pathological one run away with the row. See maxIDWidth.
 	colType    = 4
 	colStatus  = 8
 	colPrio    = 9 // wide enough for the "Priority" header plus its sort-arrow ("Priority↑" = 9), like colUpdated holds "Updated↓". Values ("P0".."P4") are 2 chars and left-align in the slack.
@@ -4398,7 +4525,7 @@ func (m Model) computeColWidths(rows []beads.Issue) colWidths {
 		w.branch = max(w.branch, lipgloss.Width(i.Branch))
 		w.id = max(w.id, lipgloss.Width(m.displayID(i)))
 		w.typ = max(w.typ, lipgloss.Width(abbrevType(i.IssueType)))
-		w.status = max(w.status, lipgloss.Width(abbrevStatus(i.Status)))
+		w.status = max(w.status, lipgloss.Width(m.statusCell(i)))
 		w.session = max(w.session, lipgloss.Width(sessionShort(i)))
 		// prio ("P0".."P4") and updated (relTime) values are always
 		// narrower than their headers, so they stay header-driven.
@@ -4406,11 +4533,27 @@ func (m Model) computeColWidths(rows []beads.Issue) colWidths {
 	w.owner = min(w.owner, colResp)
 	w.repo = min(w.repo, colRepo)
 	w.branch = min(w.branch, colBranch+6) // a little more room than the old fixed 10 for "docs/…" branches
-	w.id = min(w.id, colID+4)
+	w.id = min(w.id, m.maxIDWidth())
 	w.typ = min(w.typ, colType+2)
 	w.status = min(w.status, colStatus+1)
 	w.session = min(w.session, colSession)
 	return w
+}
+
+// maxIDWidth is the ceiling computeColWidths clamps the ID column to.
+// Full bd IDs are `<workspace>-<suffix>` and workspaces get long names
+// (`louisville-open-data-expenditure-bot-4jm` is 40 cells), so a flat
+// constant either truncates real IDs or starves the flex Title column
+// on a narrow terminal. Instead the ceiling scales with the terminal:
+// at most a third of the width, never below colID+4 (the old fixed
+// cap, so a narrow terminal is no worse off than before) and never
+// above idHardMax. The column still sizes to CONTENT first — this only
+// bounds how much a pathological ID may take (would-you-kindly-rvv9).
+func (m Model) maxIDWidth() int {
+	if m.width <= 0 {
+		return idHardMax // pre-first-WindowSizeMsg: don't truncate blind
+	}
+	return min(idHardMax, max(colID+4, m.width/3))
 }
 
 // isMultiRepo reports whether the current list has any issue with
@@ -4430,25 +4573,24 @@ func (m Model) isMultiRepo() bool {
 	return false
 }
 
-// displayID returns the ID with its repeated workspace prefix
-// stripped — the part that's identical for every row in the same
-// view. For multi-repo mode the prefix is `<issue.Repo>-`; for
-// single-repo it's the longest common prefix of m.all ending in
-// `-`. If no trim applies the original ID is returned.
+// displayID returns the ID exactly as bd — and every agent — refers
+// to it: in full, prefix and all.
+//
+// This column used to strip the repeated workspace prefix
+// (`<issue.Repo>-`, or the longest common prefix of m.all) to save
+// width. That optimized the wrong thing: the ID column's whole job is
+// letting you match a row against an ID someone quoted at you, and an
+// agent says "would-you-kindly-l51f", never "l51f". A trimmed suffix
+// — or worse, an ellipsized `workspace-cust…` — forces the user to
+// expand rows one by one to find the issue the agent meant
+// (would-you-kindly-rvv9). Width is the cheaper thing to spend:
+// computeColWidths sizes this column to the widest ID actually in
+// view, so nothing is truncated until the terminal is genuinely too
+// narrow.
+//
+// Kept as a method (rather than inlining i.ID at the call sites) so
+// the column keeps its single formatting seam.
 func (m Model) displayID(i beads.Issue) string {
-	if i.Repo != "" {
-		// Use the issue's own Repo to pick the prefix so cross-repo
-		// rows in the same view each get the right strip.
-		if rest, ok := strings.CutPrefix(i.ID, i.Repo+"-"); ok {
-			return rest
-		}
-		return i.ID
-	}
-	if m.commonPrefix != "" {
-		if rest, ok := strings.CutPrefix(i.ID, m.commonPrefix); ok {
-			return rest
-		}
-	}
 	return i.ID
 }
 
@@ -4633,7 +4775,7 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 		b.WriteString(sep)
 	}
 	if m.colVisible(colIDStatus) {
-		b.WriteString(statusStyleFor(i.Status).Render(fmt.Sprintf("%-*s", m.cw.status, abbrevStatus(i.Status))))
+		b.WriteString(m.statusCellStyle(i).Render(fmt.Sprintf("%-*s", m.cw.status, m.statusCell(i))))
 		b.WriteString(sep)
 	}
 	// Pad the priority value to the column width so it aligns under the
@@ -4982,6 +5124,29 @@ func abbrevStatus(s string) string {
 		return "wip"
 	}
 	return s
+}
+
+// statusCell is the text the Status column shows for a row: its bd
+// status, or "closing" while a close is in flight against it. Both
+// computeColWidths and renderRow go through this one function — a
+// second word in the column that the width pass didn't know about
+// would push every cell to its right out of alignment.
+func (m Model) statusCell(i beads.Issue) string {
+	if m.isClosing(i) {
+		return closingLabel
+	}
+	return abbrevStatus(i.Status)
+}
+
+// statusCellStyle pairs with statusCell. An in-flight close borrows
+// the in-progress emphasis (amber): work is happening on this row
+// right now, which is exactly what the user needs to see before they
+// reach for the key again.
+func (m Model) statusCellStyle(i beads.Issue) lipgloss.Style {
+	if m.isClosing(i) {
+		return statusInProgress
+	}
+	return statusStyleFor(i.Status)
 }
 
 // relTime renders a coarse "how long ago" stamp for the Updated

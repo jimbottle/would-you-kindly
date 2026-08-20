@@ -490,3 +490,169 @@ func TestClose_ShowClosedFlipsStatusInPlaceThenUndoRestores(t *testing.T) {
 		t.Errorf("undo should restore original status in place; got %q want %q", m.visible[idx].Status, origStatus)
 	}
 }
+
+// --- in-flight close guard (would-you-kindly-khtw) ------------------
+//
+// A bd close takes seconds on a cold multi-repo workspace. Until the
+// guard existed, nothing on screen changed in that window, so a user
+// who thought the keypress hadn't landed pressed again — against
+// whatever row the cursor had drifted to — and closed the WRONG task.
+
+// confirmCloseCursorRow presses `a` then `y` on the cursor row and
+// returns the model plus the dispatched command (nil when refused).
+func confirmCloseCursorRow(t *testing.T, m Model) (Model, tea.Cmd) {
+	t.Helper()
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	model, cmd := model.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	return model.(Model), cmd
+}
+
+func TestClose_MarksTheRowClosingImmediatelyOnDispatch(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	target := m.visible[0]
+
+	m, cmd := confirmCloseCursorRow(t, m)
+	if cmd == nil {
+		t.Fatal("confirmed close must dispatch")
+	}
+	// The feedback must be present BEFORE the write result comes
+	// back — that's the whole point.
+	if !m.isClosing(target) {
+		t.Errorf("%s should be marked closing at dispatch", target.ID)
+	}
+	if got := m.statusCell(target); got != closingLabel {
+		t.Errorf("status cell = %q, want %q", got, closingLabel)
+	}
+	if !strings.Contains(m.status, target.ID) {
+		t.Errorf("banner should name the row being closed; got %q", m.status)
+	}
+	// Other rows are untouched.
+	if m.isClosing(m.visible[1]) {
+		t.Error("a close must not mark any row but its target")
+	}
+}
+
+func TestClose_BlocksASecondCloseWhileOneIsInFlight(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	first := m.visible[0]
+
+	m, cmd := confirmCloseCursorRow(t, m)
+	if cmd == nil {
+		t.Fatal("first close must dispatch")
+	}
+
+	// Cursor drifts to another row (exactly the accident being
+	// guarded) and the user presses `a` again.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = model.(Model)
+	second := m.visible[m.cursor]
+	if second.ID == first.ID {
+		t.Fatal("test setup: cursor did not move")
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+
+	if m.mode == modeConfirmClose {
+		t.Error("a second close prompt must not open while one is in flight")
+	}
+	if !strings.Contains(m.status, first.ID) {
+		t.Errorf("refusal should name the in-flight ID; got %q", m.status)
+	}
+	// And `.` repeat — which skips the prompt entirely — is blocked too.
+	m.lastAction = repeatableAction{kind: "close"}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+	m = model.(Model)
+	if len(s.closed) != 0 {
+		t.Errorf("no bd Close should have run yet; got %+v", s.closed)
+	}
+	if m.isClosing(second) {
+		t.Errorf("%s must never have been marked closing", second.ID)
+	}
+}
+
+func TestClose_UnblocksWhenTheWriteLands(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"success", nil},
+		// A failed close leaves its row on screen, so the block MUST
+		// lift or the user can never retry it.
+		{"failure", errors.New("bd: simulated")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+			m := applyMutatorFetched(New(s), s)
+			target := m.visible[0]
+
+			m, cmd := confirmCloseCursorRow(t, m)
+			if cmd == nil {
+				t.Fatal("close must dispatch")
+			}
+			model, _ := m.Update(writeMsg{action: "close", id: target.ID, issue: target, err: tc.err})
+			m = model.(Model)
+
+			if m.isClosing(target) {
+				t.Error("the in-flight mark must clear when the write lands")
+			}
+			if _, blocked := m.closeBlockedBy(); blocked {
+				t.Error("closes must be unblocked once the write lands")
+			}
+			// Now a fresh close prompt opens again.
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+			if got := model.(Model).mode; got != modeConfirmClose {
+				t.Errorf("mode = %v, want modeConfirmClose once unblocked", got)
+			}
+		})
+	}
+}
+
+func TestClose_ClosingCellIsSizedIntoTheStatusColumn(t *testing.T) {
+	// "closing" is wider than "open"/"wip". If computeColWidths
+	// didn't know about it, the cell would overflow and shove every
+	// column to its right out of alignment.
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	m.width = 200
+	m, _ = confirmCloseCursorRow(t, m)
+
+	w := m.computeColWidths(m.visible)
+	if w.status < len(closingLabel) {
+		t.Errorf("status column width %d cannot fit %q", w.status, closingLabel)
+	}
+}
+
+func TestClose_BulkMarksEveryTargetAndBlocks(t *testing.T) {
+	s := &stubMutator{stubSource: stubSource{issues: sampleIssues()}}
+	m := applyMutatorFetched(New(s), s)
+	// Mark two rows, then close the selection.
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	model, _ = model.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	model, _ = model.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = model.(Model)
+	if len(m.marked) != 2 {
+		t.Fatalf("test setup: marked %d rows, want 2", len(m.marked))
+	}
+	targets := m.markedIssues()
+
+	m, cmd := confirmCloseCursorRow(t, m)
+	if cmd == nil {
+		t.Fatal("bulk close must dispatch")
+	}
+	for _, tgt := range targets {
+		if !m.isClosing(tgt) {
+			t.Errorf("%s should be marked closing", tgt.ID)
+		}
+	}
+	if _, blocked := m.closeBlockedBy(); !blocked {
+		t.Error("a bulk close in flight must block further closes")
+	}
+	// The bulk result lifts the block for the whole batch.
+	model, _ = m.Update(bulkWriteMsg{action: "close", total: len(targets), succeeded: targets})
+	m = model.(Model)
+	if _, blocked := m.closeBlockedBy(); blocked {
+		t.Error("bulk close result must lift the block")
+	}
+}

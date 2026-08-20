@@ -1,5 +1,11 @@
 package tui
 
+import (
+	"strings"
+
+	"github.com/jimbottle/would-you-kindly/internal/beads"
+)
+
 // Column IDs used by both the on-disk uiconfig file and the
 // render-time visibility check. Kept as constants so a typo in one
 // place becomes a compile error rather than a silently-ignored
@@ -53,6 +59,49 @@ func (m Model) colVisible(id string) bool {
 // is it" signal; ID, priority, and title are never dropped.
 var widthDropOrder = []string{colIDBranch, colIDSession, colIDUpdated, colIDType, colIDStatus, colIDRepo, colIDOwner}
 
+// repoImpliedByID reports whether the Repo column is pure duplication
+// of the ID column. Since the ID renders in full (`<workspace>-<suffix>`,
+// would-you-kindly-rvv9), a row whose ID literally starts with its own
+// `<repo>-` shows that workspace name twice. When that holds for EVERY
+// decorated row, Repo is the cheapest column to give up — dropping it
+// costs no information at all, unlike Branch or Status.
+//
+// Deliberately strict: a workspace whose bd prefix differs from its
+// registry name (so the ID does NOT carry it) keeps its Repo column at
+// normal priority, because there the column is the only place the
+// workspace appears.
+func (m Model) repoImpliedByID(rows []beads.Issue) bool {
+	decorated := false
+	for _, i := range rows {
+		if i.Repo == "" {
+			continue
+		}
+		decorated = true
+		if !strings.HasPrefix(i.ID, i.Repo+"-") {
+			return false
+		}
+	}
+	return decorated
+}
+
+// dropOrderFor returns widthDropOrder, moved to drop a redundant Repo
+// column FIRST. Without this the wider full-ID column would squeeze the
+// title on multi-repo views while a duplicate of the ID's own prefix
+// kept its 18 cells.
+func (m Model) dropOrderFor(rows []beads.Issue) []string {
+	if !m.repoImpliedByID(rows) {
+		return widthDropOrder
+	}
+	out := make([]string, 0, len(widthDropOrder))
+	out = append(out, colIDRepo)
+	for _, id := range widthDropOrder {
+		if id != colIDRepo {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // computeAutoHidden returns the toggleable columns to hide PURELY to
 // keep rows within the terminal width, on top of whatever the user hid
 // via the `o` overlay. Render-time only (never persisted), so widening
@@ -102,7 +151,7 @@ func (m Model) computeAutoHidden() map[string]bool {
 		return nil
 	}
 	hidden := map[string]bool{}
-	for _, id := range widthDropOrder {
+	for _, id := range m.dropOrderFor(m.visible) {
 		if total <= m.width {
 			break
 		}
