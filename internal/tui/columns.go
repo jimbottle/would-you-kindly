@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 )
 
@@ -66,10 +68,16 @@ var widthDropOrder = []string{colIDBranch, colIDSession, colIDUpdated, colIDType
 // decorated row, Repo is the cheapest column to give up — dropping it
 // costs no information at all, unlike Branch or Status.
 //
-// Deliberately strict: a workspace whose bd prefix differs from its
-// registry name (so the ID does NOT carry it) keeps its Repo column at
-// normal priority, because there the column is the only place the
-// workspace appears.
+// Deliberately strict on two counts. A workspace whose bd prefix
+// differs from its registry name (so the ID does NOT carry it) keeps
+// its Repo column at normal priority, because there the column is the
+// only place the workspace appears. And a row whose ID does not FIT
+// m.cw.id counts as not-implied: the ID cell middle-elides, dropping
+// the workspace name to save the suffix, so the prefix isn't on screen
+// to imply anything. Without that second check the two behaviours
+// collide exactly where it hurts — a narrow terminal truncates the ID
+// AND sacrifices Repo first, leaving the row with no readable
+// workspace name at all (roborev #4028).
 func (m Model) repoImpliedByID(rows []beads.Issue) bool {
 	decorated := false
 	for _, i := range rows {
@@ -78,6 +86,9 @@ func (m Model) repoImpliedByID(rows []beads.Issue) bool {
 		}
 		decorated = true
 		if !strings.HasPrefix(i.ID, i.Repo+"-") {
+			return false
+		}
+		if lipgloss.Width(i.ID) > m.cw.id {
 			return false
 		}
 	}

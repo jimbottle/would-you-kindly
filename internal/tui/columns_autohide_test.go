@@ -89,26 +89,34 @@ func TestComputeAutoHidden_RespectsUserHidden(t *testing.T) {
 // duplication of the full-ID column (would-you-kindly-rvv9).
 func TestRepoImpliedByID(t *testing.T) {
 	cases := []struct {
-		name string
-		rows []beads.Issue
-		want bool
+		name  string
+		idCol int // m.cw.id — the width the ID cell will actually get
+		rows  []beads.Issue
+		want  bool
 	}{
-		{"every id carries its repo prefix", []beads.Issue{
+		{"every id carries its repo prefix and fits", 20, []beads.Issue{
 			{ID: "alpha-1", Repo: "alpha"},
 			{ID: "beta-9", Repo: "beta"},
 		}, true},
-		{"a repo whose bd prefix differs is NOT implied", []beads.Issue{
+		{"a repo whose bd prefix differs is NOT implied", 20, []beads.Issue{
 			{ID: "alpha-1", Repo: "alpha"},
 			{ID: "bd-7", Repo: "some-other-dir-name"},
 		}, false},
+		// The load-bearing case (roborev #4028): the ID cell is too
+		// narrow, so it middle-elides and the workspace name is NOT on
+		// screen. Repo must keep its normal priority or the row ends up
+		// showing no readable workspace at all.
+		{"a truncated id implies nothing", 10, []beads.Issue{
+			{ID: "louisville-open-data-expenditure-bot-4jm", Repo: "louisville-open-data-expenditure-bot"},
+		}, false},
 		// Single-repo mode: no Repo column renders at all, so there is
 		// nothing to call redundant.
-		{"undecorated rows", []beads.Issue{{ID: "alpha-1"}, {ID: "alpha-2"}}, false},
-		{"no rows", nil, false},
+		{"undecorated rows", 20, []beads.Issue{{ID: "alpha-1"}, {ID: "alpha-2"}}, false},
+		{"no rows", 20, nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var m Model
+			m := Model{cw: colWidths{id: c.idCol}}
 			if got := m.repoImpliedByID(c.rows); got != c.want {
 				t.Errorf("repoImpliedByID = %v, want %v", got, c.want)
 			}
@@ -121,7 +129,7 @@ func TestRepoImpliedByID(t *testing.T) {
 // information the row shows nowhere else.
 func TestDropOrder_RedundantRepoGoesFirst(t *testing.T) {
 	redundant := []beads.Issue{{ID: "alpha-1", Repo: "alpha"}, {ID: "beta-9", Repo: "beta"}}
-	var m Model
+	m := Model{cw: colWidths{id: 20}} // wide enough to render both IDs whole
 	if got := m.dropOrderFor(redundant); got[0] != colIDRepo {
 		t.Errorf("drop order starts with %q, want %q when Repo duplicates the ID", got[0], colIDRepo)
 	}

@@ -740,3 +740,69 @@ func TestRenderDetailBody_HighlightsSelectedLink(t *testing.T) {
 		t.Errorf("no marker should render when nothing is selected")
 	}
 }
+
+// TestIDCell_StaysUniqueOnANarrowTerminal is the regression guard for
+// roborev #4028: full IDs share a long workspace prefix, so right-
+// eliding the cell rendered EVERY row in a workspace as the same
+// string. truncID elides the middle and keeps the suffix whole.
+func TestIDCell_StaysUniqueOnANarrowTerminal(t *testing.T) {
+	src := &stubSource{issues: []beads.Issue{
+		{ID: "would-you-kindly-2oa", Title: "a", Status: "open"},
+		{ID: "would-you-kindly-1ej", Title: "b", Status: "open"},
+	}}
+	m := applyFetched(New(src), src)
+	// 50 columns: far too narrow for a 20-cell ID plus the rest.
+	m.width = 50
+	m.cw = m.computeColWidths(m.visible)
+	m.autoHidden = m.computeAutoHidden()
+
+	first := truncID(m.displayID(m.all[0]), m.cw.id)
+	second := truncID(m.displayID(m.all[1]), m.cw.id)
+	if first == second {
+		t.Fatalf("both rows render the same ID cell %q — the suffix was truncated away", first)
+	}
+	for i, got := range []string{first, second} {
+		want := []string{"2oa", "1ej"}[i]
+		if !strings.HasSuffix(got, want) {
+			t.Errorf("ID cell %q should end in the discriminating suffix %q", got, want)
+		}
+	}
+	// And the cell still respects its budget.
+	if w := lipgloss.Width(first); w > m.cw.id {
+		t.Errorf("ID cell %q is %d cells, over the %d-cell column", first, w, m.cw.id)
+	}
+}
+
+func TestTruncID(t *testing.T) {
+	// NB: "…" measures TWO cells under ambWide (East-Asian ambiguous),
+	// which is why the head budgets below are one narrower than a
+	// naive count suggests. truncID measures with dispWidth rather
+	// than assuming, so these stay exact.
+	cases := []struct {
+		name  string
+		id    string
+		width int
+		want  string
+	}{
+		{"fits untouched", "would-you-kindly-2oa", 20, "would-you-kindly-2oa"},
+		{"middle-elided keeps the suffix", "would-you-kindly-2oa", 16, "would-you-k…2oa"},
+		{"long workspace still ends in its suffix", "louisville-open-data-expenditure-bot-4jm", 20, "louisville-open…4jm"},
+		// No room for any head: keep the trailing run, which still
+		// differs row to row.
+		{"suffix-only budget", "would-you-kindly-2oa", 4, "…oa"},
+		{"no separator falls back to the tail", "abcdefghij", 5, "…hij"},
+		{"no room for an ellipsis", "would-you-kindly-2oa", 1, "w"},
+		{"zero width", "would-you-kindly-2oa", 0, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := truncID(c.id, c.width)
+			if got != c.want {
+				t.Errorf("truncID(%q, %d) = %q, want %q", c.id, c.width, got, c.want)
+			}
+			if w := lipgloss.Width(got); w > c.width {
+				t.Errorf("truncID(%q, %d) = %q is %d cells — over budget", c.id, c.width, got, w)
+			}
+		})
+	}
+}

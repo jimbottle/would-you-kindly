@@ -4768,7 +4768,7 @@ func (m Model) renderRow(i beads.Issue, selected bool) string {
 			b.WriteString(sep)
 		}
 	}
-	b.WriteString(renderMatchCell(m.displayID(i), m.cw.id, m.query, idC))
+	b.WriteString(renderIDCell(m.displayID(i), m.cw.id, m.query, idC))
 	b.WriteString(sep)
 	if m.colVisible(colIDType) {
 		b.WriteString(typeC.Render(fmt.Sprintf("%-*s", m.cw.typ, abbrevType(i.IssueType))))
@@ -4935,7 +4935,20 @@ func substringRuneIdxs(s, query string) []int {
 // trailing pad) in base. Mirrors the title's fuzzy highlight for the
 // substring-filtered columns. Empty/absent query → plain base cell.
 func renderMatchCell(value string, width int, query string, base lipgloss.Style) string {
-	val := trunc(value, width)
+	return padAndHighlight(trunc(value, width), width, query, base)
+}
+
+// renderIDCell is renderMatchCell for the ID column, which needs
+// middle-eliding (truncID) rather than trunc's right-eliding so a
+// too-narrow column can't render every row in a workspace identically.
+func renderIDCell(value string, width int, query string, base lipgloss.Style) string {
+	return padAndHighlight(truncID(value, width), width, query, base)
+}
+
+// padAndHighlight right-pads an already-fitted cell to width and
+// applies the fuzzy-match highlighting. Shared by the cell renderers so
+// they differ only in HOW they truncate.
+func padAndHighlight(val string, width int, query string, base lipgloss.Style) string {
 	if pad := width - lipgloss.Width(val); pad > 0 {
 		val += strings.Repeat(" ", pad)
 	}
@@ -6008,6 +6021,45 @@ func trunc(s string, n int) string {
 	return fitCells(s, n-ew) + ell
 }
 
+// truncID fits a bd issue ID into width cells while preserving the half
+// that tells two rows apart.
+//
+// IDs are `<workspace>-<suffix>` and plain trunc ellipsizes from the
+// RIGHT — it keeps the workspace name every row in that repo shares and
+// drops the suffix. On a terminal too narrow for the full ID, every row
+// would then render the identical `would-you-kind…`, which is worse
+// than the prefix-trimmed `2oa`/`1ej` this column used to show
+// (roborev #4028). So elide the MIDDLE instead: the suffix is kept
+// whole and whatever budget remains goes to the leading workspace name,
+// giving `would-you-ki…2oa` — unique per row and still recognisable.
+func truncID(id string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if dispWidth(id) <= width {
+		return id
+	}
+	const ell = "…"
+	ew := dispWidth(ell)
+	if width <= ew {
+		return fitCells(id, width)
+	}
+	// Everything after the last `-` is the discriminating suffix.
+	// An ID with no `-` (or a trailing one) has no split point, so the
+	// whole string is treated as the part worth keeping and falls
+	// through to the trailing-run branch below.
+	suffix := ""
+	if idx := strings.LastIndex(id, "-"); idx >= 0 && idx+1 < len(id) {
+		suffix = id[idx+1:]
+	}
+	if head := width - ew - dispWidth(suffix); suffix != "" && head >= 1 {
+		return fitCells(id, head) + ell + suffix
+	}
+	// The suffix alone doesn't leave room for any workspace name: keep
+	// the trailing run, which still differs row to row.
+	return ell + fitTrailingCells(id, width-ew)
+}
+
 // fitCells returns the longest leading run of s whose display width
 // (dispWidth) is <= budget, never splitting a rune. budget <= 0 -> "".
 func fitCells(s string, budget int) string {
@@ -6025,4 +6077,24 @@ func fitCells(s string, budget int) string {
 		used += w
 	}
 	return b.String()
+}
+
+// fitTrailingCells is fitCells from the other end: the longest TRAILING
+// run of s whose display width is <= budget, never splitting a rune.
+// Used by truncID, where the tail is the part worth keeping.
+func fitTrailingCells(s string, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	used, i := 0, len(r)
+	for i > 0 {
+		w := dispWidth(string(r[i-1]))
+		if used+w > budget {
+			break
+		}
+		used += w
+		i--
+	}
+	return string(r[i:])
 }
