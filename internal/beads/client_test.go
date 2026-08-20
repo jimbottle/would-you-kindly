@@ -59,17 +59,19 @@ func TestBulkReads_DisableBDResultLimit(t *testing.T) {
 			[]string{"list", "--all", "--limit=0", "--json"}},
 	}
 	for _, tc := range cases {
-		r := &fakeRunner{stdout: []byte("[]")}
-		c := newTestClient(r)
-		if err := tc.call(c); err != nil {
-			t.Fatalf("%s: %v", tc.name, err)
-		}
-		if len(r.calls) != 1 {
-			t.Fatalf("%s: want 1 bd call, got %d", tc.name, len(r.calls))
-		}
-		if got := strings.Join(r.calls[0].args, " "); got != strings.Join(tc.want, " ") {
-			t.Errorf("%s argv = %q, want %q", tc.name, got, strings.Join(tc.want, " "))
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeRunner{stdout: []byte("[]")}
+			c := newTestClient(r)
+			if err := tc.call(c); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if len(r.calls) != 1 {
+				t.Fatalf("want 1 bd call, got %d", len(r.calls))
+			}
+			if got := strings.Join(r.calls[0].args, " "); got != strings.Join(tc.want, " ") {
+				t.Errorf("argv = %q, want %q", got, strings.Join(tc.want, " "))
+			}
+		})
 	}
 }
 

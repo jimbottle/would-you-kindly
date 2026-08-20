@@ -13,7 +13,13 @@ import (
 // form (conventionsStructured) interpolate the SAME string —
 // previously the two forms duplicated the literal query text and
 // could silently drift.
-const agentInboxQuery = "label=src:agent AND NOT label=human AND NOT label=agent-handoff AND status!=closed AND status!=blocked AND status!=deferred AND status!=hooked"
+// agentInboxQuery is defined in terms of inboxQuery (cmd/wyk/inbox.go)
+// rather than as a second hand-maintained literal: what `wyk
+// conventions` / `wyk doctor` TEACH must be the string `wyk inbox`
+// RUNS, by construction — the two literals drifted apart was exactly
+// the failure mode a "kept in lockstep" comment couldn't prevent
+// (roborev #3984).
+const agentInboxQuery = inboxQuery
 const humanTasksQuery = "label=human AND status!=closed"
 
 // conventionsBody is the agent-ready tip printed by `wyk conventions`.

@@ -107,14 +107,24 @@ func TestComputeStats_BasicAggregations(t *testing.T) {
 		// inboxQuery's status!=blocked exclusion.
 		{ID: "x-2", Status: "blocked", Labels: []string{"src:agent"},
 			CreatedAt: now.Add(-1 * day)},
+		// NOT inbox: deliberately on ice — mirrors inboxQuery's
+		// status!=deferred exclusion (v3 amendment for bd 1.0.4,
+		// would-you-kindly-hxd8).
+		{ID: "x-3", Status: "deferred", Labels: []string{"src:agent"},
+			CreatedAt: now.Add(-1 * day)},
+		// NOT inbox: attached to another agent's hook — mirrors
+		// inboxQuery's status!=hooked exclusion (same amendment).
+		{ID: "x-4", Status: "hooked", Labels: []string{"src:agent"},
+			CreatedAt: now.Add(-1 * day)},
 	}
 
 	s := computeStats(all, now)
 
-	if s.TotalIssues != 9 {
-		t.Errorf("TotalIssues = %d, want 9", s.TotalIssues)
+	if s.TotalIssues != 11 {
+		t.Errorf("TotalIssues = %d, want 11", s.TotalIssues)
 	}
-	if s.ByStatus["open"] != 4 || s.ByStatus["closed"] != 3 || s.ByStatus["in_progress"] != 1 || s.ByStatus["blocked"] != 1 {
+	if s.ByStatus["open"] != 4 || s.ByStatus["closed"] != 3 || s.ByStatus["in_progress"] != 1 || s.ByStatus["blocked"] != 1 ||
+		s.ByStatus["deferred"] != 1 || s.ByStatus["hooked"] != 1 {
 		t.Errorf("ByStatus mismatch: %+v", s.ByStatus)
 	}
 	if s.HumanFlagged != 2 {
@@ -124,7 +134,7 @@ func TestComputeStats_BasicAggregations(t *testing.T) {
 		t.Errorf("HumanFromAgent=%d HumanFromHuman=%d; want 1/1", s.HumanFromAgent, s.HumanFromHuman)
 	}
 	if s.InboxCount != 1 {
-		t.Errorf("InboxCount = %d, want 1 (a-3 only — x-1 is agent-handoff-fenced, x-2 is blocked)", s.InboxCount)
+		t.Errorf("InboxCount = %d, want 1 (a-3 only — x-1 is agent-handoff-fenced, x-2 is blocked, x-3 is deferred, x-4 is hooked)", s.InboxCount)
 	}
 	if s.ClosedLast7d != 2 {
 		t.Errorf("ClosedLast7d = %d, want 2", s.ClosedLast7d)

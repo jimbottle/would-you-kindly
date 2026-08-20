@@ -30,8 +30,9 @@ const inboxExclusions = ` AND NOT label=human AND NOT label=agent-handoff AND st
 // removes `human` to say "back to you", and the agent picks the issue
 // up from this inbox. `agent-handoff` rows are excluded: another agent
 // owns them and a human orchestrates, so the "work it" imperative must
-// not fire here. Kept in lockstep with cmd/wyk.agentInboxQuery. See
-// docs/CONTRACT.md.
+// not fire here. This is the single definition — conventions.go's
+// agentInboxQuery aliases it, so the taught query can't drift from the
+// executed one. See docs/CONTRACT.md.
 const inboxQuery = `label=src:agent` + inboxExclusions
 
 // inboxQueryFor builds the agent-inbox query for an optional identity.
