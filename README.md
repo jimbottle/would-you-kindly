@@ -17,6 +17,36 @@ The name is the point: *"would you kindly"* is a polite imperative — the
 agent asking the human to please do the part it can't. `wyk` is the binary;
 `bd` (beads) is the tracker underneath.
 
+![wyk handoff round-trip](docs/screenshots/wyk-demo.gif)
+
+## This repo is the demo
+
+wyk is built the way it asks you to work: agents file, claim and close
+its own bd issues, and hand the human-only steps back through the same
+`human` label the TUI keys off. The evidence is in the history, not the
+pitch:
+
+- **More than half of the 440+ commits** carry a `Closes: <bd-id>`
+  trailer — the post-commit hook `wyk init` installs auto-closed the
+  issue behind each one. `git log --grep '^Closes:'` shows the loop
+  running on itself.
+- **330+ issues** have gone through the tracker, all but a handful
+  closed. Human-flagged issues close in a median of ~12 hours;
+  agent-filed ones carry `src:agent` and the Claude session that filed
+  them (`wyk stats` reports both).
+- The agent side lives in the repo: [`CLAUDE.md`](CLAUDE.md) (the
+  conventions agents follow here, including *why* each one exists),
+  [`AGENTS.md`](AGENTS.md), the hooks in
+  [`.claude/settings.json`](.claude/settings.json), the shipped
+  [skills](docs/SKILLS.md), and the label contract in
+  [`docs/CONTRACT.md`](docs/CONTRACT.md).
+- The review side is [roborev](https://www.roborev.io): every commit is
+  reviewed by an agent, findings land as bd issues, and the TUI's
+  `review` preset is where a human triages them.
+
+[`docs/WORKFLOW.md`](docs/WORKFLOW.md) walks the whole loop end to end
+with real issue IDs from this repo.
+
 ## Why
 
 Most issue trackers assume tasks are either assigned to a person or
@@ -339,17 +369,9 @@ blocks while already continuing from a Stop hook, so it can't loop).
 It fails open: any bd hiccup just allows the stop. Dedup state lives in
 `$XDG_STATE_HOME/wyk/agent-nudge/<session>.json`.
 
-#### Claude Code skill
+#### Claude Code skills
 
-A project-local Claude Code skill at
-[`.claude/skills/handoff/SKILL.md`](.claude/skills/handoff/SKILL.md)
-tells any Claude session that opens this repo *when* `handoff` is the
-right call and *how* to write a runbook the human can act on. The
-skill is explicit about what handoff is NOT (clarifying questions,
-tedious-but-doable work, quick reversible edits) — handoff is for
-"I know what to do but genuinely cannot do it."
-
-Beyond that one repo-local skill, `wyk` ships an installable family of
+`wyk` ships an installable family of
 agent skills (`wyk`, `wyk-handoff`, `wyk-project-review`) embedded in the
 binary — install them into `~/.claude/skills` with `wyk skills install`
 so any Claude session loads them on demand. See
@@ -448,13 +470,16 @@ to restore the original.
 | `j` / `k` | Move down / up                                    |
 | `g` / `G` | Top / bottom of the list                          |
 | `]` / `[` | Next / previous human-flagged issue (wraps)       |
-| `enter`   | Open the selected issue (read its instructions)   |
+| `enter`   | Open the selected issue (read its instructions); in the split layout, focus the detail pane |
 | `esc`     | Back to the list                                  |
+| `p`       | Show / hide the detail pane (auto-on at 140×36+; persisted) |
 | `/`       | Open the filter input (fuzzy title; substring on repo, branch, ID, body) |
 | `@name`   | Expand a saved fuzzy filter (manage via `:filter`)|
 | `h`       | Toggle the human-flagged view (press again to return)   |
 | `tab`     | Cycle preset filters (all → ready → human → mine → blocked → review) |
 | `C`       | Toggle "show closed" across all presets           |
+| `1`–`4` / `0` | Cap the view at P0 / ≤P1 / ≤P2 / ≤P3; `0` clears the cap |
+| `m`       | Toggle mouse capture (off = native click-drag text selection) |
 | `s` / `S` | Cycle sort key / reverse the active direction     |
 | `o`       | Column-visibility overlay (persists to `ui.json`) |
 | `r`       | Refresh from bd now                               |
@@ -500,7 +525,17 @@ appears a beat after the rest of the detail view. In the detail
 view, `c` copies the instructions (the description body) to the
 clipboard.
 
-The list also refreshes itself every 10 seconds. On platforms with
+On a terminal of at least 140×36 the detail is a **pane** next to the
+list instead of a separate screen (the layout roborev's TUI uses): it
+follows the cursor as you move — the row paints immediately, the
+notes and dependency edges arrive after a short debounce so holding
+`j` doesn't fan out a `bd show` per row. `enter` focuses the pane (all
+the detail keys work there), `esc` returns to the list, and `p` hides
+or shows the pane; the choice persists in `state.json`. While the list
+has focus the wheel scrolls whichever pane the pointer is over;
+focusing the pane releases mouse capture so you can select text.
+
+The list also refreshes itself every 20 seconds. On platforms with
 fsnotify support, external `bd` writes (a `git pull`, another `wyk`
 instance, the post-commit hook auto-closing) trigger an immediate
 refresh instead of waiting for the next tick.
@@ -533,6 +568,10 @@ wyk import   [-file path] [-dry-run] [-repo name]                        # resto
 wyk dashboard [-json] [-days N] [-repo name]                             # per-repo rollup
 wyk depgraph [-repo name] [-json]                                        # dependency tree
 wyk skills   <list|install|uninstall|print>                             # agent skills for Claude Code
+wyk config   <get|set|list> [key] [value]                                # ~/.config/wyk/config.json
+wyk bugreport [-json]                                                    # redacted environment dump for a bug report
+wyk conventions [-json]                                                  # the label contract, agent-readable
+wyk hook     <post-commit|agent-nudge|bd-create-guard|install-nudge>     # git / Claude Code hook entry points
 wyk update   [-y] [-channel any|stable] [-dry-run]                       # self-update via go install
 wyk completion <bash|zsh|fish>                                           # shell completion
 wyk help [--markdown]                                                    # keymap reference
@@ -572,10 +611,15 @@ The agent moves on to other work. The bd issue now carries `human`,
 open). Press `h` to jump to the human view:
 
 ```
-Owner   Repo               Branch  ID     Type  Status  Priority  Updated  Title
-HUMAN   would-you-kindly   main    2oa    task  open    P1        3h ago   Rotate the staging DB password
-HUMAN   acme-pipeline      feat/x  mc-42  bug   open    P0        1h ago   Latest broken
+Owner   Repo               Branch  ID                     Type  Status  Priority  Updated  Session   Title
+HUMAN   would-you-kindly   main    would-you-kindly-2oa   task  open    P1        3h ago   5a5b8a48  Rotate the staging DB password
+HUMAN   acme-pipeline      feat/x  acme-pipeline-mc42     bug   open    P0        1h ago             Latest broken
 ```
+
+On a terminal of 140×36 or larger the list takes the left pane and the
+selected issue's runbook renders in a right pane that follows the
+cursor (`p` hides it) — so reading a handoff is a `j`, not a `⏎`/`esc`
+round-trip.
 
 (The `HUMAN` badge is rendered plain regardless of who filed the issue —
 `src:agent` vs `src:human` is still in the row's labels, but the badge
@@ -601,7 +645,7 @@ narrow terminal the lower-value ones auto-hide to keep rows intact.
 
 Press `enter` to read the runbook, `a` to close when done, or `H` to
 bounce it back to the agent if the next step is theirs again. The
-list refreshes every 10 seconds and across every repo you've
+list refreshes every 20 seconds and across every repo you've
 registered with `wyk init`.
 
 **Next morning, in your editor.** Your agent starts a session and
@@ -626,20 +670,21 @@ window into it; `wyk handoff` and `wyk inbox` are the agent's.
 
 ## Screenshots
 
-![wyk handoff round-trip](docs/screenshots/wyk-demo.gif)
+The GIF at the top of this page is the agent↔human round-trip: an
+agent files a runbook with `wyk handoff`, the human jumps to the
+**human view** (`h`), reads the runbook in the detail pane, and closes
+it (`a`) — the queue clears. Regenerate it (and the still below) with
+`bash docs/screenshots/render-demo.sh`; the script seeds a throwaway bd
+workspace and isolates every wyk config/cache dir so nothing private
+can leak into the capture.
 
-The agent↔human round-trip: an agent files a runbook with `wyk handoff`,
-the human jumps to the **human view** (`h`), reads the runbook (`enter`),
-and closes it (`a`) — the queue clears. Regenerate the cast with
-`bash docs/screenshots/render-demo.sh`.
+![wyk split layout](docs/screenshots/wyk-tui.png)
 
-![wyk multi-repo view](docs/screenshots/wyk-tui.png)
-
-The default `all` preset across registered repos. The **Owner** column
+The default `all` preset in the split layout. The **Owner** column
 carries the "whose move is it" badge — `HUMAN` for handed-off work,
 `AGENT` for issues the agent filed, `HUMAN-BLOCK` for agent issues
-blocked on a human — next to the Repo / Branch / Status columns and the
-`[all] · N human · M mine` status bar.
+blocked on a human — and the right pane is the selected issue's
+runbook, following the cursor.
 
 ## Status
 
@@ -647,12 +692,10 @@ blocked on a human — next to the Repo / Branch / Status columns and the
 [CHANGELOG](CHANGELOG.md) and the
 [GitHub releases](https://github.com/jimbottle/would-you-kindly/releases)
 for what's shipped and when. It's a CLI-driven toolkit around the
-human-in-the-loop handoff contract: the multi-repo TUI plus subcommands
-(`init`, `create`, `handoff`, `inbox`, `stats`, `dashboard`, `doctor`,
-`registry`, `export`, `import`, `activity`, `depgraph`, `skills`,
-`update`), agent
-skills installable into Claude Code, a `theme.json` color overlay with
-light/dark adaptation, and `NO_COLOR` support.
+human-in-the-loop handoff contract: the multi-repo TUI plus the
+subcommands listed in [`docs/generated/cli.md`](docs/generated/cli.md),
+agent skills installable into Claude Code, a `theme.json` color overlay
+with light/dark adaptation, and `NO_COLOR` support.
 
 ### Platforms
 

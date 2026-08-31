@@ -12,6 +12,11 @@
 /dist/
 
 
+# Claude Code per-machine overrides and roborev's local state — both
+# are machine-local; the shared config is .claude/settings.json.
+.claude/settings.local.json
+/.roborev/
+
 # macOS
 .DS_Store
 

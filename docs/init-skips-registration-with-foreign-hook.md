@@ -1,5 +1,12 @@
 # wyk bug: `init` aborts before registering when a foreign post-commit hook exists
 
+> **Resolved.** `wyk init` now registers the repo *before* touching hooks
+> and never gates registration on the hook outcome (see "Registration is
+> never gated on the hook" in the README), and `wyk init
+> -fix-foreign-hooks` chains wyk after every foreign hook across the
+> registry. This file is kept as the write-up of how the bug presented
+> and why the ordering is load-bearing.
+
 **Severity:** high — the visible symptom is *"handoffs to the human never appear in the UI"*, not
 *"a repo is missing from a list"*.
 

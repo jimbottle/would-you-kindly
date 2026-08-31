@@ -36,7 +36,17 @@ go build -o ./bin/wyk ./cmd/wyk
 
 ## Tests
 
-Run the full suite before submitting:
+The one command that matters:
+
+```bash
+make check
+```
+
+It mirrors the `test` CI workflow exactly — gofmt, the generated-docs
+drift check, `go vet`, golangci-lint at CI's pinned version, build, and
+`go test -race` — plus the plugin-skills drift guard. A green
+`make check` is a green push. The individual pieces, when you want one
+à la carte:
 
 ```bash
 go test -race -timeout 5m ./...
@@ -113,10 +123,13 @@ human-filed ones don't need a source label.
 ## Before you submit a PR
 
 ```bash
-gofmt -l .                         # must be empty
-golangci-lint run ./...            # must report 0 issues
-go test -race -timeout 5m ./...    # must pass
+make check                         # the whole CI gate, locally
 ```
+
+If you'd rather see the pieces: `gofmt -l .` must be empty,
+`golangci-lint run ./...` must report 0 issues, `go test -race -timeout
+5m ./...` must pass, and `make docs-check` must find `docs/generated/`
+current (run `make docs-snapshot` after touching a flag or keybinding).
 
 If you added a TUI keybinding, also confirm:
 

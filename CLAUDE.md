@@ -67,10 +67,10 @@ mimic that pattern (e.g. `beads.Client`'s `runner`, `runScanAndRegister`'s
 ## Architecture Overview
 
 - **`cmd/wyk`** — the CLI binary and subcommand dispatchers. Each
-  subcommand (`init`, `handoff`, `hook`, `inbox`, `stats`, `doctor`,
-  `registry`, `version`) owns its own `flag.FlagSet`; `main.go` switches
-  on `os.Args[1]` before parsing top-level flags. The TUI starts when no
-  subcommand matches.
+  subcommand (the `subcommandHandlers` map in `main.go` is the list;
+  `docs/generated/cli.md` is the reference) owns its own
+  `flag.FlagSet`; `main.go` switches on `os.Args[1]` before parsing
+  top-level flags. The TUI starts when no subcommand matches.
 - **`internal/beads`** — typed wrapper over the `bd` CLI. `Client` shells
   out via a swappable runner; methods (`Query`, `List`, `Ready`, `Show`,
   `Create`, `Close`, `AddLabel`, `RemoveLabel`, `Note`, `UpdateDescription`)
@@ -78,13 +78,17 @@ mimic that pattern (e.g. `beads.Client`'s `runner`, `runScanAndRegister`'s
 - **`internal/tui`** — the Bubble Tea Model + the `Source` / `Mutator` /
   `Detailer` / `MultiSource` interfaces it consumes. `BDSource` wraps one
   workspace; `MultiBDSource` parallel-fetches across many and unions the
-  result. Per-sub errors travel atomically on `fetchedMsg`.
+  result. Per-sub errors travel atomically on `fetchedMsg`. `split.go`
+  is the roborev-style list + detail-pane layout (auto at 140×36, `p`
+  toggles); it reuses the stacked view's chrome builders, so a new
+  banner or prompt only needs adding in `viewList`/`chromeExtra` once.
 - **`internal/registry`** — JSON-backed registry of bd workspaces at
   `~/.config/wyk/repos.json` (XDG-aware). `Load` / `Save` / `Add` /
   `Remove` / `RemoveByName` / `Has`. Save writes atomically via
   temp-file + rename.
 - **`internal/filter`** — preset → bd-query mapping (`all`, `ready`,
-  `human`, `mine`, `blocked`) plus the keymap's preset-cycle order.
+  `human`, `mine`, `blocked`, `review`) plus the keymap's preset-cycle
+  order.
 - **`pkg/handoff`** — the `BounceToHuman` helper that filed bd issues use
   to transition agent → human (adds `human` label, replaces description
   with the runbook). External programs can call this directly.

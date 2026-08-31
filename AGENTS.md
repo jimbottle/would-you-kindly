@@ -1,51 +1,34 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+This project is **wyk** (`would-you-kindly`): a TUI over the `bd` (beads)
+issue tracker, built around one convention — a task is a human's when it
+carries the `human` label, and its description is the runbook the human
+follows. wyk is developed with the same loop it implements, so everything
+you do here is tracked in bd and handed off with `wyk handoff`.
 
-> **Architecture in one line:** Issues live in a local Dolt database
-> (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
-> git-compatible protocol), stored under `refs/dolt/data` on your git
-> remote — separate from `refs/heads/*` where your code lives.
-> `.beads/issues.jsonl` is a passive export, not the wire protocol.
->
-> See [SYNC_CONCEPTS.md](https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md)
-> for the one-screen overview and anti-patterns (don't treat JSONL as the
-> source of truth; don't `bd import` during normal operation; don't
-> reach for third-party Dolt hosting before trying the default).
+Start here, in order:
 
-## Quick Reference
+1. **[`CLAUDE.md`](CLAUDE.md)** — the project's working conventions for
+   agents: the Owner column contract, `make check` before pushing, the
+   commit/`Closes:` trailer format, the status lifecycle, and the rule
+   that friction you hit in wyk is wyk product feedback. It is written
+   for Claude Code but every rule applies to any agent.
+2. **`wyk conventions`** — the label contract, the agent-inbox query,
+   and a filing example, straight from the binary (also
+   [`docs/CONTRACT.md`](docs/CONTRACT.md)).
+3. **`wyk inbox`** — tasks a human has bounced back to you. Work them.
+4. **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)** — the end-to-end
+   agent ↔ human ↔ review loop this repo runs on, with real issue IDs.
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
-```
+Two rules that are easy to miss:
 
-## Non-Interactive Shell Commands
+- File work with `wyk create …` (not bare `bd create`) so it carries
+  `src:agent` and the session stamp; every issue needs an assignee.
+- A task that needs a human **must** be handed off (`wyk handoff <id>`
+  or `wyk handoff -create "…"`) — a task without the `human` label
+  defaults to the agent and the human never sees it.
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
-
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
-
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
-
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+The block below is bd's standard integration boilerplate.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker
