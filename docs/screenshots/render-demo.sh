@@ -20,13 +20,19 @@ cd "$REPO_ROOT"
 # tape and wyk-demo-seed.sh too.
 DEMO_DIR=/tmp/wyk-demo
 DEMO_CFG=/tmp/wyk-demo-cfg
+# The cache (XDG_CACHE_HOME) and state (XDG_STATE_HOME) dirs are isolated
+# too: wyk warm-starts from ~/.cache/wyk/last-fetch.json, and a demo that
+# only redirected the registry once painted the real, private backlog
+# into the README screenshot (would-you-kindly-mup1).
+DEMO_CACHE=/tmp/wyk-demo-cache
+DEMO_STATE=/tmp/wyk-demo-state
 
 command -v wyk >/dev/null || { echo "render-demo: 'wyk' not on PATH (go install ./cmd/wyk)"; exit 1; }
 command -v vhs >/dev/null || { echo "render-demo: 'vhs' not on PATH (brew install vhs)"; exit 1; }
 
 # Cleanup division of labour: we own the isolated config dir; the seed script
 # owns its DEMO_DIR teardown (it `rm -rf`s the target before rebuilding).
-rm -rf "$DEMO_CFG"
+rm -rf "$DEMO_CFG" "$DEMO_CACHE" "$DEMO_STATE"
 XDG_CONFIG_HOME="$DEMO_CFG" bash docs/screenshots/wyk-demo-seed.sh "$DEMO_DIR"
 
 vhs docs/screenshots/wyk-demo.tape

@@ -384,6 +384,24 @@ func (c *Client) Close(ctx context.Context, id string) error {
 	return err
 }
 
+// CloseMany closes every id in ONE `bd close id1 id2 …` invocation.
+// bd accepts a list, and each subprocess pays Dolt's per-call latency,
+// so the TUI's bulk close (mark N rows, a, y) went from N round-trips
+// to one per workspace (would-you-kindly-cexj). A nil ids is a no-op;
+// an error means the batch as a whole failed — bd reports per-ID
+// problems on stderr, which the wrapped error carries.
+func (c *Client) CloseMany(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]string, 0, len(ids)+2)
+	args = append(args, "close")
+	args = append(args, ids...)
+	args = append(args, autoCommitFlag)
+	_, err := c.run(ctx, nil, args...)
+	return err
+}
+
 // Reopen sets a closed issue back to status=open via `bd reopen`,
 // which clears closed_at and emits a Reopened event. Used by the
 // TUI's `u` undo-last-close key — preferred over `update --status

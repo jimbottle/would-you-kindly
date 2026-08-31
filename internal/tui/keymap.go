@@ -187,6 +187,14 @@ type keyMap struct {
 	// model snapshots (action, arg) at each successful dispatch
 	// site so `.` can re-fire without re-prompting.
 	Repeat key.Binding // . — repeat last write
+
+	// Split layout (split.go): Layout toggles the detail pane; the
+	// Pane* bindings are help-only entries for keys updateDetail already
+	// handles, so the status-bar grid can describe the focused pane.
+	Layout     key.Binding // p — show/hide the detail pane
+	PaneScroll key.Binding // j/k — scroll the pane body
+	PaneLink   key.Binding // tab — cycle dependency links in the pane
+	PaneCopy   key.Binding // c — copy the runbook from the pane
 }
 
 func defaultKeyMap() keyMap {
@@ -240,6 +248,10 @@ func defaultKeyMap() keyMap {
 		Label:           key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "label")),
 		Editor:          key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Repeat:          key.NewBinding(key.WithKeys("."), key.WithHelp(".", "repeat last")),
+		Layout:          key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "±pane")),
+		PaneScroll:      key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "scroll")),
+		PaneLink:        key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "link")),
+		PaneCopy:        key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy runbook")),
 	}
 }
 
@@ -252,7 +264,7 @@ func defaultKeyMap() keyMap {
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
 		k.Down, k.Open, k.Filter, k.Human, k.Cycle, k.Refresh,
-		k.Close, k.ToggleHuman, k.AddNote, k.Undo, k.Help, k.Quit,
+		k.Close, k.ToggleHuman, k.AddNote, k.Undo, k.Layout, k.Help, k.Quit,
 	}
 }
 
@@ -263,7 +275,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) shortHelpReadOnly() []key.Binding {
 	return []key.Binding{
 		k.Down, k.Open, k.Filter, k.Human, k.Cycle, k.Refresh,
-		k.Help, k.Quit,
+		k.Layout, k.Help, k.Quit,
 	}
 }
 
@@ -283,8 +295,11 @@ func DocsKeymap() []HelpGroup {
 	k := defaultKeyMap()
 	return []HelpGroup{
 		{"Navigation", []key.Binding{
-			k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back,
+			k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.Layout,
 			k.JumpPrevHuman, k.JumpNextHuman,
+		}},
+		{"Detail pane / view", []key.Binding{
+			k.PaneScroll, k.PaneLink, k.PaneCopy,
 		}},
 		{"Filters & sort", []key.Binding{
 			k.Filter, k.Human, k.Cycle, k.SortCycle, k.SortReverse,
@@ -336,7 +351,7 @@ func KeymapMarkdown() string {
 // automatically.
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.JumpPrevHuman, k.JumpNextHuman},
+		{k.Up, k.Down, k.Top, k.Bottom, k.Open, k.Back, k.Layout, k.JumpPrevHuman, k.JumpNextHuman},
 		{k.Filter, k.Human, k.Cycle, k.FilterP0, k.FilterP1, k.FilterP2, k.FilterP3, k.FilterPAll, k.SortCycle, k.SortReverse, k.ShowClosed, k.Columns},
 		{k.Close, k.ToggleHuman, k.AddNote, k.QuickAdd, k.Yank, k.YankRich, k.YankAll, k.YankMarkdown, k.YankAllMarkdown, k.Undo, k.Defer, k.Mark, k.PriorityUp, k.PriorityDown, k.TypeCycle, k.AssignOwner, k.Label, k.Editor, k.Repeat},
 		{k.Refresh, k.Mouse, k.Help, k.Quit, k.Command},

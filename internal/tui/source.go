@@ -418,6 +418,25 @@ func (s *BDSource) Close(ctx context.Context, i beads.Issue) error {
 	return s.Client.Close(ctx, i.ID)
 }
 
+// CloseMany closes the issues in one bd call (BulkCloser). A batch
+// error is attributed to every issue in it — bd doesn't tell us which
+// ID it choked on in a way worth parsing, and the user's recovery is
+// the same either way (the rows keep their marks; retry).
+func (s *BDSource) CloseMany(ctx context.Context, issues []beads.Issue) []BulkFailure {
+	ids := make([]string, len(issues))
+	for i, iss := range issues {
+		ids[i] = iss.ID
+	}
+	if err := s.Client.CloseMany(ctx, ids); err != nil {
+		out := make([]BulkFailure, len(issues))
+		for i, iss := range issues {
+			out[i] = BulkFailure{Issue: iss, Err: err}
+		}
+		return out
+	}
+	return nil
+}
+
 func (s *BDSource) Reopen(ctx context.Context, i beads.Issue) error {
 	return s.Client.Reopen(ctx, i.ID)
 }
@@ -1083,6 +1102,43 @@ func (m *MultiBDSource) Close(ctx context.Context, i beads.Issue) error {
 		return err
 	}
 	return sub.Close(ctx, i)
+}
+
+// CloseMany groups the issues by workspace and closes each group in
+// one call when the sub supports it (BDSource does), falling back to
+// per-issue Close otherwise. Groups run sequentially — a triage
+// selection rarely spans more than a couple of repos, and keeping the
+// subprocess count flat matches the single-close path.
+func (m *MultiBDSource) CloseMany(ctx context.Context, issues []beads.Issue) []BulkFailure {
+	var order []string
+	groups := map[string][]beads.Issue{}
+	for _, i := range issues {
+		if _, seen := groups[i.Repo]; !seen {
+			order = append(order, i.Repo)
+		}
+		groups[i.Repo] = append(groups[i.Repo], i)
+	}
+	var failed []BulkFailure
+	for _, repo := range order {
+		group := groups[repo]
+		sub, err := m.repoForIssue(group[0])
+		if err != nil {
+			for _, i := range group {
+				failed = append(failed, BulkFailure{Issue: i, Err: err})
+			}
+			continue
+		}
+		if bc, ok := sub.(BulkCloser); ok {
+			failed = append(failed, bc.CloseMany(ctx, group)...)
+			continue
+		}
+		for _, i := range group {
+			if err := sub.Close(ctx, i); err != nil {
+				failed = append(failed, BulkFailure{Issue: i, Err: err})
+			}
+		}
+	}
+	return failed
 }
 
 func (m *MultiBDSource) Reopen(ctx context.Context, i beads.Issue) error {

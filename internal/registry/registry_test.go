@@ -229,3 +229,34 @@ func TestRepoForDir_MissTreatedGracefully(t *testing.T) {
 		t.Fatal("RepoForDir should miss for an unrelated dir")
 	}
 }
+
+func TestHasAndAdd_MatchHandEditedSymlinkedEntry(t *testing.T) {
+	// would-you-kindly-9vlt: a hand-written repos.json entry that names
+	// the workspace through a symlink must count as registered, or the
+	// auto-register path adds the same workspace a second time.
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unsupported here: %v", err)
+	}
+	r := &Registry{Version: 1, Repos: []Repo{{Name: "demo", Path: link}}}
+	if !r.Has(real) {
+		t.Fatal("Has(real path) should match the symlinked stored entry")
+	}
+	if !r.Has(link) {
+		t.Fatal("Has(symlink path) should match too")
+	}
+	if err := r.Add(real); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Repos) != 1 {
+		t.Fatalf("Add(real) must not duplicate the symlinked entry; got %d entries", len(r.Repos))
+	}
+	if removed, _ := r.Remove(real); !removed || len(r.Repos) != 0 {
+		t.Fatalf("Remove(real) should drop the symlinked entry; removed=%v left=%d", removed, len(r.Repos))
+	}
+}

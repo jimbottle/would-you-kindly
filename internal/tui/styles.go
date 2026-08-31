@@ -118,6 +118,12 @@ var (
 	detailLabelStyle = lipgloss.NewStyle().
 				Foreground(cDim)
 
+	// paneTitleStyle is detailHeaderStyle without the trailing margin —
+	// the split pane packs its header tight (split.go).
+	paneTitleStyle = lipgloss.NewStyle().
+			Foreground(cAccent).
+			Bold(true)
+
 	helpStyle = lipgloss.NewStyle().
 			Foreground(cDim)
 
@@ -256,6 +262,7 @@ func ApplyTheme(t theme.Theme) {
 	}
 	if t.DetailHeader != "" {
 		detailHeaderStyle = detailHeaderStyle.Foreground(lipgloss.Color(t.DetailHeader))
+		paneTitleStyle = paneTitleStyle.Foreground(lipgloss.Color(t.DetailHeader))
 	}
 	if t.DetailLabel != "" {
 		detailLabelStyle = detailLabelStyle.Foreground(lipgloss.Color(t.DetailLabel))

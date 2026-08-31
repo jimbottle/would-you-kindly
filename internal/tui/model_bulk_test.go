@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -513,5 +515,92 @@ func TestBulkWrite_NonStatusActionLeavesCache(t *testing.T) {
 	m = model.(Model)
 	if m.depCache["a-1"][0].Status != "open" {
 		t.Errorf("a non-status bulk action must leave cached status alone; got %q", m.depCache["a-1"][0].Status)
+	}
+}
+
+// stubBulkMutator is a stubMutator that also implements BulkCloser,
+// recording each CloseMany batch. failIDs makes those IDs report a
+// failure so the partial-failure banner / mark-restore path runs.
+type stubBulkMutator struct {
+	stubMutator
+	batches [][]string
+	failIDs map[string]bool
+}
+
+func (s *stubBulkMutator) CloseMany(_ context.Context, issues []beads.Issue) []BulkFailure {
+	var ids []string
+	var failed []BulkFailure
+	for _, i := range issues {
+		ids = append(ids, i.ID)
+		if s.failIDs[i.ID] {
+			failed = append(failed, BulkFailure{Issue: i, Err: errors.New("boom")})
+		} else {
+			s.closed = append(s.closed, i.ID)
+		}
+	}
+	s.batches = append(s.batches, ids)
+	return failed
+}
+
+func TestBulkClose_UsesOneBatchWhenMutatorIsABulkCloser(t *testing.T) {
+	// would-you-kindly-cexj: closing N marked rows must be one
+	// CloseMany call, not N Close calls.
+	s := &stubBulkMutator{stubMutator: stubMutator{stubSource: stubSource{issues: sampleIssues()}}}
+	m := applyMutatorFetched(New(s), &s.stubMutator)
+	m.src = s
+	for _, k := range []rune{'v', 'j', 'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	if len(m.marked) != 3 {
+		t.Fatalf("setup: expected 3 marks; got %d", len(m.marked))
+	}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("y should dispatch the bulk close")
+	}
+	msg := cmd().(bulkWriteMsg)
+	if len(s.batches) != 1 || len(s.batches[0]) != 3 {
+		t.Fatalf("expected one CloseMany batch of 3; got %v", s.batches)
+	}
+	if msg.total != 3 || len(msg.succeeded) != 3 || len(msg.failed) != 0 {
+		t.Errorf("bulkWriteMsg total=%d ok=%d failed=%d", msg.total, len(msg.succeeded), len(msg.failed))
+	}
+	model, _ = m.Update(msg)
+	m = model.(Model)
+	if !strings.Contains(m.status, "closed 3") {
+		t.Errorf("banner should report 3 closed; got %q", m.status)
+	}
+}
+
+func TestBulkClose_BatchPartialFailureRestoresMarks(t *testing.T) {
+	s := &stubBulkMutator{
+		stubMutator: stubMutator{stubSource: stubSource{issues: sampleIssues()}},
+		failIDs:     map[string]bool{"a-2": true},
+	}
+	m := applyMutatorFetched(New(s), &s.stubMutator)
+	m.src = s
+	for _, k := range []rune{'v', 'j', 'v'} {
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k}})
+		m = model.(Model)
+	}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = model.(Model)
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = model.(Model)
+	msg := cmd().(bulkWriteMsg)
+	if len(msg.failed) != 1 || msg.failed[0].ID != "a-2" || len(msg.succeeded) != 1 {
+		t.Fatalf("expected a-2 to fail and a-1 to succeed; failed=%v ok=%v", msg.failed, msg.succeeded)
+	}
+	model, _ = m.Update(msg)
+	m = model.(Model)
+	if !m.marked[issueKey(beads.Issue{ID: "a-2"})] {
+		t.Errorf("the failed row should get its mark back for retry; marked=%v", m.marked)
+	}
+	if !strings.Contains(m.status, "1 failed") {
+		t.Errorf("banner should mention the failure; got %q", m.status)
 	}
 }

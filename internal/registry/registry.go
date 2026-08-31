@@ -146,7 +146,7 @@ func (r *Registry) Add(path string) error {
 		return err
 	}
 	for _, repo := range r.Repos {
-		if repo.Path == abs {
+		if samePath(repo.Path, abs) {
 			return nil // already present
 		}
 	}
@@ -166,7 +166,7 @@ func (r *Registry) Remove(path string) (bool, error) {
 		return false, err
 	}
 	for i, repo := range r.Repos {
-		if repo.Path == abs {
+		if samePath(repo.Path, abs) {
 			r.Repos = append(r.Repos[:i], r.Repos[i+1:]...)
 			return true, nil
 		}
@@ -196,11 +196,27 @@ func (r *Registry) Has(path string) bool {
 		return false
 	}
 	for _, repo := range r.Repos {
-		if repo.Path == abs {
+		if samePath(repo.Path, abs) {
 			return true
 		}
 	}
 	return false
+}
+
+// samePath reports whether a STORED registry path names the same
+// directory as an already-normalised lookup path. Stored paths are
+// normalised on the way in by Add, but repos.json is documented as
+// hand-editable, so an entry can carry a symlinked or un-cleaned form
+// (`/tmp/x` on macOS, where /tmp → /private/tmp). Comparing it verbatim
+// let the auto-register path miss such an entry and register the same
+// workspace twice — every row then showed up twice in the TUI
+// (would-you-kindly-9vlt).
+func samePath(stored, abs string) bool {
+	if stored == abs {
+		return true
+	}
+	norm, err := normalizePath(stored)
+	return err == nil && norm == abs
 }
 
 // RepoForDir returns the registered repo that dir belongs to: the

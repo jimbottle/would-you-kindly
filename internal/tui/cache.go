@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,6 +43,25 @@ type Cache struct {
 	Preset  string        `json:"preset"`
 	SavedAt time.Time     `json:"saved_at"`
 	Issues  []beads.Issue `json:"issues"`
+	// Scope fingerprints the source the rows came from (CacheScope of
+	// the repo paths). A snapshot is only seeded into a model built
+	// against the same scope — otherwise `wyk -C other`, a registry
+	// edit, or a demo run under a throwaway XDG_CONFIG_HOME would
+	// paint the previous workspace's rows until the live fetch
+	// replaced them (would-you-kindly-mup1: the README screenshot
+	// captured a private backlog that way). Empty on caches written
+	// before the field existed; those no longer match any scope and
+	// simply cold-start once.
+	Scope string `json:"scope,omitempty"`
+}
+
+// CacheScope derives the scope fingerprint for a set of workspace
+// paths: sorted and newline-joined, so the same registry in any
+// order yields the same string. Empty input (no workspace) yields "".
+func CacheScope(repoPaths []string) string {
+	paths := slices.Clone(repoPaths)
+	slices.Sort(paths)
+	return strings.Join(paths, "\n")
 }
 
 // CacheDefaultPath returns the canonical cache-file location:
@@ -96,12 +117,13 @@ func LoadCache(path string) (Cache, error) {
 // save is fire-and-forget. A failure is silently dropped — the
 // next successful fetch will retry, and a permanently-broken
 // cache directory just degrades to a cold start.
-func saveCacheCmd(path, preset string, issues []beads.Issue) tea.Cmd {
+func saveCacheCmd(path, preset, scope string, issues []beads.Issue) tea.Cmd {
 	return func() tea.Msg {
 		_ = SaveCache(path, Cache{
 			Preset:  preset,
 			SavedAt: time.Now(),
 			Issues:  issues,
+			Scope:   scope,
 		})
 		return nil
 	}

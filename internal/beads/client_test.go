@@ -576,3 +576,26 @@ func TestListDepsBatch_EmptyResultIsNotUnattributable(t *testing.T) {
 		t.Errorf("want an empty map, got %+v", got)
 	}
 }
+
+func TestCloseMany_OneInvocationForTheWholeBatch(t *testing.T) {
+	// The TUI's bulk close used to shell one `bd close` per row; bd
+	// accepts a list, so N rows must cost one subprocess
+	// (would-you-kindly-cexj).
+	r := &fakeRunner{}
+	c := newTestClient(r)
+	if err := c.CloseMany(context.Background(), []string{"a-1", "a-2", "a-3"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.calls) != 1 {
+		t.Fatalf("expected exactly one bd call, got %d", len(r.calls))
+	}
+	want := []string{"close", "a-1", "a-2", "a-3", "--dolt-auto-commit=on"}
+	if got := r.calls[0].args; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", got, want)
+	}
+	// Empty batch: no subprocess at all.
+	r.calls = nil
+	if err := c.CloseMany(context.Background(), nil); err != nil || len(r.calls) != 0 {
+		t.Errorf("empty batch should be a no-op; err=%v calls=%d", err, len(r.calls))
+	}
+}

@@ -1590,3 +1590,37 @@ func TestMarkBlockedByHuman_FallbackHonoursTheSharedBudget(t *testing.T) {
 		t.Error("test made no bd calls at all — it is not exercising the fallback")
 	}
 }
+
+func TestMultiBDSource_CloseManyGroupsByRepoAndRoutesFailures(t *testing.T) {
+	a := &fakeRepoSource{issues: []beads.Issue{{ID: "a-1"}, {ID: "a-2"}}}
+	b := &fakeRepoSource{issues: []beads.Issue{{ID: "b-1"}}}
+	m := newMultiForTest(t,
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"alpha", "main", a},
+		struct {
+			name   string
+			branch string
+			src    *fakeRepoSource
+		}{"beta", "main", b},
+	)
+	failed := m.CloseMany(context.Background(), []beads.Issue{
+		{ID: "a-1", Repo: "alpha"},
+		{ID: "b-1", Repo: "beta"},
+		{ID: "a-2", Repo: "alpha"},
+		{ID: "x-1", Repo: "nowhere"},
+	})
+	// fakeRepoSource has no CloseMany, so the per-repo fallback closes
+	// each issue on its own sub — grouped, never cross-routed.
+	if got := strings.Join(a.closed, ","); got != "a-1,a-2" {
+		t.Errorf("alpha closed %q, want a-1,a-2", got)
+	}
+	if got := strings.Join(b.closed, ","); got != "b-1" {
+		t.Errorf("beta closed %q, want b-1", got)
+	}
+	if len(failed) != 1 || failed[0].Issue.ID != "x-1" {
+		t.Fatalf("the unregistered repo's issue must come back as a failure; got %+v", failed)
+	}
+}

@@ -116,6 +116,21 @@ type Source interface {
 // scheme) would silently mis-route — see the regression test
 // TestMultiBDSource_WriteRoutesByRepoNotID for the case that drove
 // this interface shape.
+// BulkCloser is an optional Mutator extension: close many issues in as
+// few bd calls as possible. The TUI's bulk close (mark rows, a, y) uses
+// it when present — one `bd close id1 id2 …` per workspace instead of a
+// subprocess per row (would-you-kindly-cexj). Returns the issues that
+// did NOT close, each with its error; nil means every issue closed.
+type BulkCloser interface {
+	CloseMany(ctx context.Context, issues []beads.Issue) []BulkFailure
+}
+
+// BulkFailure is one issue a BulkCloser could not close.
+type BulkFailure struct {
+	Issue beads.Issue
+	Err   error
+}
+
 type Mutator interface {
 	Close(ctx context.Context, issue beads.Issue) error
 	AddLabel(ctx context.Context, issue beads.Issue, label string) error
@@ -321,6 +336,10 @@ type Model struct {
 	// main via WithCacheSnapshot so test models default to no
 	// persistence (no surprise writes when t.TempDir isn't set).
 	cachePath string
+	// cacheScope is the CacheScope fingerprint of the source this
+	// model was built against. Stamped into every saved snapshot and
+	// required to match before a snapshot is seeded (see Cache.Scope).
+	cacheScope string
 	// cacheStale is true while m.all is sourced from the on-disk
 	// cache and no live fetch has landed yet. Drives a subtle
 	// "cached <relative> · refreshing" indicator in the status bar
@@ -356,6 +375,16 @@ type Model struct {
 	// capture was originally dropped entirely for native selection
 	// (would-you-kindly-p2hn); the toggle serves both wants.
 	mouseOff bool
+
+	// layoutPref is the user's split-vs-stacked choice for the detail
+	// pane (`p`), restored from state.json. Zero value = auto: split
+	// when the terminal clears splitMinWidth×splitMinHeight. See
+	// split.go.
+	layoutPref layoutPref
+
+	// followGen tags the debounced detail-follow tick so a tick
+	// scheduled for a row the cursor has since left is dropped.
+	followGen int
 
 	// detailVP scrolls the detail view's body (description +
 	// notes) so long runbooks stay readable without dropping out
@@ -740,6 +769,12 @@ func (m Model) WithCacheSnapshot(c Cache, path string) Model {
 	if len(c.Issues) == 0 {
 		return m
 	}
+	if c.Scope != m.cacheScope {
+		// Rows from a different registry / workspace: never paint
+		// them, even for a beat. The path stays wired so this launch
+		// writes a correctly-scoped snapshot for the next one.
+		return m
+	}
 	// Strip closed rows up front, whatever the preset: the snapshot
 	// may have been saved while showClosed was on, but SessionState
 	// doesn't persist that toggle, so a relaunch is always
@@ -787,6 +822,14 @@ func (m Model) WithCacheSnapshot(c Cache, path string) Model {
 // before this call. main wires this from the -preset flag so a
 // shell alias like `wykh = wyk -preset human` lands directly on
 // the human view.
+// WithCacheScope records the source fingerprint (CacheScope of the
+// repo paths) the model was built against. Call it BEFORE
+// WithCacheSnapshot so the seed can be matched against it.
+func (m Model) WithCacheScope(scope string) Model {
+	m.cacheScope = scope
+	return m
+}
+
 func (m Model) WithPreset(p filter.Preset) Model {
 	m.preset = p
 	return m
@@ -815,6 +858,7 @@ func (m Model) WithSession(s SessionState, path string) Model {
 	}
 	m.pendingCursorID = s.CursorID
 	m.mouseOff = s.MouseOff
+	m.layoutPref = layoutPrefFromLabel(s.Layout)
 	return m
 }
 
@@ -852,6 +896,7 @@ func (m Model) persistSession() {
 		// when there's no sort to reverse.
 		SortDesc: m.sortDesc,
 		MouseOff: m.mouseOff,
+		Layout:   m.layoutPref.label(),
 	}
 	if m.cursor >= 0 && m.cursor < len(m.visible) {
 		st.CursorID = m.visible[m.cursor].ID
@@ -1184,6 +1229,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return nm, cmd
 	}
+	// Split layout upkeep, centrally for the same reason as the mouse
+	// capture: the pane follows the cursor no matter which handler
+	// moved it, and the viewport's stored size tracks whatever the
+	// message did to the chrome.
+	if fc := next.followCursor(); fc != nil {
+		cmd = tea.Batch(cmd, fc)
+	}
+	next.syncDetailViewport()
 	after := next.desiredMouseCapture()
 	if next.mouse != nil {
 		switch {
@@ -1213,8 +1266,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if bodyH < 1 {
 			bodyH = 1
 		}
-		m.detailVP.Width = msg.Width
-		m.detailVP.Height = bodyH
+		// The detail viewport is sized by syncDetailViewport (pane
+		// rectangle when the split composition is up, full-screen
+		// budget otherwise) — the Update wrapper runs it after every
+		// message, this included.
+		m.syncDetailViewport()
 		// The :bd output overlay uses the same chrome budget as
 		// the detail view (header + footer line); a separate
 		// chrome const would be over-engineering for a single
@@ -1302,7 +1358,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// would stutter input handling on slow disks, which
 			// would defeat the warm-start latency win.
 			if m.cachePath != "" {
-				cacheCmd = saveCacheCmd(m.cachePath, string(m.preset), snap)
+				cacheCmd = saveCacheCmd(m.cachePath, string(m.preset), m.cacheScope, snap)
 			}
 		}
 		// Per-sub fetch errors travel on the msg itself so they
@@ -1468,7 +1524,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Late-arriving Detail result. Only adopt it if the user
 		// is still looking at the same issue — otherwise the
 		// notes would attach to the wrong row.
-		if m.mode == modeDetail && msg.err == nil && msg.issue.ID == m.detailIssue.ID {
+		if m.detailShown() && msg.err == nil && msg.issue.ID == m.detailIssue.ID {
 			// Detail() shells `bd show`, which does NOT run the
 			// HUMAN-BLOCK dep-scan that Fetch does — so the enriched
 			// issue has BlockedByHuman=false. Adopting it verbatim made
@@ -1537,7 +1593,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// detail view, re-seed the body so the dependency sections
 		// fill in (preserving scroll). The deps-sort path also lands
 		// here but won't be in modeDetail, so this is a no-op there.
-		if m.mode == modeDetail && m.detailIssue.ID != "" {
+		if m.detailShown() && m.detailIssue.ID != "" {
 			id := m.detailIssue.ID
 			_, gotDeps := msg.deps[id]
 			_, gotDependents := msg.dependents[id]
@@ -1551,7 +1607,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case detailFollowMsg:
+		return m.handleDetailFollow(msg)
+
 	case tea.MouseMsg:
+		// In the split composition the pointer's pane decides, not
+		// the mode.
+		if m.splitView() {
+			return m.handleSplitMouse(msg)
+		}
 		// Mouse routes by mode (only reachable while capture is on —
 		// the `m` toggle releases it):
 		// - modeList: wheel moves the cursor; left-click lands it
@@ -1660,9 +1724,18 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyHit(msg, m.keys.Bottom):
 		m.cursor = max(0, len(m.visible)-1)
 		m.ensureCursorVisible()
+	case keyHit(msg, m.keys.Layout):
+		return m.toggleLayout()
 	case keyHit(msg, m.keys.Open):
 		if len(m.visible) > 0 {
 			m.mode = modeDetail
+			if m.splitActive() && issueKey(m.detailIssue) == issueKey(m.visible[m.cursor]) {
+				// The pane is already showing this row (possibly
+				// enriched with notes, possibly scrolled) — ⏎ just
+				// moves focus to it. Re-staging the slim row would
+				// blank the notes until bd show returned again.
+				return m, nil
+			}
 			// Fresh entry from the list: no link highlighted, and an
 			// empty drill-in stack (Back goes straight to the list).
 			m.detailLinkIdx = -1
@@ -1807,7 +1880,7 @@ func (m Model) jumpToHuman(dir int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// --- write actions (Phase 2.B) ------------------------------------
+// --- write actions ------------------------------------------------
 
 // writeMsg carries the result of a Mutator call back to the model.
 // `action` describes what was attempted (used to compose the status
@@ -1892,6 +1965,9 @@ func (m Model) updateConfirmClose(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// very next paint rather than after bd returns.
 			m.markClosing(targets...)
 			m.setStatus(fmt.Sprintf("closing %d rows…", len(targets)))
+			if bc, ok := mu.(BulkCloser); ok {
+				return m, runBulkClose(targets, bc)
+			}
 			return m, runBulkWrite("close", targets, func(ctx context.Context, i beads.Issue) error {
 				return mu.Close(ctx, i)
 			})
@@ -2401,6 +2477,29 @@ func runBulkWrite(action string, targets []beads.Issue, fn func(ctx context.Cont
 			}
 		}
 		return bulkWriteMsg{action: action, total: len(targets), failed: failed, succeeded: succeeded, errs: errs}
+	}
+}
+
+// runBulkClose is runBulkWrite's batched sibling for close: one
+// BulkCloser call for the whole selection, folded into the same
+// bulkWriteMsg shape so handleBulkWriteResult's banner / mark-restore
+// logic is shared. Targets keep their marked order in the result.
+func runBulkClose(targets []beads.Issue, bc BulkCloser) tea.Cmd {
+	return func() tea.Msg {
+		failures := map[string]error{}
+		for _, f := range bc.CloseMany(context.Background(), targets) {
+			failures[issueKey(f.Issue)] = f.Err
+		}
+		msg := bulkWriteMsg{action: "close", total: len(targets)}
+		for _, t := range targets {
+			if err, ok := failures[issueKey(t)]; ok {
+				msg.failed = append(msg.failed, t)
+				msg.errs = append(msg.errs, fmt.Sprintf("%s: %v", t.ID, err))
+			} else {
+				msg.succeeded = append(msg.succeeded, t)
+			}
+		}
+		return msg
 	}
 }
 
@@ -4125,6 +4224,9 @@ func (m Model) toggleShowClosed() (tea.Model, tea.Cmd) {
 
 // View dispatches to the per-mode renderer.
 func (m Model) View() string {
+	if m.splitView() {
+		return m.viewSplit()
+	}
 	switch m.mode {
 	case modeDetail:
 		return m.viewDetail()
@@ -4213,6 +4315,8 @@ func (m Model) viewHelp() string {
 	b.WriteString(helpStyle.Render("  bd and your agents refer to them, so a quoted ID matches a row\n"))
 	b.WriteString(helpStyle.Render("  on sight. Press ⏎ to expand a row; y yanks the ID.\n"))
 	b.WriteString(helpStyle.Render("  Mouse: in the list, the wheel scrolls and a click selects a row.\n"))
+	b.WriteString(helpStyle.Render("  Split layout (140×36+): the pane follows the cursor; ⏎ focuses it,\n"))
+	b.WriteString(helpStyle.Render("  esc returns, p hides/shows it. The wheel scrolls the pane it's over.\n"))
 	b.WriteString(helpStyle.Render("  The detail view releases the mouse automatically so click-drag\n"))
 	b.WriteString(helpStyle.Render("  selects text; m toggles capture everywhere (shift/option-drag\n"))
 	b.WriteString(helpStyle.Render("  also reaches native selection while captured).\n"))
@@ -4298,6 +4402,17 @@ func (m Model) viewList() string {
 	m.cw = m.computeColWidths(m.visible)
 	m.autoHidden = m.computeAutoHidden()
 
+	b.WriteString(m.listTopChrome())
+	b.WriteString(m.listBody())
+	b.WriteString(m.listBottomChrome())
+	return b.String()
+}
+
+// listTopChrome is everything above the table: title, setup hint, the
+// filter-chip strip, and the blank separator. Shared by the stacked
+// and split layouts so rowsStartY's click math holds for both.
+func (m Model) listTopChrome() string {
+	var b strings.Builder
 	b.WriteString(renderListTitle())
 	b.WriteString("\n")
 	if m.setupHint != "" {
@@ -4313,7 +4428,14 @@ func (m Model) viewList() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
+	return b.String()
+}
 
+// listBody is the stacked layout's table region (or its loading /
+// error / empty stand-in). Rows end in a newline; the stand-ins don't
+// — the bottom chrome's leading newline supplies the separator.
+func (m Model) listBody() string {
+	var b strings.Builder
 	// Render the table whenever we have data. Transient states
 	// (a flaky fetch error, an in-flight refresh) become banners
 	// at the bottom instead of taking over the whole view — the
@@ -4378,7 +4500,14 @@ func (m Model) viewList() string {
 	default:
 		b.WriteString(emptyStyle.Render(firstRunEmptyCopy()))
 	}
+	return b.String()
+}
 
+// listBottomChrome is everything below the table: the modal prompts,
+// the transient banners, and the status bar with its key grid. Shared
+// by the stacked and split layouts; chromeExtra budgets for it.
+func (m Model) listBottomChrome() string {
+	var b strings.Builder
 	// modal prompts live just above the status bar
 	switch {
 	case m.usesTextInput():
@@ -5483,6 +5612,9 @@ func (m Model) statusBar() string {
 // Shared by statusBar (render) and chromeExtra (height budget) so the two
 // can't drift on the read-only swap rule.
 func (m Model) footerBindings() []key.Binding {
+	if m.splitView() && m.paneFocused() {
+		return m.keys.paneHelp(m.mutator() != nil)
+	}
 	if m.mutator() == nil {
 		return m.keys.shortHelpReadOnly()
 	}

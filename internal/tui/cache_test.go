@@ -126,3 +126,28 @@ func TestSaveCache_CapsAtCacheMaxIssues(t *testing.T) {
 		t.Errorf("Issues = %d, want %d (cap)", len(got.Issues), cacheMaxIssues)
 	}
 }
+
+func TestCacheScope_MismatchIsNeverSeeded(t *testing.T) {
+	seed := Cache{
+		Preset:  "all",
+		SavedAt: time.Now(),
+		Issues:  manyIssues(3),
+		Scope:   CacheScope([]string{"/b", "/a"}),
+	}
+	// Same paths in a different order: same scope, seeds.
+	m := New(&stubSource{}).WithCacheScope(CacheScope([]string{"/a", "/b"})).WithCacheSnapshot(seed, "")
+	if len(m.all) != 3 {
+		t.Fatalf("matching scope should seed; got %d rows", len(m.all))
+	}
+	// A different workspace set must cold-start, never paint the rows.
+	m = New(&stubSource{}).WithCacheScope(CacheScope([]string{"/c"})).WithCacheSnapshot(seed, "")
+	if len(m.all) != 0 {
+		t.Fatalf("mismatched scope must not seed; got %d rows", len(m.all))
+	}
+	// A legacy cache (no scope) against a scoped model: cold start.
+	seed.Scope = ""
+	m = New(&stubSource{}).WithCacheScope(CacheScope([]string{"/a", "/b"})).WithCacheSnapshot(seed, "")
+	if len(m.all) != 0 {
+		t.Fatalf("unscoped legacy cache must not seed a scoped model; got %d rows", len(m.all))
+	}
+}

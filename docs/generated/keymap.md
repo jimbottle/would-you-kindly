@@ -13,8 +13,17 @@ internal/tui/keymap.go (`DocsKeymap`).
 | `G` | bottom |
 | `⏎` | open |
 | `esc` | back |
+| `p` | ±pane |
 | `[` | prev human |
 | `]` | next human |
+
+## Detail pane / view
+
+| Key | Action |
+|-----|--------|
+| `j/k` | scroll |
+| `tab` | link |
+| `c` | copy runbook |
 
 ## Filters & sort
 

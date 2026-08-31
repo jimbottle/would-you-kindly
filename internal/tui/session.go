@@ -62,6 +62,10 @@ type SessionState struct {
 	// state.json written before the field existed — keeps mouse
 	// navigation ON, the default.
 	MouseOff bool `json:"mouse_off,omitempty"`
+	// Layout is the detail-pane preference (`p` in the TUI): "stacked"
+	// (pane hidden), "split" (pane forced on below the auto breakpoint),
+	// or empty for auto. Unknown values decode to auto.
+	Layout string `json:"layout,omitempty"`
 }
 
 // SessionDefaultPath returns the canonical state-file location,

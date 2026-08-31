@@ -144,6 +144,10 @@ func TestDetailView_MouseWheelScrollsViewport(t *testing.T) {
 	// owned by the viewport while the detail view is open.
 	src := &stubSource{issues: manyIssues(20)}
 	m := New(src)
+	// Stacked layout on purpose: this is the full-screen detail view's
+	// routing contract. The split composition (200×40 clears the auto
+	// breakpoint) routes the wheel by pane instead — see split_test.go.
+	m.layoutPref = layoutStacked
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
 	m = model.(Model)
 	m = applyFetched(m, src)

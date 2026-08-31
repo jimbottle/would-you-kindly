@@ -319,9 +319,13 @@ func main() {
 	// parallel; the cached rows are replaced when it returns.
 	// Best-effort: any cache failure (missing file, stale TTL,
 	// unsupported schema) silently falls back to the cold path.
+	// The snapshot is scoped to the workspaces this launch was built
+	// against (registry or -C path): a cache written for a different
+	// set is ignored rather than painted (would-you-kindly-mup1).
 	if cachePath, err := tui.CacheDefaultPath(); err == nil {
 		cache, _ := tui.LoadCache(cachePath)
-		model = model.WithCacheSnapshot(cache, cachePath)
+		model = model.WithCacheScope(tui.CacheScope(repoPaths)).
+			WithCacheSnapshot(cache, cachePath)
 	}
 	// No mouse capture: with mouse reporting off, the host terminal
 	// handles native click-drag text selection in every view, so users

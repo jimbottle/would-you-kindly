@@ -17,8 +17,8 @@ Require bd
 
 Set Shell "bash"
 Set FontSize 16
-Set Width 1320
-Set Height 720
+Set Width 1640
+Set Height 860
 Set Padding 24
 Set Framerate 24
 Set Theme "Catppuccin Mocha"
@@ -29,7 +29,7 @@ Set TypingSpeed 55ms
 # seed script's default — VHS tapes can't read shell variables, so keep them in
 # sync if you ever change the demo location.
 Hide
-Type "export XDG_CONFIG_HOME=/tmp/wyk-demo-cfg"
+Type "export XDG_CONFIG_HOME=/tmp/wyk-demo-cfg XDG_CACHE_HOME=/tmp/wyk-demo-cache XDG_STATE_HOME=/tmp/wyk-demo-state"
 Enter
 Sleep 400ms
 Type "cd /tmp/wyk-demo"
@@ -44,17 +44,26 @@ Show
 Type "echo 'Reset the vault password; roll the staging k8s secret.' | wyk handoff -create 'Rotate the staging DB password' -priority 1"
 Sleep 800ms
 Enter
-Sleep 3s
+# bd's embedded Dolt cold-starts on the first write; wait it out so the
+# next keystrokes don't land in the shell before the prompt is back.
+# (Render with nothing else loading the machine — a concurrent build or
+# test run stretches every bd call past these waits.)
+Sleep 10s
 
 # --- 2) Human side: open the TUI ---
+# The terminal is sized past the split breakpoint (140x36) so the demo
+# shows the list + detail pane layout; the PNG below is README's still.
 Type "wyk"
 Sleep 600ms
 Enter
-Sleep 3s
+# Embedded Dolt cold-starts on the first bd call; give it time so the
+# still doesn't capture the loading spinner.
+Sleep 9s
+Screenshot docs/screenshots/wyk-tui.png
 
 # h → the human view: "whose move is it?"
 Type "h"
-Sleep 2.5s
+Sleep 3s
 
 # enter → read the runbook the agent left
 Enter

@@ -6,7 +6,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Split layout: the list and the selected issue's runbook side by
+  side** (would-you-kindly-g1ud). On a terminal of at least 140×36 the
+  list takes a left pane and the cursor row's detail — owner badge,
+  title, meta, labels, description, notes, dependency links — renders
+  in a right pane that follows the cursor. The slim row paints
+  immediately; the `bd show` enrichment and dep lookups are debounced
+  (75ms) so holding `j` doesn't fan out a shell-out per row. `⏎`
+  focuses the pane (every detail key works there), `esc` returns to
+  the list, `p` hides/shows the pane (forcing it on down to 100×20;
+  the choice persists in `state.json`), and while the list has focus
+  the wheel scrolls whichever pane the pointer is over (focusing the
+  pane releases mouse capture for text selection, as the full-screen
+  detail always has). Below the breakpoint the stacked
+  layout is unchanged. Modelled on roborev's queue + review split —
+  the human's job in wyk is reading runbooks, and this removes the
+  `⏎`/`esc` round-trip per row.
+
 ### Fixed
+
+- **Bulk close is one bd call per workspace instead of one per row**
+  (would-you-kindly-cexj). Marking N rows and pressing `a`, `y` used
+  to shell `bd close` N times sequentially, each paying Dolt's per-call
+  latency — the user-reported "closing out multiple tasks at once is
+  very slow". `bd close` accepts a list, so the Mutator grew an
+  optional `BulkCloser` (`CloseMany`) that `BDSource` satisfies with a
+  single invocation and `MultiBDSource` satisfies by grouping the
+  selection per repo. Per-row error attribution and the mark-restore
+  on failure are unchanged.
+
+- **A hand-edited or symlinked `repos.json` entry no longer gets
+  auto-registered a second time** (would-you-kindly-9vlt). `Has`/`Add`/
+  `Remove` normalised the incoming path but compared it to the stored
+  string verbatim, so an entry written as `/tmp/x` (→ `/private/tmp/x`
+  on macOS) was invisible to the auto-register in `wyk handoff` /
+  `wyk create`, which then added the same workspace under its folder
+  name — and every row rendered twice. Stored paths are now normalised
+  on the comparison side too.
+
+- **The warm-start cache is scoped to the workspaces wyk was launched
+  against** (would-you-kindly-mup1). The last-fetch snapshot was keyed
+  to nothing, so `wyk -C <other-repo>`, a registry edit, or a run under
+  a throwaway `XDG_CONFIG_HOME` painted the *previous* source's rows
+  until the live fetch replaced them — the README screenshot regen
+  captured a private client backlog exactly that way. Snapshots now
+  carry a fingerprint of the repo paths and are ignored on mismatch;
+  the demo renderer isolates `XDG_CACHE_HOME`/`XDG_STATE_HOME` too.
 
 - **A workspace whose bd issue prefix differs from its directory name
   no longer loses every row and reports as a failed repo**
