@@ -194,7 +194,18 @@ func (m *Model) syncDetailViewport() {
 // carrying the already-loaded notes across. Returns the debounce tick,
 // or nil when nothing moved.
 func (m *Model) followCursor() tea.Cmd {
-	if !m.splitActive() || m.mode != modeList || len(m.visible) == 0 {
+	if !m.splitActive() || m.mode != modeList {
+		return nil
+	}
+	if len(m.visible) == 0 {
+		// The view emptied (last human row closed, filter with no
+		// matches): don't leave the previous row's runbook on screen
+		// next to "nothing waiting on you".
+		if m.detailIssue.ID != "" {
+			m.detailIssue = beads.Issue{}
+			m.detailLinkIdx = -1
+			m.detailStack = nil
+		}
 		return nil
 	}
 	if m.cursor < 0 || m.cursor >= len(m.visible) {

@@ -205,9 +205,6 @@ func TestSplit_ViewLinesAlignOnDivider(t *testing.T) {
 		if w := lipgloss.Width(l); w != g.listW+lipgloss.Width(splitDivider)+g.paneW {
 			t.Errorf("body line width %d, want %d: %q", w, g.listW+3+g.paneW, l)
 		}
-		// The divider must sit at the same column on every line.
-		plain := lipgloss.NewStyle().Render(l)
-		_ = plain
 	}
 	if bodyLines != g.rows {
 		t.Fatalf("expected %d body rows with a divider, got %d", g.rows, bodyLines)
@@ -303,5 +300,20 @@ func TestSplit_LayoutPrefRoundTripsThroughSession(t *testing.T) {
 	}
 	if layoutPrefFromLabel("garbage") != layoutAuto {
 		t.Error("unknown label must decode to auto")
+	}
+}
+
+func TestSplit_PaneClearsWhenListEmpties(t *testing.T) {
+	m, src := splitFixture(t, 160, 40)
+	if m.detailIssue.ID == "" {
+		t.Fatal("precondition: pane should be staged")
+	}
+	src.issues = nil
+	m = applyFetched(m, src)
+	if m.detailIssue.ID != "" {
+		t.Fatalf("pane should clear when the list empties; still showing %q", m.detailIssue.ID)
+	}
+	if !strings.Contains(m.View(), "no issue selected") {
+		t.Error("empty pane should say so")
 	}
 }
