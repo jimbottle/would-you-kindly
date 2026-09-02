@@ -194,7 +194,10 @@ func (m *Model) syncDetailViewport() {
 // carrying the already-loaded notes across. Returns the debounce tick,
 // or nil when nothing moved.
 func (m *Model) followCursor() tea.Cmd {
-	if !m.splitActive() || m.mode != modeList {
+	// modeFilter counts as list focus: the cursor moves (arrows) and
+	// the visible set narrows (typing) while the / prompt is open, and
+	// the pane should track both live.
+	if !m.splitActive() || (m.mode != modeList && m.mode != modeFilter) {
 		return nil
 	}
 	if len(m.visible) == 0 {

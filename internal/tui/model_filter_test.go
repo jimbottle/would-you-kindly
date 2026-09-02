@@ -175,3 +175,60 @@ func TestFilterChip_RendersWhenActiveOnlyOnNonDefaultPresetOrCap(t *testing.T) {
 		t.Errorf("expected both human + P1 chips; got %q", chips)
 	}
 }
+
+func TestFilter_ArrowKeysMoveCursorWhileTyping(t *testing.T) {
+	// Rows stay selectable while the / prompt is open: arrows (and
+	// ctrl+n/ctrl+p) move the list cursor without leaving modeFilter,
+	// so the user can pick a row over the live-narrowed list instead
+	// of having to apply the filter first (would-you-kindly-mwry).
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = model.(Model)
+	if m.mode != modeFilter {
+		t.Fatalf("down must not leave modeFilter; mode=%v", m.mode)
+	}
+	if m.cursor != 1 {
+		t.Fatalf("down should move cursor to 1; got %d", m.cursor)
+	}
+
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = model.(Model)
+	if m.cursor != 2 {
+		t.Fatalf("ctrl+n should move cursor to 2; got %d", m.cursor)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = model.(Model)
+	if m.cursor != 2 {
+		t.Fatalf("down at the last row must clamp; got %d", m.cursor)
+	}
+
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = model.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("up should move cursor back to 1; got %d", m.cursor)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = model.(Model)
+	if m.cursor != 0 {
+		t.Fatalf("ctrl+p should move cursor to 0; got %d", m.cursor)
+	}
+
+	// The arrows must not have leaked into the query.
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("cursor keys must not type into the filter input; value=%q", got)
+	}
+
+	// Applying keeps the selection made inside the prompt.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = model.(Model)
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeList || m.cursor != 1 {
+		t.Fatalf("enter should return to list with cursor kept; mode=%v cursor=%d", m.mode, m.cursor)
+	}
+}

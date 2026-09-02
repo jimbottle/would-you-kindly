@@ -613,7 +613,7 @@ type Model struct {
 func New(src Source) Model {
 	ti := textinput.New()
 	ti.Prompt = "/ "
-	ti.Placeholder = "fuzzy filter…"
+	ti.Placeholder = "fuzzy filter… (↑↓ select)"
 	ti.CharLimit = 200
 
 	na := textarea.New()
@@ -2284,7 +2284,7 @@ func (m Model) updateNote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // shows the filter UI instead of the note UI.
 func (m *Model) restoreFilterPrompt() {
 	m.input.Prompt = "/ "
-	m.input.Placeholder = "fuzzy filter…"
+	m.input.Placeholder = "fuzzy filter… (↑↓ select)"
 }
 
 // handleBulkWriteResult formats a status banner from a bulk
@@ -3135,6 +3135,25 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// the textinput wouldn't otherwise intercept it.
 	if msg.Type == tea.KeyCtrlC {
 		return m.quitNow()
+	}
+	// Cursor movement stays live while the prompt is open — the list
+	// narrows as the user types, and picking a row shouldn't require
+	// closing the prompt first. Arrows (plus emacs-style ctrl+n/p; j/k
+	// are text here) move the selection; the central Update wrapper's
+	// followCursor call keeps the split pane tracking it.
+	switch msg.Type {
+	case tea.KeyUp, tea.KeyCtrlP:
+		if m.cursor > 0 {
+			m.cursor--
+		}
+		m.ensureCursorVisible()
+		return m, nil
+	case tea.KeyDown, tea.KeyCtrlN:
+		if m.cursor < len(m.visible)-1 {
+			m.cursor++
+		}
+		m.ensureCursorVisible()
+		return m, nil
 	}
 	switch msg.String() {
 	case "esc":

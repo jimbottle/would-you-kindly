@@ -317,3 +317,34 @@ func TestSplit_PaneClearsWhenListEmpties(t *testing.T) {
 		t.Error("empty pane should say so")
 	}
 }
+
+func TestSplit_PaneFollowsCursorInFilterMode(t *testing.T) {
+	// The pane keeps tracking the cursor while the / prompt is open —
+	// both when arrows move the selection and when typing narrows the
+	// visible set out from under it (would-you-kindly-mwry).
+	m, _ := splitFixture(t, 160, 40)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = model.(Model)
+	if m.detailIssue.ID != m.visible[1].ID {
+		t.Fatalf("pane should follow the arrow inside the prompt; got %q, want %q",
+			m.detailIssue.ID, m.visible[1].ID)
+	}
+
+	// Type a query that narrows the list; the pane must re-stage the
+	// row the (clamped) cursor now sits on, not keep the stale one.
+	for _, r := range m.visible[0].ID {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	if len(m.visible) == 0 {
+		t.Fatal("setup: query by ID should keep at least one row visible")
+	}
+	if m.detailIssue.ID != m.visible[m.cursor].ID {
+		t.Fatalf("pane should track the narrowed list; pane=%q cursor row=%q",
+			m.detailIssue.ID, m.visible[m.cursor].ID)
+	}
+}
