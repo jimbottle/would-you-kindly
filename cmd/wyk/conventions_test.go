@@ -137,6 +137,35 @@ func TestConventions_RunbookSectionsPinned(t *testing.T) {
 	}
 }
 
+func TestConventions_QuestionSectionsPinned(t *testing.T) {
+	// The QUESTION shape shares the first and last section with the
+	// task shape and swaps "## Steps" for "## Question" in the middle.
+	// `wyk handoff` accepts either middle heading, so the structured
+	// form must advertise both.
+	c := conventionsStructured()
+	wantHeadings := []string{
+		"## Why this needs you (please confirm this is accurate)",
+		"## Question",
+		"## What unblocks me when this returns",
+	}
+	if len(c.QuestionSections) != len(wantHeadings) {
+		t.Fatalf("expected %d question sections; got %d", len(wantHeadings), len(c.QuestionSections))
+	}
+	for i, want := range wantHeadings {
+		if c.QuestionSections[i].Heading != want {
+			t.Errorf("question[%d].Heading = %q, want %q", i, c.QuestionSections[i].Heading, want)
+		}
+		if c.QuestionSections[i].Purpose == "" {
+			t.Errorf("question[%d] missing Purpose", i)
+		}
+	}
+	// The headings the lint checks for must be the ones the
+	// conventions teach — by construction, via the shared constants.
+	if c.RunbookSections[1].Heading != runbookHeadingSteps || c.QuestionSections[1].Heading != runbookHeadingQuestion {
+		t.Errorf("middle headings drifted from the lint constants: %q / %q", c.RunbookSections[1].Heading, c.QuestionSections[1].Heading)
+	}
+}
+
 func TestConventions_ProseBodyDocumentsRequiredSections(t *testing.T) {
 	// The human-readable body MUST mention all three section
 	// headings — that's how a reader learns the convention from
@@ -145,7 +174,10 @@ func TestConventions_ProseBodyDocumentsRequiredSections(t *testing.T) {
 	for _, want := range []string{
 		"## Why this needs you (please confirm this is accurate)",
 		"## Steps",
+		"## Question",
 		"## What unblocks me when this returns",
+		"-template",
+		"-question",
 	} {
 		if !strings.Contains(conventionsBody, want) {
 			t.Errorf("conventionsBody missing required section heading %q", want)

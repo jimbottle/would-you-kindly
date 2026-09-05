@@ -254,8 +254,31 @@ ready for someone to pick up, which it isn't.
 A handoff is more than a label change — it's a **claim** by the
 agent that the human is genuinely required, and a **spec** of
 what the agent needs back. Both have to be in the description
-text the human reads. Every handoff description carries three
-sections, in this order:
+text the human reads.
+
+A human task is one of two shapes, and the agent decides which
+**before** writing the runbook:
+
+- A **task** — the human is asked to **do** something (click through
+  a third-party UI, rotate a secret, approve a PR). The runbook's
+  middle section is `## Steps`: the directions the human follows.
+  A task without directions is not a task; the human would have to
+  re-derive the agent's context to act on it.
+- A **question** — the human is asked to **answer or decide**
+  something (which vendor, whether to spend, which of two designs).
+  The runbook's middle section is `## Question`: the exact question,
+  the options weighed, and the agent's recommendation. A question
+  must not be dressed up as steps ("1. Decide X"), and a question
+  that a reply in the current conversation would answer is asked
+  there, not handed off.
+
+`wyk handoff` **refuses** a runbook that carries neither heading
+(exit 64) — the check runs in `-dry-run` too, so a dry run vouches
+for a runbook the real write would accept. `wyk handoff -template`
+prints the task skeleton; `wyk handoff -template -question` prints
+the question skeleton.
+
+Every handoff description carries three sections, in this order:
 
 1. **`## Why this needs you (please confirm this is accurate)`** —
    the agent's self-verification. Names three concrete attempts
@@ -264,20 +287,30 @@ sections, in this order:
    on. If the agent overclaimed, the human bounces it back with
    `H` and the issue lands in `wyk inbox` for the agent to try
    harder.
-2. **`## Steps`** — numbered, concrete, with locations and a
-   verification step. Last step: "Close this issue when complete."
+2. One of:
+   - **`## Steps`** (task) — numbered directions the human can
+     follow without re-deriving the agent's context: every command,
+     URL, file path and account involved, in order, then a
+     verification step. Last step: "Close this issue when complete."
+   - **`## Question`** (question) — the exact question as one
+     sentence ending in `?`, the options considered with the
+     consequence of each, the agent's recommendation, and where to
+     record the answer (a `bd note` on the issue, then bounce back
+     with `H`; close if the question is moot).
 3. **`## What unblocks me when this returns`** — the concrete
    artifact the agent expects when the issue closes or bounces
    back (credential at a known path, URL in a constant, decision
-   recorded in the description). Without this, the next agent
-   that picks up the bounce-back has no idea what changed.
+   recorded in the description). For a question: what the agent
+   will do with each answer. Without this, the next agent that
+   picks up the bounce-back has no idea what changed.
 
 These sections are not aesthetic preference — they are how the
 contract makes the agent's reasoning legible to the human and
 keeps state visible across the round-trip. Skip them and you
 get either (a) a handoff for something the agent could have done
-itself, with no way for the human to push back, or (b) a returned
-issue the next agent can't resume from.
+itself, with no way for the human to push back, (b) a "please do
+X" with no directions, which the human bounces straight back, or
+(c) a returned issue the next agent can't resume from.
 
 ## Exact bd commands
 
@@ -313,6 +346,35 @@ EOF
 )" \
   --labels=human,src:agent \
   --priority=1
+```
+
+### File a human-flagged question (agent)
+
+```bash
+wyk handoff -create "Which auth provider should staging use?" <<'EOF'
+## Why this needs you (please confirm this is accurate)
+
+Choosing a provider commits us to a vendor contract, which is not
+mine to sign. I ruled out rolling our own (auth is out of scope for
+this milestone) and confirmed both candidates support our OIDC flow.
+
+## Question
+
+Should staging use Auth0 or Clerk?
+
+- A: Auth0 — already on the prod account; pricier per MAU.
+- B: Clerk — cheaper; a second vendor to onboard and pay.
+Recommendation: A, to keep one vendor until usage justifies a switch.
+
+Reply in a `bd note` on this issue, then bounce it back with H.
+Close it instead if the question is moot.
+
+## What unblocks me when this returns
+
+The choice in a note. A → I reuse prod's tenant config in
+`config/auth.ts`; B → I open a Clerk onboarding task and wire the
+new keys.
+EOF
 ```
 
 ### File a human-flagged task (person, at the CLI)

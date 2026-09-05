@@ -5,12 +5,12 @@ Source: `cmd/wyk/clidocs.go`.
 
 ## `wyk handoff`
 
-Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file.
+Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file. The runbook must be a TASK (`## Steps` — directions the human follows) or a QUESTION (`## Question` — something the human answers); one with neither heading is refused.
 
 ```
 wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>
    or: wyk handoff -create "<title>" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]
-   or: wyk handoff -template
+   or: wyk handoff -template [-question]
 ```
 
 Common case:
@@ -18,7 +18,8 @@ Common case:
 ```
 cat runbook.md | wyk handoff -create "Rotate the staging DB password" -priority 1
 wyk handoff wyk-42 < runbook.md
-wyk handoff -template > runbook.md   # print the runbook skeleton to fill in
+wyk handoff -template > runbook.md              # TASK skeleton (## Steps: directions the human follows)
+wyk handoff -template -question > runbook.md    # QUESTION skeleton (## Question: the human answers/decides)
 ```
 
 | Flag | Default | Description |
@@ -33,6 +34,7 @@ wyk handoff -template > runbook.md   # print the runbook skeleton to fill in
 | `-identity` | `_(empty)_` | route this handoff to the named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY |
 | `-dry-run` | `false` | print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it |
 | `-template` | `false` | print the required 3-section runbook skeleton to stdout and exit (no bd writes); fill it in, then `wyk handoff <id> < filled.md` |
+| `-question` | `false` | with -template: print the QUESTION skeleton (`## Question` — the human answers or decides) instead of the TASK skeleton (`## Steps` — the human does something). The runbook itself must carry one of those two headings or the handoff is refused. |
 
 ## `wyk create`
 

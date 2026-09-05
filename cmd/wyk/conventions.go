@@ -138,7 +138,21 @@ The runbook structure (REQUIRED, not optional)
 
 A handoff is a claim by the agent that the human is genuinely required
 AND a spec of what the agent needs back. Both have to be in the
-runbook. Every handoff description includes three sections:
+runbook. Before writing one, decide which of two things you are
+asking for — the runbook's middle section says which, and 'wyk
+handoff' REJECTS a runbook that has neither heading:
+
+  - A TASK: you need the human to DO something (click through a UI,
+    rotate a secret, approve a PR). Middle section is "## Steps" —
+    the directions they follow. A task without directions is not a
+    task, it's a wish.
+  - A QUESTION: you need the human to ANSWER or DECIDE something.
+    Middle section is "## Question" — the exact question, the options
+    you weighed, and your recommendation. Do not dress a question up
+    as steps ("1. Decide X") and do not hand off a question that a
+    reply in the current conversation would answer — ask it there.
+
+Every handoff description includes three sections:
 
   ## Why this needs you (please confirm this is accurate)
       Two-line statement of (a) what the agent tried (three concrete
@@ -147,8 +161,17 @@ runbook. Every handoff description includes three sections:
       if it's wrong, the human bounces back with H and the agent
       tries harder.
 
-  ## Steps
-      Numbered, concrete, with locations and verification.
+  ## Steps                                (TASK shape)
+      Numbered directions the human can follow without re-deriving
+      your context: every command, URL, file path and account
+      involved, in order, then a verification step, then "Close this
+      issue when complete."
+
+  ## Question                             (QUESTION shape)
+      The exact question as one sentence ending in "?", the options
+      considered with the consequence of each, your recommendation,
+      and where to record the answer (a bd note on the issue, then
+      bounce back with H).
 
   ## What unblocks me when this returns
       The artifact the agent expects to find when this comes back
@@ -156,7 +179,10 @@ runbook. Every handoff description includes three sections:
       the description). Without this the next agent that picks
       it up cannot resume.
 
-Example: file a P1 human task directly with bd create
+'wyk handoff -template' prints the task skeleton; add '-question'
+for the question skeleton.
+
+Example: file a P1 human TASK directly with bd create
 -----------------------------------------------------
 
     bd create --priority=1 --type=task \
@@ -168,13 +194,35 @@ Example: file a P1 human task directly with bd create
     attempts>. No workaround because <reason>.
 
     ## Steps
-    1. ...
+    1. <command / URL / file, in order>
     2. ...
+    3. <verify it worked>
+    4. Close this issue when complete.
 
     ## What unblocks me when this returns
     <concrete artifact>
     RUNBOOK
     )"
+
+Example: file a human QUESTION
+------------------------------
+
+    wyk handoff -create "Which auth provider should staging use?" <<'RUNBOOK'
+    ## Why this needs you (please confirm this is accurate)
+    Picking a provider commits us to a vendor contract; not my call.
+    I ruled out <X> because <reason>.
+
+    ## Question
+    Should staging use Auth0 or Clerk?
+    - A: Auth0 — already on the prod account; pricier per MAU.
+    - B: Clerk — cheaper; another vendor to onboard.
+    Recommendation: A, to keep one vendor.
+    Reply in a bd note on this issue, then bounce back with H.
+
+    ## What unblocks me when this returns
+    The choice in a note. A → I reuse prod's tenant config; B → I open
+    a Clerk onboarding task.
+    RUNBOOK
 
 Full contract: https://github.com/jimbottle/would-you-kindly/blob/main/docs/CONTRACT.md
 `
@@ -211,6 +259,11 @@ type conventionsJSON struct {
 	PreferredCommand string           `json:"preferred_command"`
 	BdCreateExample  string           `json:"bd_create_example"`
 	RunbookSections  []runbookSection `json:"runbook_sections"`
+	// QuestionSections is the QUESTION-shaped runbook: same first and
+	// last section as RunbookSections, "## Question" in the middle
+	// instead of "## Steps". `wyk handoff` accepts a runbook that
+	// carries either middle heading and rejects one with neither.
+	QuestionSections []runbookSection `json:"question_sections"`
 	ContractURL      string           `json:"contract_url"`
 }
 
@@ -223,9 +276,9 @@ type statusGuidance struct {
 }
 
 // runbookSection is one of the three required sections in a wyk
-// handoff runbook. The Heading is the literal text the agent
-// writes; Purpose is what the section is for (consumed by agent
-// tooling, not rendered to the human).
+// handoff runbook (task or question shape). The Heading is the
+// literal text the agent writes; Purpose is what the section is for
+// (consumed by agent tooling, not rendered to the human).
 type runbookSection struct {
 	Heading string `json:"heading"`
 	Purpose string `json:"purpose"`
@@ -251,19 +304,33 @@ func conventionsStructured() conventionsJSON {
 	}
 	c.PreferredCommand = "wyk handoff <id>   (or 'wyk handoff -create \"<title>\"' to file + hand off in one step)"
 	c.BdCreateExample = `bd create --priority=1 --type=task --labels="human,src:agent" --title="<imperative>" --description="<runbook with required sections>"`
+	why := runbookSection{
+		Heading: runbookHeadingWhy,
+		Purpose: "Agent's claim of self-verification. State (a) what was tried (three concrete attempts), (b) where the wall was hit, (c) why no workaround exists. The human is invited to push back by bouncing it back with H if the claim is wrong.",
+	}
+	unblocks := runbookSection{
+		Heading: runbookHeadingUnblocks,
+		Purpose: "The concrete artifact the agent expects to find when the issue returns (credential at known path, URL in a constant, decision in the description). The next agent that picks up the bounce-back needs this to resume.",
+	}
+	// TASK shape: the human is asked to DO something, so the middle
+	// section is the directions they follow.
 	c.RunbookSections = []runbookSection{
+		why,
 		{
-			Heading: "## Why this needs you (please confirm this is accurate)",
-			Purpose: "Agent's claim of self-verification. State (a) what was tried (three concrete attempts), (b) where the wall was hit, (c) why no workaround exists. The human is invited to push back by bouncing it back with H if the claim is wrong.",
+			Heading: runbookHeadingSteps,
+			Purpose: "Numbered directions the human can follow without re-deriving the agent's context: every command, URL, file path and account involved, in order, then a verification step. Last step is 'Close this issue when complete.' A task with no directions is rejected by wyk handoff.",
 		},
+		unblocks,
+	}
+	// QUESTION shape: the human is asked to ANSWER or DECIDE, so the
+	// middle section is the question itself, not steps.
+	c.QuestionSections = []runbookSection{
+		why,
 		{
-			Heading: "## Steps",
-			Purpose: "Numbered steps with concrete locations and a verification step. Last step is 'Close this issue when complete.'",
+			Heading: runbookHeadingQuestion,
+			Purpose: "The exact question as one sentence ending in '?', the options considered with the consequence of each, the agent's recommendation, and where to record the answer (a bd note on the issue, then bounce back with H). Use this instead of dressing a decision up as steps; and if a reply in the current conversation would answer it, ask there instead of handing off.",
 		},
-		{
-			Heading: "## What unblocks me when this returns",
-			Purpose: "The concrete artifact the agent expects to find when the issue returns (credential at known path, URL in a constant, decision in the description). The next agent that picks up the bounce-back needs this to resume.",
-		},
+		unblocks,
 	}
 	c.ContractURL = "https://github.com/jimbottle/would-you-kindly/blob/main/docs/CONTRACT.md"
 	return c

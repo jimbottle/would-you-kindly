@@ -150,7 +150,7 @@ func TestHandoff_PipeWithContentStillWorks(t *testing.T) {
 	defer r.Close()
 	swapStdin(t, r)
 	go func() {
-		_, _ = w.WriteString("1. rotate the key\n2. paste it at the known path\n")
+		_, _ = w.WriteString("## Steps\n1. rotate the key\n2. paste it at the known path\n")
 		_ = w.Close()
 	}()
 

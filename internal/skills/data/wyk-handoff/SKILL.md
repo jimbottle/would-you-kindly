@@ -8,6 +8,29 @@ description: Use when you have done everything you can on a task but a remaining
 When the next step is genuinely a human's to take, hand it off with a
 runbook they can follow. The issue's **description IS that runbook**.
 
+## First: is this a task or a question?
+
+Decide before you write a word. The runbook's middle section declares
+which, and `wyk handoff` **refuses** a runbook that has neither heading.
+
+- **Task** — you need the human to **do** something (click through a
+  UI, rotate a secret, approve a PR). The middle section is
+  `## Steps`: numbered directions they can follow **without
+  re-deriving your context** — every command, URL, file path and
+  account, in order, then how to verify, then "Close this issue when
+  complete." A task with no directions is a wish, not a task.
+- **Question** — you need the human to **answer or decide**
+  something. The middle section is `## Question`: the exact question
+  as one sentence ending in `?`, the options you weighed with the
+  consequence of each, your recommendation, and where to record the
+  answer (a `bd note` on the issue, then bounce back with `H`). Don't
+  dress a decision up as steps ("1. Decide X"). And if a reply in the
+  current conversation would answer it, ask it there — don't hand off.
+
+Get the skeleton with `wyk handoff -template` (task) or
+`wyk handoff -template -question` (question), fill it in, and pass it
+as the runbook.
+
 ## Hand off
 
 Flags go before the issue id (Go flag parsing stops at the first
@@ -36,10 +59,21 @@ labels via `bd create`.
 
 ## Write a complete runbook
 
-The human should be able to act without re-deriving context. State:
-the exact step(s) only they can do, the commands / URLs / files
-involved, what "done" looks like, and what to hand back. Keep it tight
-— no filler, no restating things they already know.
+Three sections, in this order:
+
+1. `## Why this needs you (please confirm this is accurate)` — what
+   you tried (three concrete attempts), the wall you hit, why no
+   workaround exists. Phrased as a claim the human can push back on.
+2. `## Steps` (task) **or** `## Question` (question) — see above.
+3. `## What unblocks me when this returns` — the concrete artifact
+   you expect back (credential at a known path, URL in a constant, a
+   decision in a note), and for a question what you'll do with each
+   answer, so the next agent can resume without re-asking.
+
+The human should be able to act without re-deriving context. Keep it
+tight — no filler, no restating things they already know.
+`wyk handoff -dry-run` runs the same shape check as the real write, so
+use it to confirm the runbook will be accepted.
 
 ## Do NOT hand off
 

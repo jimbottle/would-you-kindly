@@ -748,21 +748,52 @@ func buildSource(dir, me string) (tui.Source, []string, string, error) {
 	}
 }
 
-// handoffRunbookTemplate is the skeleton `wyk handoff --template` prints.
-// It mirrors the three REQUIRED sections in docs/CONTRACT.md so a human
-// filling in a handoff doesn't have to memorize the headings.
-const handoffRunbookTemplate = `## Why this needs you (please confirm this is accurate)
+// handoffRunbookTemplate is the TASK skeleton `wyk handoff --template`
+// prints: the human is being asked to DO something, so the middle
+// section is "## Steps" — the directions they follow. It mirrors the
+// three REQUIRED sections in docs/CONTRACT.md so a human filling in a
+// handoff doesn't have to memorize the headings.
+const handoffRunbookTemplate = runbookHeadingWhy + `
 <What you tried (three concrete attempts), the boundary you hit, and why
 no workaround exists. Phrased as a claim the human can push back on.>
 
-## Steps
+` + runbookHeadingSteps + `
+<Directions the human can follow WITHOUT re-deriving your context: every
+command, URL, file path, and account involved, in order.>
 1. <concrete step with a location>
 2. <…>
-3. Close this issue when complete.
+3. <how to verify it worked>
+4. Close this issue when complete.
 
-## What unblocks me when this returns
+` + runbookHeadingUnblocks + `
 <The concrete artifact you expect back — a credential at a known path, a
 URL in a constant, a decision recorded here — so the next agent can resume.>
+`
+
+// handoffQuestionTemplate is the QUESTION skeleton `wyk handoff
+// --template -question` prints: the human is being asked to ANSWER or
+// DECIDE, not to do work, so the middle section is "## Question" — the
+// exact question, the options, and the agent's recommendation — rather
+// than "## Steps". The other two sections are the same as the task shape.
+const handoffQuestionTemplate = runbookHeadingWhy + `
+<Why this is the human's call — a decision with consequences you can't
+own (cost, legal, product direction, an irreversible change) or a fact
+only they know. What you already ruled out on your own.>
+
+` + runbookHeadingQuestion + `
+<The exact question, as one sentence ending in "?".>
+
+Options considered:
+- A: <option> — <consequence>
+- B: <option> — <consequence>
+Recommendation: <A or B, and why>.
+
+Answer by replying in a ` + "`bd note`" + ` on this issue (or editing this
+description), then bounce it back with H. Close instead if the question is moot.
+
+` + runbookHeadingUnblocks + `
+<The decision recorded on this issue, and what you'll do with each answer
+— so the next agent can act on it without re-asking.>
 `
 
 // runHandoff implements `wyk handoff`: read a runbook from stdin
@@ -809,6 +840,8 @@ func runHandoff(args []string) int {
 		"print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it")
 	template := fs.Bool("template", false,
 		"print the required 3-section runbook skeleton to stdout and exit (no bd writes); pipe it into your editor, fill it in, then run: wyk handoff <id> < filled.md")
+	question := fs.Bool("question", false,
+		"with -template: print the QUESTION skeleton (## Question — the human answers or decides) instead of the TASK skeleton (## Steps — the human does something)")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -822,8 +855,16 @@ func runHandoff(args []string) int {
 	// human (or agent) has the required structure to fill in, rather than
 	// memorizing the three headings (would-you-kindly-uhux).
 	if *template {
-		fmt.Print(handoffRunbookTemplate)
+		if *question {
+			fmt.Print(handoffQuestionTemplate)
+		} else {
+			fmt.Print(handoffRunbookTemplate)
+		}
 		return 0
+	}
+	if *question {
+		fmt.Fprintln(os.Stderr, "wyk handoff: -question only modifies -template (the runbook itself declares its shape via a \"## Steps\" or \"## Question\" heading)")
+		return 64
 	}
 
 	// Validate -C like the other arg checks below: a typo'd path is a
@@ -908,6 +949,16 @@ func runHandoff(args []string) int {
 	if runbook == "" && !*allowEmpty {
 		fmt.Fprintln(os.Stderr,
 			"wyk handoff: empty runbook would clear the description. Pass -allow-empty to confirm.")
+		return 64
+	}
+	// A runbook must declare what kind of human task it is: a TASK (has
+	// "## Steps" — directions the human follows) or a QUESTION (has
+	// "## Question" — something the human answers). Handing a human a
+	// bare "please do X" with no directions was the recurring failure
+	// this guards against. Checked before -dry-run so a dry run vouches
+	// for a runbook the real write would accept (would-you-kindly-56zl).
+	if err := checkRunbookShape(runbook); err != nil {
+		fmt.Fprintln(os.Stderr, "wyk handoff:", err)
 		return 64
 	}
 

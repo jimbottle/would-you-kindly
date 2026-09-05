@@ -76,7 +76,7 @@ func writeRunbook(t *testing.T, body string) string {
 
 func TestHandoff_DryRunBareIDPrintsPlanWithoutWriting(t *testing.T) {
 	clearAmbientIdentity(t)
-	path := writeRunbook(t, "1. step one\n2. step two")
+	path := writeRunbook(t, "## Steps\n1. step one\n2. step two")
 	out := captureHandoffStdout(t, func() {
 		if code := runHandoff([]string{"-dry-run", "-file", path, "wyk-42"}); code != 0 {
 			t.Errorf("dry-run exit %d, want 0", code)
@@ -99,7 +99,7 @@ func TestHandoff_DryRunBareIDPrintsPlanWithoutWriting(t *testing.T) {
 func TestHandoff_DryRunCreateWithIdentityAddsRoutingLabel(t *testing.T) {
 	t.Setenv(sessionEnvVar, "")  // deterministic labels (no session stamp)
 	t.Setenv(identityEnvVar, "") // no ambient identity; -identity drives it
-	path := writeRunbook(t, "do the thing")
+	path := writeRunbook(t, "## Steps\n1. do the thing")
 	out := captureHandoffStdout(t, func() {
 		if code := runHandoff([]string{
 			"-dry-run", "-create", "Rotate creds", "-identity", "alice", "-file", path,
@@ -121,7 +121,7 @@ func TestHandoff_DryRunCreateWithIdentityAddsRoutingLabel(t *testing.T) {
 
 func TestHandoff_DryRunBareIDWithIdentityShowsRouting(t *testing.T) {
 	t.Setenv(identityEnvVar, "")
-	path := writeRunbook(t, "1. step")
+	path := writeRunbook(t, "## Steps\n1. step")
 	out := captureHandoffStdout(t, func() {
 		if code := runHandoff([]string{"-dry-run", "-identity", "claude", "-file", path, "wyk-9"}); code != 0 {
 			t.Errorf("dry-run bare-id -identity exit %d, want 0", code)
@@ -139,7 +139,7 @@ func TestHandoff_DryRunBareIDWithIdentityShowsRouting(t *testing.T) {
 
 func TestHandoff_MalformedIdentityIsUsageError(t *testing.T) {
 	t.Setenv(identityEnvVar, "")
-	path := writeRunbook(t, "1. step")
+	path := writeRunbook(t, "## Steps\n1. step")
 	if code := runHandoff([]string{"-identity", "Bad Name", "-file", path, "wyk-1"}); code != 64 {
 		t.Errorf("handoff -identity 'Bad Name' = %d, want 64 (usage error)", code)
 	}
@@ -148,7 +148,7 @@ func TestHandoff_MalformedIdentityIsUsageError(t *testing.T) {
 func TestHandoff_DryRunCreatePrintsCreatePlanWithoutWriting(t *testing.T) {
 	clearAmbientIdentity(t)
 	t.Setenv(sessionEnvVar, "") // deterministic labels (no session stamp)
-	path := writeRunbook(t, "do the thing")
+	path := writeRunbook(t, "## Steps\n1. do the thing")
 	out := captureHandoffStdout(t, func() {
 		if code := runHandoff([]string{
 			"-dry-run", "-create", "Rotate the staging DB password",
@@ -174,7 +174,7 @@ func TestHandoff_CreateStampsSessionLabel(t *testing.T) {
 	// `wyk handoff -create` records the Claude session like `wyk create`,
 	// so handoff-filed issues populate the TUI's Session column too.
 	t.Setenv(sessionEnvVar, "sess-9999")
-	path := writeRunbook(t, "do the thing")
+	path := writeRunbook(t, "## Steps\n1. do the thing")
 	out := captureHandoffStdout(t, func() {
 		runHandoff([]string{
 			"-dry-run", "-create", "A handoff", "-file", path,
@@ -243,7 +243,7 @@ func TestHandoff_DryRunBannerPrintsCanonicalPriority(t *testing.T) {
 	// flag value passes every other test (they all use already-
 	// canonical priorities) but fails this one (roborev #2054).
 	t.Setenv(sessionEnvVar, "")
-	path := writeRunbook(t, "do the thing")
+	path := writeRunbook(t, "## Steps\n1. do the thing")
 	out := captureHandoffStdout(t, func() {
 		if code := runHandoff([]string{
 			"-dry-run", "-create", "x", "-priority", "p2", "-file", path,
@@ -323,7 +323,7 @@ func TestRunHandoff_RegistersTargetWorkspace(t *testing.T) {
 
 	dir := t.TempDir()
 	runbook := filepath.Join(t.TempDir(), "runbook.md")
-	if err := os.WriteFile(runbook, []byte("do the thing"), 0o644); err != nil {
+	if err := os.WriteFile(runbook, []byte("## Steps\n1. do the thing"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,7 +351,7 @@ func TestRunHandoff_DryRunDoesNotRegister(t *testing.T) {
 
 	dir := t.TempDir()
 	runbook := filepath.Join(t.TempDir(), "runbook.md")
-	if err := os.WriteFile(runbook, []byte("do the thing"), 0o644); err != nil {
+	if err := os.WriteFile(runbook, []byte("## Steps\n1. do the thing"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

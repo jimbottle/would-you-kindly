@@ -929,7 +929,7 @@ const rememberedConventionKey = "wyk-handoff-convention"
 // rememberedConventionMemory is the memory text wyk init stores
 // via bd remember. Kept as a const so a test can assert the labels
 // are present.
-const rememberedConventionMemory = "wyk convention: a human task carries label=human + label=src:agent; agent-owned just label=src:agent. Inbox = `" + agentInboxQuery + "` (run `wyk inbox`) — WORK returned items, don't just note them. Skip HUMAN-BLOCK rows (agent task with a human-flagged dep) and AGENT-HANDOFF rows (label=agent-handoff = another agent's; a human coordinates). File/hand off a human task with `wyk handoff <id>` (or `wyk handoff -create \"<title>\"`), never hand-rolled labels. Multi-agent: route with `wyk handoff --identity <name>` (adds src:agent:<name>), read with `wyk inbox --identity <name>` or $WYK_AGENT_IDENTITY. Statuses: open(default)/in_progress/hooked(another agent's hook)/blocked(+--add-dependency)/deferred(subsystem not ready, hidden from bd ready)/pinned(persistent, never a queue entry)/closed; prefer deferred over holding a task open. Full text + runbook format: `wyk conventions`."
+const rememberedConventionMemory = "wyk convention: a human task carries label=human + label=src:agent; agent-owned just label=src:agent. Inbox = `" + agentInboxQuery + "` (run `wyk inbox`) — WORK returned items, don't just note them. Skip HUMAN-BLOCK rows (agent task with a human-flagged dep) and AGENT-HANDOFF rows (label=agent-handoff = another agent's; a human coordinates). File/hand off a human task with `wyk handoff <id>` (or `wyk handoff -create \"<title>\"`), never hand-rolled labels; the runbook must be a TASK (`## Steps` = directions the human follows) or a QUESTION (`## Question` = what the human answers/decides) — neither heading and wyk handoff refuses it. Multi-agent: route with `wyk handoff --identity <name>` (adds src:agent:<name>), read with `wyk inbox --identity <name>` or $WYK_AGENT_IDENTITY. Statuses: open(default)/in_progress/hooked(another agent's hook)/blocked(+--add-dependency)/deferred(subsystem not ready, hidden from bd ready)/pinned(persistent, never a queue entry)/closed; prefer deferred over holding a task open. Full text + runbook format: `wyk conventions`."
 
 // teachBDConvention writes a single bd memory describing the wyk
 // label convention into repoRoot's bd workspace. The --key makes
@@ -990,7 +990,11 @@ re-run as ` + "`wyk create`" + `.
 
 **Hand off to a human**: ` + "`wyk handoff <id>`" + ` (or ` + "`wyk handoff -create \"<title>\"`" + `)
 sets ` + "`human`" + ` + writes the runbook. Never hand-roll labels; ` + "`-a`/`--claim`" + `
-are bd's status, not the badge.
+are bd's status, not the badge. Decide first what you're asking for: a
+**task** (the human DOES something → the runbook needs ` + "`## Steps`" + `, the
+directions they follow) or a **question** (the human ANSWERS/DECIDES →
+` + "`## Question`" + `, with options + your recommendation). ` + "`wyk handoff`" + ` refuses a
+runbook with neither. ` + "`wyk handoff -template [-question]`" + ` prints the skeleton.
 
 **Pick up work**: ` + "`wyk inbox`" + ` FIRST (items bounced back to you — WORK them),
 then ` + "`wyk`" + ` / ` + "`bd ready`" + `. ` + "`wyk conventions`" + ` prints the full contract.

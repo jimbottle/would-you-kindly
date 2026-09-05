@@ -251,7 +251,12 @@ cat runbook.md | wyk handoff wyk-42
 `wyk handoff` tags the issue with the `human` label and replaces its
 description with the runbook from stdin (or `--file <path>`). With
 `-create`, it runs `bd create` first (with `src:agent`) and uses the
-new ID for the handoff. Same
+new ID for the handoff. The runbook must say what kind of human task
+it is: a **task** carries `## Steps` (the directions the human
+follows), a **question** carries `## Question` (what the human is
+asked to decide, with options and a recommendation). A runbook with
+neither heading is refused; `wyk handoff -template [-question]`
+prints the matching skeleton. Same
 contract as the TUI's `H` key — see
 [`docs/CONTRACT.md`](docs/CONTRACT.md). Go programs can call
 [`pkg/handoff.BounceToHuman`](pkg/handoff/handoff.go) directly.
