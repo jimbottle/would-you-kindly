@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -325,5 +326,51 @@ func TestFilter_EscInListClearsFilterBeforeMarks(t *testing.T) {
 	m = model.(Model)
 	if len(m.marked) != 0 {
 		t.Errorf("second esc should clear marks; marked=%v", m.marked)
+	}
+}
+
+func TestFilter_EscClearResolvesDepsUnderDepsSort(t *testing.T) {
+	// Clearing the filter widens the list to rows the filter had
+	// hidden; under the deps sort those rows may have no cached
+	// edges, so both esc paths must schedule resolution the way
+	// enter does (roborev #4692).
+	src := &stubDepSource{
+		stubSource: stubSource{issues: sampleIssues()},
+		edges:      map[string][]string{"a-2": {"a-1"}},
+	}
+	m := New(src)
+	m = applyFetched(m, &src.stubSource)
+	m = pressSortToDeps(m)
+	if m.depLister == nil || m.sortBy != sortDeps {
+		t.Fatalf("setup: deps sort with a DepLister; sortBy=%v lister=%v", m.sortBy, m.depLister != nil)
+	}
+	// Only the filtered-in row's edges are cached.
+	m.depCache = map[string][]beads.Issue{"a-1": nil}
+	defer withFlashClearDelay(t, time.Millisecond)()
+
+	// Prompt path: type a filter, esc.
+	m = typeFilter(t, m, "rotate")
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	m = applyResolveCmd(t, m, cmd)
+	if _, ok := m.depCache["a-2"]; !ok {
+		t.Error("esc in the prompt should resolve the widened list's deps; a-2 still uncached")
+	}
+	delete(m.depCache, "a-2")
+
+	// List path: apply a filter with enter, then esc from the list.
+	m = typeFilter(t, m, "rotate")
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.query != "" {
+		t.Fatalf("esc in the list should clear the filter; got %q", m.query)
+	}
+	// The batch must actually carry the resolver alongside the
+	// flash clear: with a pure flash-clear batch a-2 stays uncached.
+	m = applyResolveCmd(t, m, cmd)
+	if _, ok := m.depCache["a-2"]; !ok {
+		t.Error("esc in the list should resolve the widened list's deps; a-2 still uncached")
 	}
 }

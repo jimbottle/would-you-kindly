@@ -246,7 +246,10 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		m.recomputeVisible()
 		m.ensureCursorVisible()
-		return m, nil
+		// Clearing widens the list to every row; under the deps sort
+		// the rows the filter hid may have no cached edges yet, so
+		// schedule resolution exactly as enter does (nil otherwise).
+		return m, m.maybeResolveDeps()
 	case "enter":
 		// Trim once so the lookup key, the applied query, and the
 		// status banner all agree — a stray trailing space on

@@ -1618,7 +1618,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.recomputeVisible()
 			m.ensureCursorVisible()
 			m.setStatus("cleared filter")
-			return m, flashClearCmd(m.statusGen)
+			// The widened list may hold rows with no cached deps
+			// edges under the deps sort; resolve them like enter.
+			return m, tea.Batch(flashClearCmd(m.statusGen), m.maybeResolveDeps())
 		}
 		// Without a dedicated escape, the only way to drop a
 		// botched mark set would be `v` on each row — too punishing.
