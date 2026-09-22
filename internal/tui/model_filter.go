@@ -234,8 +234,18 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
+		// esc abandons the prompt AND the filter. The query is
+		// applied live as the user types, so closing the prompt
+		// without clearing it would leave a half-typed filter
+		// silently narrowing the list with nothing on screen to
+		// explain why rows are missing. esc means "never mind":
+		// back to the unfiltered list. enter is the way to keep it.
+		m.query = ""
+		m.input.SetValue("")
 		m.mode = modeList
 		m.input.Blur()
+		m.recomputeVisible()
+		m.ensureCursorVisible()
 		return m, nil
 	case "enter":
 		// Trim once so the lookup key, the applied query, and the

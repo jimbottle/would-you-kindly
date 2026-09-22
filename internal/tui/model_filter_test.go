@@ -232,3 +232,98 @@ func TestFilter_ArrowKeysMoveCursorWhileTyping(t *testing.T) {
 		t.Fatalf("enter should return to list with cursor kept; mode=%v cursor=%d", m.mode, m.cursor)
 	}
 }
+
+func typeFilter(t *testing.T, m Model, q string) Model {
+	t.Helper()
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	if m.mode != modeFilter {
+		t.Fatalf("setup: expected modeFilter, got %v", m.mode)
+	}
+	for _, r := range q {
+		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = model.(Model)
+	}
+	return m
+}
+
+func TestFilter_EscInPromptClearsFilter(t *testing.T) {
+	// The query narrows the list live as the user types, so esc
+	// must drop it rather than just close the prompt — otherwise a
+	// half-typed filter keeps hiding rows with no prompt on screen
+	// to explain why.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m = typeFilter(t, m, "rotate")
+	if len(m.visible) != 1 {
+		t.Fatalf("setup: live filter should narrow to 1 row; got %d", len(m.visible))
+	}
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Fatalf("esc should return to modeList; got %v", m.mode)
+	}
+	if m.query != "" {
+		t.Errorf("esc should clear the query; got %q", m.query)
+	}
+	if got := len(m.visible); got != len(sampleIssues()) {
+		t.Errorf("esc should restore the full list; visible=%d", got)
+	}
+	// Reopening the prompt must not resurrect the abandoned text.
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	if v := m.input.Value(); v != "" {
+		t.Errorf("reopened prompt should be empty; got %q", v)
+	}
+}
+
+func TestFilter_EscInListClearsAppliedFilter(t *testing.T) {
+	// After enter applies a filter, esc from the list clears it —
+	// the empty-view hint promises "esc to clear the fuzzy filter".
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m = typeFilter(t, m, "rotate")
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if m.mode != modeList || m.query != "rotate" || len(m.visible) != 1 {
+		t.Fatalf("setup: enter should apply the filter; mode=%v query=%q visible=%d", m.mode, m.query, len(m.visible))
+	}
+
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.query != "" {
+		t.Errorf("esc in list should clear the applied query; got %q", m.query)
+	}
+	if got := len(m.visible); got != len(sampleIssues()) {
+		t.Errorf("esc should restore the full list; visible=%d", got)
+	}
+	if m.status != "cleared filter" {
+		t.Errorf("expected 'cleared filter' status; got %q", m.status)
+	}
+}
+
+func TestFilter_EscInListClearsFilterBeforeMarks(t *testing.T) {
+	// With both a filter and marks active, the first esc drops only
+	// the filter; marks survive for a second esc.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m.marked = map[string]bool{"a-2": true}
+	m = typeFilter(t, m, "rotate")
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if m.query != "" {
+		t.Errorf("first esc should clear the filter; got %q", m.query)
+	}
+	if len(m.marked) != 1 {
+		t.Errorf("first esc must leave marks alone; marked=%v", m.marked)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = model.(Model)
+	if len(m.marked) != 0 {
+		t.Errorf("second esc should clear marks; marked=%v", m.marked)
+	}
+}

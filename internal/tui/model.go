@@ -1551,11 +1551,23 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyHit(msg, m.keys.Quit):
 		return m.quitNow()
 	case keyHit(msg, m.keys.Back):
-		// esc in modeList clears the multi-select. Without a
-		// dedicated escape, the only way to drop a botched mark
-		// set would be `v` on each row — too punishing. Other esc
-		// uses (cancel prompt, return from detail) live in their
-		// own mode handlers and don't reach here.
+		// esc in modeList clears an applied / filter first, then
+		// the multi-select. The empty-view hint promises "esc to
+		// clear the fuzzy filter", and without this the only way
+		// to drop a filter was `/`, backspace it away, enter.
+		// Marks come second so one esc never wipes both at once.
+		// Other esc uses (cancel prompt, return from detail) live
+		// in their own mode handlers and don't reach here.
+		if m.query != "" {
+			m.query = ""
+			m.input.SetValue("")
+			m.recomputeVisible()
+			m.ensureCursorVisible()
+			m.setStatus("cleared filter")
+			return m, flashClearCmd(m.statusGen)
+		}
+		// Without a dedicated escape, the only way to drop a
+		// botched mark set would be `v` on each row — too punishing.
 		if len(m.marked) > 0 {
 			m.marked = nil
 			m.setStatus("cleared marks")
