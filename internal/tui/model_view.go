@@ -215,7 +215,9 @@ func (m Model) viewHelp() string {
 	b.WriteString(helpStyle.Render("  IDs are shown in full (e.g. \"" + exampleFullID(m) + "ma5.2.1\"), the way\n"))
 	b.WriteString(helpStyle.Render("  bd and your agents refer to them, so a quoted ID matches a row\n"))
 	b.WriteString(helpStyle.Render("  on sight. Press ⏎ to expand a row; y yanks the ID.\n"))
-	b.WriteString(helpStyle.Render("  Mouse: in the list, the wheel scrolls and a click selects a row.\n"))
+	b.WriteString(helpStyle.Render("  Mouse: in the list, the wheel scrolls, a click selects a row and a\n"))
+	b.WriteString(helpStyle.Render("  second click opens it; click a column header to sort (again to\n"))
+	b.WriteString(helpStyle.Render("  reverse); click or drag the scrollbar, or the ↑/↓ hints, to page.\n"))
 	b.WriteString(helpStyle.Render("  Split layout (140×36+): the pane follows the cursor; ⏎ focuses it,\n"))
 	b.WriteString(helpStyle.Render("  esc returns, p hides/shows it. The wheel scrolls the pane it's over.\n"))
 	b.WriteString(helpStyle.Render("  The detail view releases the mouse automatically so click-drag\n"))
@@ -369,8 +371,13 @@ func (m Model) listBody() string {
 			if start > end {
 				start = end
 			}
+			sb, hasBar := m.listScrollbar(m.width)
 			for i := start; i < end; i++ {
-				b.WriteString(m.renderRow(m.visible[i], i == m.cursor))
+				row := m.renderRow(m.visible[i], i == m.cursor)
+				if hasBar {
+					row = sb.withScrollbar(row, i-start)
+				}
+				b.WriteString(row)
 				b.WriteByte('\n')
 			}
 			// "+N more above/below" hints when the window doesn't
@@ -689,36 +696,67 @@ func lcp(a, b string) string {
 // cursor column on data rows so the title and ID columns share a
 // left edge. Repo and Branch only appear when the current list
 // spans multiple workspaces.
+// headerCell is one column caption: its label, the padded width it
+// occupies (the title, last, is unpadded: width 0), and the sort axis
+// a click on it selects (sortNone for non-sortable columns). natural
+// is the arrow for the axis's natural direction.
+type headerCell struct {
+	label   string
+	width   int
+	sort    sortKey
+	natural string
+}
+
+// headerCells lists the header's cells in paint order for the current
+// column visibility and widths. renderHeader paints them and
+// headerSortAt hit-tests clicks against them, so the two share one
+// layout by construction.
+func (m Model) headerCells() []headerCell {
+	var cells []headerCell
+	if m.colVisible(colIDOwner) {
+		cells = append(cells, headerCell{label: "Owner", width: m.cw.owner})
+	}
+	if m.isMultiRepo() {
+		if m.colVisible(colIDRepo) {
+			cells = append(cells, headerCell{label: "Repo", width: m.cw.repo, sort: sortRepo, natural: "↑"})
+		}
+		if m.colVisible(colIDBranch) {
+			cells = append(cells, headerCell{label: "Branch", width: m.cw.branch})
+		}
+	}
+	cells = append(cells, headerCell{label: "ID", width: m.cw.id, sort: sortID, natural: "↑"})
+	if m.colVisible(colIDType) {
+		cells = append(cells, headerCell{label: "Type", width: m.cw.typ})
+	}
+	if m.colVisible(colIDStatus) {
+		cells = append(cells, headerCell{label: "Status", width: m.cw.status})
+	}
+	cells = append(cells, headerCell{label: "Priority", width: m.cw.prio, sort: sortPriority, natural: "↑"})
+	if m.colVisible(colIDUpdated) {
+		cells = append(cells, headerCell{label: "Updated", width: m.cw.updated, sort: sortUpdated, natural: "↓"})
+	}
+	if m.colVisible(colIDSession) {
+		cells = append(cells, headerCell{label: "Session", width: m.cw.session})
+	}
+	return append(cells, headerCell{label: "Title"})
+}
+
 func (m Model) renderHeader() string {
 	const cursor = "  "
 	var b strings.Builder
 	b.WriteString(cursor)
-	if m.colVisible(colIDOwner) {
-		fmt.Fprintf(&b, "%-*s  ", m.cw.owner, "Owner")
-	}
-	if m.isMultiRepo() {
-		if m.colVisible(colIDRepo) {
-			fmt.Fprintf(&b, "%-*s  ", m.cw.repo, sortDecorate("Repo", m.sortBy == sortRepo, "↑", m.sortDesc))
+	cells := m.headerCells()
+	for i, c := range cells {
+		label := c.label
+		if c.sort != sortNone {
+			label = sortDecorate(label, m.sortBy == c.sort, c.natural, m.sortDesc)
 		}
-		if m.colVisible(colIDBranch) {
-			fmt.Fprintf(&b, "%-*s  ", m.cw.branch, "Branch")
+		if i == len(cells)-1 {
+			b.WriteString(label)
+			break
 		}
+		fmt.Fprintf(&b, "%-*s  ", c.width, label)
 	}
-	fmt.Fprintf(&b, "%-*s  ", m.cw.id, sortDecorate("ID", m.sortBy == sortID, "↑", m.sortDesc))
-	if m.colVisible(colIDType) {
-		fmt.Fprintf(&b, "%-*s  ", m.cw.typ, "Type")
-	}
-	if m.colVisible(colIDStatus) {
-		fmt.Fprintf(&b, "%-*s  ", m.cw.status, "Status")
-	}
-	fmt.Fprintf(&b, "%-*s  ", m.cw.prio, sortDecorate("Priority", m.sortBy == sortPriority, "↑", m.sortDesc))
-	if m.colVisible(colIDUpdated) {
-		fmt.Fprintf(&b, "%-*s  ", m.cw.updated, sortDecorate("Updated", m.sortBy == sortUpdated, "↓", m.sortDesc))
-	}
-	if m.colVisible(colIDSession) {
-		fmt.Fprintf(&b, "%-*s  ", m.cw.session, "Session")
-	}
-	b.WriteString("Title")
 	return tableHeaderStyle.Render(b.String())
 }
 
@@ -1056,6 +1094,11 @@ func (m Model) titleBudget() int {
 		used += m.cw.session + sep
 	}
 	avail := m.width - used
+	// When the list overflows, the scrollbar takes the last column
+	// (plus a space of separation) off the title's flex width.
+	if m.listOverflows() {
+		avail -= scrollbarGutter
+	}
 	if avail < 20 {
 		avail = 20 // floor so we don't render an empty title cell
 	}

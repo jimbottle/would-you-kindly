@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // These tests largely resurrect the coverage removed in 58db776 when
@@ -89,33 +90,42 @@ func TestMouseLeftClick_OutsideTableIsNoOp(t *testing.T) {
 	}
 }
 
-func TestMouseLeftClick_OnMoreBelowHintIsNoOp(t *testing.T) {
+func TestMouseLeftClick_OnMoreBelowHintPagesDown(t *testing.T) {
 	// When the row window is smaller than len(visible), viewList
 	// renders a "↓ N more below" hint line just past the last row.
 	// Clicking that hint used to map to the next out-of-window row
-	// (target = scroll + rowY, which is a valid index whenever the
-	// view is partially scrolled), producing a surprising downward
-	// cursor jump. The clamp treats such clicks as no-ops.
+	// (a surprising one-row jump); it now pages the window down,
+	// and the cursor rides along inside the new window.
 	src := &stubSource{issues: manyIssues(50)}
 	m := New(src)
-	// Constrain height so bodyHeight is small and the hint line
-	// actually renders.
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 200, Height: 12})
 	m = model.(Model)
 	m = applyFetched(m, src)
-	if m.bodyHeight() >= len(m.visible) {
-		t.Fatalf("test premise: bodyHeight (%d) should be < visible (%d) so a hint line renders", m.bodyHeight(), len(m.visible))
+	h := m.bodyHeight()
+	if h >= len(m.visible) {
+		t.Fatalf("test premise: bodyHeight (%d) should be < visible (%d) so a hint line renders", h, len(m.visible))
 	}
 
-	preCursor := m.cursor
-	// Click one cell past the body — the "↓ N more below" line.
-	hintY := m.rowsStartY() + m.bodyHeight()
+	hintY := m.rowsStartY() + h
 	model, _ = m.Update(tea.MouseMsg{
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: hintY,
 	})
 	m = model.(Model)
-	if m.cursor != preCursor {
-		t.Errorf("click on more-below hint should be a no-op; cursor moved %d → %d", preCursor, m.cursor)
+	if m.scroll != h {
+		t.Errorf("click on ↓ hint should page down one window; scroll=%d want %d", m.scroll, h)
+	}
+	if m.cursor < m.scroll || m.cursor >= m.scroll+h {
+		t.Errorf("cursor %d should stay inside the window [%d,%d)", m.cursor, m.scroll, m.scroll+h)
+	}
+
+	// Now both hints render: ↑ at hintY, ↓ one line lower. Clicking
+	// ↑ pages back to the top.
+	model, _ = m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: hintY,
+	})
+	m = model.(Model)
+	if m.scroll != 0 {
+		t.Errorf("click on ↑ hint should page up; scroll=%d", m.scroll)
 	}
 }
 
@@ -484,5 +494,171 @@ func TestStartWithMouseCapture(t *testing.T) {
 	}
 	if New(src).WithSession(SessionState{MouseOff: true}, "").StartWithMouseCapture() {
 		t.Error("restored mouse_off must start released")
+	}
+}
+
+// overflowingList is a 50-row list in a short window with the
+// scrollbar showing: the fixture for the click-again / header /
+// scrollbar tests below.
+func overflowingList(t *testing.T) Model {
+	t.Helper()
+	src := &stubSource{issues: manyIssues(50)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 14})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	if !m.listOverflows() {
+		t.Fatalf("setup: list should overflow; bodyHeight=%d visible=%d", m.bodyHeight(), len(m.visible))
+	}
+	return m
+}
+
+func TestMouseLeftClick_OnSelectedRowOpensDetail(t *testing.T) {
+	// The mouse's Enter: clicking the row that's already selected
+	// opens it, the same as pressing ⏎ on it.
+	m := overflowingList(t)
+	y := m.rowsStartY() + 3
+	model, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: y})
+	m = model.(Model)
+	if m.cursor != 3 || m.mode != modeList {
+		t.Fatalf("first click should only select row 3; cursor=%d mode=%v", m.cursor, m.mode)
+	}
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: y})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Errorf("second click on the selected row should open detail; mode=%v", m.mode)
+	}
+	if m.detailIssue.ID != "a-4" {
+		t.Errorf("detail should show the clicked row; got %q", m.detailIssue.ID)
+	}
+}
+
+func TestMouseLeftClick_HeaderSortsAndReverses(t *testing.T) {
+	m := overflowingList(t)
+	// Widths are sized per paint, so size a scratch copy the way the
+	// view does to find the Priority cell's x range, walking the same
+	// cells the header paints.
+	sized := m
+	sized.cw = sized.computeColWidths(sized.visible)
+	sized.autoHidden = sized.computeAutoHidden()
+	headerY := m.rowsStartY() - 1
+	x := 2
+	prioX := -1
+	for _, c := range sized.headerCells() {
+		if c.label == "Priority" {
+			prioX = x
+			break
+		}
+		x += c.width + 2
+	}
+	if prioX < 0 {
+		t.Fatal("setup: no Priority header cell")
+	}
+	model, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: prioX + 1, Y: headerY})
+	m = model.(Model)
+	if m.sortBy != sortPriority || m.sortDesc {
+		t.Fatalf("click on Priority header should sort by priority asc; sortBy=%v desc=%v", m.sortBy, m.sortDesc)
+	}
+	// Sorting adds the chip strip above the table, so the header
+	// moved down a line: re-derive its Y the way the view does.
+	headerY = m.rowsStartY() - 1
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: prioX + 1, Y: headerY})
+	m = model.(Model)
+	if m.sortBy != sortPriority || !m.sortDesc {
+		t.Errorf("second click on the active axis should reverse it; sortBy=%v desc=%v", m.sortBy, m.sortDesc)
+	}
+	// A non-sortable cell (Owner, at x=2) is a no-op.
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 3, Y: headerY})
+	m = model.(Model)
+	if m.sortBy != sortPriority || !m.sortDesc {
+		t.Errorf("click on a non-sortable header must not change the sort; sortBy=%v desc=%v", m.sortBy, m.sortDesc)
+	}
+}
+
+func TestScrollbar_RendersOnlyWhenOverflowing(t *testing.T) {
+	// A short list stays chrome-free; an overflowing one paints a
+	// bar in the last column of every window row, with the thumb at
+	// the top when unscrolled and at the bottom when scrolled to
+	// the end.
+	src := &stubSource{issues: manyIssues(3)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	if strings.Contains(stripANSI(m.View()), scrollTrackGlyph) {
+		t.Error("a fully-visible list should not render a scrollbar")
+	}
+
+	m = overflowingList(t)
+	sb, ok := m.listScrollbar(m.width)
+	if !ok {
+		t.Fatal("overflowing list should have a scrollbar")
+	}
+	if sb.x != m.width-1 || sb.thumbTop != 0 || sb.thumbLen < 1 {
+		t.Errorf("unexpected geometry at top: %+v", sb)
+	}
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	for r := 0; r < sb.h; r++ {
+		line := lines[sb.y0+r]
+		if w := lipgloss.Width(line); w != m.width {
+			t.Errorf("row %d should be padded to the bar column; width=%d want %d", r, w, m.width)
+		}
+		want := scrollTrackGlyph
+		if r < sb.thumbLen {
+			want = scrollThumbGlyph
+		}
+		if !strings.HasSuffix(line, want) {
+			t.Errorf("row %d should end in %q; got %q", r, want, line)
+		}
+	}
+
+	m.cursor = len(m.visible) - 1
+	m.ensureCursorVisible()
+	sb, _ = m.listScrollbar(m.width)
+	if sb.thumbTop+sb.thumbLen != sb.h {
+		t.Errorf("scrolled to the end, the thumb should touch the bottom: %+v", sb)
+	}
+}
+
+func TestScrollbar_ClickAndDrag(t *testing.T) {
+	m := overflowingList(t)
+	sb, _ := m.listScrollbar(m.width)
+	h := m.bodyHeight()
+
+	// Click on the track below the thumb → page down.
+	model, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: sb.x, Y: sb.y0 + sb.h - 1})
+	m = model.(Model)
+	if m.scroll != h {
+		t.Fatalf("track click below the thumb should page down; scroll=%d want %d", m.scroll, h)
+	}
+
+	// Press on the thumb, drag to the bottom of the track, release:
+	// the list ends up scrolled to the end with the cursor in view.
+	sb, _ = m.listScrollbar(m.width)
+	thumbY := sb.y0 + sb.thumbTop
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: sb.x, Y: thumbY})
+	m = model.(Model)
+	if !m.dragScroll {
+		t.Fatal("press on the thumb should start a drag")
+	}
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: sb.x, Y: sb.y0 + sb.h + 5})
+	m = model.(Model)
+	if m.scroll != m.maxScroll() {
+		t.Errorf("drag past the bottom should scroll to the end; scroll=%d want %d", m.scroll, m.maxScroll())
+	}
+	if m.cursor < m.scroll || m.cursor >= m.scroll+h {
+		t.Errorf("cursor %d should ride inside the window [%d,%d)", m.cursor, m.scroll, m.scroll+h)
+	}
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, X: sb.x, Y: sb.y0})
+	m = model.(Model)
+	if m.dragScroll {
+		t.Error("release should end the drag")
+	}
+	// Motion without a drag in progress is ignored.
+	pre := m.scroll
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: sb.x, Y: sb.y0})
+	m = model.(Model)
+	if m.scroll != pre {
+		t.Errorf("motion after release must not scroll; %d → %d", pre, m.scroll)
 	}
 }

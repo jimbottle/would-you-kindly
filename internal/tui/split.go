@@ -344,8 +344,13 @@ func (m Model) splitListLines(width, rows int) []string {
 		if start > end {
 			start = end
 		}
+		sb, hasBar := t.listScrollbar(width)
 		for i := start; i < end; i++ {
-			lines = append(lines, t.renderRow(t.visible[i], i == t.cursor))
+			row := t.renderRow(t.visible[i], i == t.cursor)
+			if hasBar {
+				row = sb.withScrollbar(row, i-start)
+			}
+			lines = append(lines, row)
 		}
 		if start > 0 {
 			lines = append(lines, emptyStyle.Render(fmt.Sprintf("  ↑ %d more above", start)))
@@ -487,6 +492,11 @@ func (m Model) handleSplitMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	g := m.splitGeometry()
+	if m.dragScroll {
+		// A scrollbar drag keeps the list's attention wherever the
+		// pointer wanders, until the button comes up.
+		return m.handleMouse(msg, g.listW, true)
+	}
 	overPane := msg.X >= g.listW+lipgloss.Width(splitDivider)
 	if overPane {
 		switch msg.Button {
@@ -501,12 +511,16 @@ func (m Model) handleSplitMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	allowOpen := true
 	if m.mode == modeDetail {
 		// A click or wheel on the list side while reading: focus
-		// returns to the list, then the event lands as usual.
+		// returns to the list, then the event lands as usual — but
+		// that click doesn't also count as "open", or clicking the
+		// selected row would bounce focus straight back to the pane.
 		m.mode = modeList
+		allowOpen = false
 	}
-	return m.handleMouse(msg)
+	return m.handleMouse(msg, g.listW, allowOpen)
 }
 
 // paneHelp is the short-help set the status bar shows while the pane

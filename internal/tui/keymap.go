@@ -130,9 +130,10 @@ type keyMap struct {
 	SortReverse key.Binding // S — reverse sort direction
 
 	// Mouse toggles mouse capture. Captured (the default): the
-	// wheel moves the cursor and a left-click lands it on the
-	// targeted row — but the terminal's native click-drag text
-	// selection needs a Shift/Option modifier. Released: bare
+	// wheel moves the cursor, a left-click lands it on the targeted
+	// row (a second click opens it), header clicks sort, and the
+	// scrollbar / ↑↓ hints page — but the terminal's native
+	// click-drag text selection needs a Shift/Option modifier. Released: bare
 	// click-drag selection works, navigation is keyboard-only.
 	// The preference persists in state.json across sessions.
 	Mouse key.Binding // m — toggle mouse capture

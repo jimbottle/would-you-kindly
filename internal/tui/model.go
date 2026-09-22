@@ -353,6 +353,14 @@ type Model struct {
 	// (would-you-kindly-p2hn); the toggle serves both wants.
 	mouseOff bool
 
+	// dragScroll is set while the left button is held on the list
+	// scrollbar's thumb; motion events then map the pointer's row to
+	// a scroll offset. dragGrab is where inside the thumb the press
+	// landed, so the thumb doesn't jump to put its top under the
+	// pointer on the first motion.
+	dragScroll bool
+	dragGrab   int
+
 	// layoutPref is the user's split-vs-stacked choice for the detail
 	// pane (`p`), restored from state.json. Zero value = auto: split
 	// when the terminal clears splitMinWidth×splitMinHeight. See
@@ -1477,7 +1485,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		//   the event is dropped
 		switch m.mode {
 		case modeList:
-			return m.handleMouse(msg)
+			return m.handleMouse(msg, m.width, true)
 		case modeDetail:
 			var cmd tea.Cmd
 			m.detailVP, cmd = m.detailVP.Update(msg)
@@ -1546,6 +1554,52 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openCursorRow is the Enter action on the list: open the cursor row's
+// detail (or, in the split layout, focus the pane when it already shows
+// that row). Shared by the keyboard path and a mouse click on the
+// already-selected row, so the two can't drift.
+func (m Model) openCursorRow() (tea.Model, tea.Cmd) {
+	if len(m.visible) == 0 {
+		return m, nil
+	}
+	m.mode = modeDetail
+	if m.splitActive() && issueKey(m.detailIssue) == issueKey(m.visible[m.cursor]) {
+		// The pane is already showing this row (possibly
+		// enriched with notes, possibly scrolled) — ⏎ just
+		// moves focus to it. Re-staging the slim row would
+		// blank the notes until bd show returned again.
+		return m, nil
+	}
+	// Fresh entry from the list: no link highlighted, and an
+	// empty drill-in stack (Back goes straight to the list).
+	m.detailLinkIdx = -1
+	m.detailStack = nil
+	// Stage the slim row immediately so the view renders
+	// with title/description from the list, then dispatch
+	// a Detail call to enrich with notes asynchronously.
+	m.detailIssue = m.visible[m.cursor]
+	// Seed the viewport with the body we have now (notes
+	// may be empty until the Detail Cmd resolves); reset
+	// scroll to the top so a previous detail view's scroll
+	// position doesn't bleed in.
+	m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
+	m.detailVP.GotoTop()
+	// Lazily resolve this issue's dependency + dependent edges
+	// for the detail view's bottom sections. nil when no
+	// DepLister is wired or both directions are already cached
+	// (re-opening the same issue is instant). Runs off the
+	// event loop so the bd shell-outs don't block input.
+	depsCmd := m.resolveDetailDeps(m.detailIssue.ID)
+	if d, ok := m.src.(Detailer); ok {
+		target := m.detailIssue
+		return m, tea.Batch(depsCmd, func() tea.Msg {
+			full, err := d.Detail(context.Background(), target)
+			return detailMsg{issue: full, err: err}
+		})
+	}
+	return m, depsCmd
+}
+
 func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case keyHit(msg, m.keys.Quit):
@@ -1592,44 +1646,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyHit(msg, m.keys.Layout):
 		return m.toggleLayout()
 	case keyHit(msg, m.keys.Open):
-		if len(m.visible) > 0 {
-			m.mode = modeDetail
-			if m.splitActive() && issueKey(m.detailIssue) == issueKey(m.visible[m.cursor]) {
-				// The pane is already showing this row (possibly
-				// enriched with notes, possibly scrolled) — ⏎ just
-				// moves focus to it. Re-staging the slim row would
-				// blank the notes until bd show returned again.
-				return m, nil
-			}
-			// Fresh entry from the list: no link highlighted, and an
-			// empty drill-in stack (Back goes straight to the list).
-			m.detailLinkIdx = -1
-			m.detailStack = nil
-			// Stage the slim row immediately so the view renders
-			// with title/description from the list, then dispatch
-			// a Detail call to enrich with notes asynchronously.
-			m.detailIssue = m.visible[m.cursor]
-			// Seed the viewport with the body we have now (notes
-			// may be empty until the Detail Cmd resolves); reset
-			// scroll to the top so a previous detail view's scroll
-			// position doesn't bleed in.
-			m.detailVP.SetContent(m.renderDetailBody(m.detailIssue))
-			m.detailVP.GotoTop()
-			// Lazily resolve this issue's dependency + dependent edges
-			// for the detail view's bottom sections. nil when no
-			// DepLister is wired or both directions are already cached
-			// (re-opening the same issue is instant). Runs off the
-			// event loop so the bd shell-outs don't block input.
-			depsCmd := m.resolveDetailDeps(m.detailIssue.ID)
-			if d, ok := m.src.(Detailer); ok {
-				target := m.detailIssue
-				return m, tea.Batch(depsCmd, func() tea.Msg {
-					full, err := d.Detail(context.Background(), target)
-					return detailMsg{issue: full, err: err}
-				})
-			}
-			return m, depsCmd
-		}
+		return m.openCursorRow()
 	case keyHit(msg, m.keys.Filter):
 		m.mode = modeFilter
 		m.input.SetValue(m.query)
@@ -1797,59 +1814,5 @@ func (m Model) toggleMouse() (tea.Model, tea.Cmd) {
 	// mouseOff flip) — synchronously, never as a tea.Cmd: batching
 	// those cmds was observed live to delay or drop the mode-switch
 	// write (PR #24).
-	return m, nil
-}
-
-// handleMouse interprets a tea.MouseMsg against the list view:
-// wheel up/down moves the cursor (like k/j); left-click lands the
-// cursor on the targeted row. Out-of-bounds clicks (header, chip
-// strip, banners, the ↑/↓ overflow hints) are silently ignored.
-func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	// Act on the press only — a release is the tail of a gesture we
-	// already handled, and wheel ticks never emit releases.
-	if msg.Action == tea.MouseActionRelease {
-		return m, nil
-	}
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		if m.cursor > 0 {
-			m.cursor--
-			m.ensureCursorVisible()
-		}
-		return m, nil
-	case tea.MouseButtonWheelDown:
-		if m.cursor < len(m.visible)-1 {
-			m.cursor++
-			m.ensureCursorVisible()
-		}
-		return m, nil
-	case tea.MouseButtonLeft:
-		// Compute the cell-row offset from the top of the table
-		// body, then translate to a m.visible index via the current
-		// scroll offset. Clicks above the body (title/setupHint/
-		// chips/header) or past the last rendered row produce an
-		// out-of-range target → no-op. The rendered-window clamp
-		// also keeps a click on the "↑/↓ N more" hint lines (just
-		// past the row window) from mapping to an out-of-window row,
-		// which produced a surprising downward jump.
-		rowY := msg.Y - m.rowsStartY()
-		if rowY < 0 {
-			return m, nil
-		}
-		visibleRows := len(m.visible) - m.scroll
-		if h := m.bodyHeight(); h > 0 && visibleRows > h {
-			visibleRows = h
-		}
-		if rowY >= visibleRows {
-			return m, nil
-		}
-		target := m.scroll + rowY
-		if target < 0 || target >= len(m.visible) {
-			return m, nil
-		}
-		m.cursor = target
-		m.ensureCursorVisible()
-		return m, nil
-	}
 	return m, nil
 }
