@@ -662,3 +662,85 @@ func TestScrollbar_ClickAndDrag(t *testing.T) {
 		t.Errorf("motion after release must not scroll; %d → %d", pre, m.scroll)
 	}
 }
+
+func TestScrollbar_DragEndsInSplitLayout(t *testing.T) {
+	// The split handler used to drop every release before the drag
+	// check, so a thumb press there left dragScroll set for the rest
+	// of the session and routed all later pane input to the list
+	// (roborev #4697). The release must end the drag, and the pane
+	// must be clickable again afterwards.
+	src := &stubSource{issues: manyIssues(80)}
+	m := New(src)
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 36})
+	m = model.(Model)
+	m = applyFetched(m, src)
+	if !m.splitView() || !m.listOverflows() {
+		t.Fatalf("setup: want split layout with an overflowing list; split=%v overflow=%v", m.splitView(), m.listOverflows())
+	}
+	g := m.splitGeometry()
+	sb, ok := m.listScrollbar(g.listW)
+	if !ok {
+		t.Fatal("setup: split list should have a scrollbar")
+	}
+
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: sb.x, Y: sb.y0 + sb.thumbTop})
+	m = model.(Model)
+	if !m.dragScroll {
+		t.Fatal("press on the thumb should start a drag in the split layout")
+	}
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: sb.x, Y: sb.y0 + sb.h})
+	m = model.(Model)
+	if m.scroll == 0 {
+		t.Error("drag to the bottom of the track should scroll the list")
+	}
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, X: sb.x, Y: sb.y0 + sb.h})
+	m = model.(Model)
+	if m.dragScroll {
+		t.Fatal("release in the split layout must end the drag")
+	}
+
+	// The pane is its own again: a click there focuses it.
+	paneX := g.listW + 5
+	model, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: paneX, Y: 10})
+	m = model.(Model)
+	if m.mode != modeDetail {
+		t.Errorf("click on the pane after a drag should focus it; mode=%v", m.mode)
+	}
+}
+
+func TestScrollbar_SingleCellTravelTracksScroll(t *testing.T) {
+	// With one cell of travel the "off the top" and "only the end
+	// reaches the bottom" nudges would cancel each other, pinning the
+	// thumb at 0 until the very end (roborev #4697). Plain rounding
+	// must win there: a 2-row window over 4 rows (thumb 1, travel 1,
+	// maxScroll 2) puts the thumb at 1 from the midpoint on.
+	src := &stubSource{issues: manyIssues(4)}
+	m := New(src)
+	m = applyFetched(m, src)
+	m.width = 120
+	found := false
+	for h := 1; h < 60; h++ {
+		m.height = h
+		if m.bodyHeight() == 2 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Skip("no terminal height yields a 2-row window")
+	}
+	sb, ok := m.listScrollbar(m.width)
+	if !ok || sb.h != 2 || sb.thumbLen != 1 {
+		t.Fatalf("setup: want h=2 thumb=1; got ok=%v %+v", ok, sb)
+	}
+	m.setScroll(1) // midpoint, one short of the end
+	sb, _ = m.listScrollbar(m.width)
+	if sb.thumbTop != 1 {
+		t.Errorf("mid-list with a single cell of travel, the thumb should sit at 1; got %d", sb.thumbTop)
+	}
+	m.setScroll(0)
+	sb, _ = m.listScrollbar(m.width)
+	if sb.thumbTop != 0 {
+		t.Errorf("unscrolled, the thumb should sit at 0; got %d", sb.thumbTop)
+	}
+}

@@ -488,14 +488,16 @@ func (m Model) handleSplitMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.mode != modeList && m.mode != modeDetail {
 		return m, nil
 	}
-	if msg.Action == tea.MouseActionRelease {
-		return m, nil
-	}
 	g := m.splitGeometry()
 	if m.dragScroll {
 		// A scrollbar drag keeps the list's attention wherever the
-		// pointer wanders, until the button comes up.
+		// pointer wanders, until the button comes up — and the
+		// release that ends it must reach handleMouse too, so this
+		// runs before the release short-circuit below.
 		return m.handleMouse(msg, g.listW, true)
+	}
+	if msg.Action == tea.MouseActionRelease {
+		return m, nil
 	}
 	overPane := msg.X >= g.listW+lipgloss.Width(splitDivider)
 	if overPane {

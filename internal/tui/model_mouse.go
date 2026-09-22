@@ -64,11 +64,17 @@ func (m Model) listScrollbar(listWidth int) (scrollbar, bool) {
 		// Round to nearest so the thumb sits at the very bottom
 		// exactly when the list is scrolled to the end.
 		thumbTop = (m.scroll*travel + maxScroll/2) / maxScroll
-		if m.scroll > 0 && thumbTop == 0 {
-			thumbTop = 1 // any scroll at all moves the thumb off the top
-		}
-		if m.scroll < maxScroll && thumbTop == travel {
-			thumbTop = travel - 1 // and only the end reaches the bottom
+		// Keep the ends honest — any scroll moves the thumb off the
+		// top, and only the end reaches the bottom — when there's
+		// room for both nudges. With a single cell of travel they'd
+		// cancel each other out, so plain rounding wins there.
+		if travel >= 2 {
+			if m.scroll > 0 && thumbTop == 0 {
+				thumbTop = 1
+			}
+			if m.scroll < maxScroll && thumbTop == travel {
+				thumbTop = travel - 1
+			}
 		}
 	}
 	return scrollbar{
