@@ -119,7 +119,9 @@ func createWithLabels(ctx context.Context, c bdCreator, passthrough []string, la
 	}
 	ids := parseCreatedIDs(out)
 	if len(ids) == 0 {
-		return "", fmt.Errorf("bd create returned no issue ID")
+		// bd exited 0, so it may well have filed something — say so rather
+		// than implying nothing was created, or a retry files a duplicate.
+		return "", fmt.Errorf("bd create succeeded but wyk could not parse issue IDs from its output, so labels were NOT applied (check `bd list` before retrying): %q", truncOutput(out))
 	}
 	created := strings.Join(ids, ", ")
 	for _, id := range ids {
@@ -136,6 +138,16 @@ func createWithLabels(ctx context.Context, c bdCreator, passthrough []string, la
 		}
 	}
 	return created, nil
+}
+
+// truncOutput bounds raw bd output quoted into an error message.
+func truncOutput(out []byte) string {
+	const max = 200
+	r := []rune(strings.TrimSpace(string(out)))
+	if len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return string(r)
 }
 
 // createsFromFile reports whether the bd create args use -f/--file in any
@@ -247,7 +259,8 @@ func runCreate(args []string) int {
 
 	id, err := runBDCreateWithLabels("", args, labels)
 	if id == "" {
-		// The create itself failed — nothing was filed.
+		// No ID came back: either bd failed (nothing filed) or bd succeeded
+		// with output wyk couldn't parse — err says which.
 		fmt.Fprintln(os.Stderr, "wyk create:", err)
 		return 1
 	}

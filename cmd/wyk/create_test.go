@@ -193,6 +193,7 @@ func TestCreatesFromFile(t *testing.T) {
 // fakeCreator records the bd args and label stamps createWithLabels issues.
 type fakeCreator struct {
 	out    string
+	failOn string // "id=label" stamp that AddLabel rejects
 	args   []string
 	stamps []string
 }
@@ -203,8 +204,43 @@ func (f *fakeCreator) RawRun(_ context.Context, args []string) ([]byte, error) {
 }
 
 func (f *fakeCreator) AddLabel(_ context.Context, id, label string) error {
+	if id+"="+label == f.failOn {
+		return errors.New("label boom")
+	}
 	f.stamps = append(f.stamps, id+"="+label)
 	return nil
+}
+
+// TestCreateWithLabels_UnparseableOutput pins that a successful bd create
+// whose stdout can't be parsed is reported as such (issues may exist,
+// unlabelled), not as "nothing was filed".
+func TestCreateWithLabels_UnparseableOutput(t *testing.T) {
+	f := &fakeCreator{out: "✓ Created 2 issues from x.md:\n  wyk-a: one\n  wyk-b: two\n"}
+	created, err := createWithLabels(context.Background(), f, []string{"x"}, []string{"src:agent"})
+	if created != "" || err == nil {
+		t.Fatalf("got (%q, %v), want empty ID and an error", created, err)
+	}
+	for _, want := range []string{"succeeded", "NOT applied", "Created 2 issues"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err %q missing %q", err, want)
+		}
+	}
+	if len(f.stamps) != 0 {
+		t.Errorf("stamps = %q, want none", f.stamps)
+	}
+}
+
+// TestCreateWithLabels_PartialStampFailure pins the partial-success path:
+// the created IDs still come back, and the error names the label and ID.
+func TestCreateWithLabels_PartialStampFailure(t *testing.T) {
+	f := &fakeCreator{out: `[{"id":"wyk-a"},{"id":"wyk-b"}]`, failOn: "wyk-b=src:agent"}
+	created, err := createWithLabels(context.Background(), f, []string{"-f", "x.md"}, []string{"src:agent"})
+	if created != "wyk-a, wyk-b" {
+		t.Errorf("created = %q, want %q", created, "wyk-a, wyk-b")
+	}
+	if err == nil || !strings.Contains(err.Error(), `"src:agent" on wyk-b`) {
+		t.Errorf("err = %v, want it to name label src:agent on wyk-b", err)
+	}
 }
 
 // TestCreateWithLabels pins the arg wiring (--json added for -f only when
