@@ -154,6 +154,21 @@ func TestHasFlag(t *testing.T) {
 	}
 }
 
+// TestParseCreatedID pins that a caller-supplied --json (which overrides
+// the appended --silent) still yields the bare ID, not the whole object.
+func TestParseCreatedID(t *testing.T) {
+	cases := map[string]string{
+		"wyk-abc\n": "wyk-abc",
+		"{\n  \"created_at\": \"2026-09-27T17:35:42Z\",\n  \"id\": \"wyk-abc\",\n  \"title\": \"x\"\n}\n": "wyk-abc",
+		"": "",
+	}
+	for in, want := range cases {
+		if got := parseCreatedID([]byte(in)); got != want {
+			t.Errorf("parseCreatedID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestDisplayLabels pins the success-line rendering (roborev on
 // would-you-kindly-voef): a long session:<id> is shortened to 8 chars so
 // the full session ID never lands on stdout, while src: and other labels

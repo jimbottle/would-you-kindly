@@ -87,7 +87,8 @@ You'll need Go 1.26+ (matching `go.mod`) and the **`bd` (beads)** binary on
 your `PATH` — wyk shells out to it for all storage. Install bd first by
 following the instructions in its repo:
 [github.com/gastownhall/beads](https://github.com/gastownhall/beads). wyk is
-tested against **bd 1.0.4 or newer**; `wyk doctor` warns if your bd is older.
+tested against **bd 1.0.4 or newer** (verified through 1.3.0); `wyk doctor`
+warns if your bd is older.
 
 Then install wyk one of these ways:
 

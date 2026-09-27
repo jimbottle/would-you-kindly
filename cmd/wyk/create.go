@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -101,7 +102,7 @@ func realBDCreateWithLabels(dir string, passthrough []string, labels []string) (
 	if err != nil {
 		return "", err
 	}
-	id := strings.TrimSpace(string(out))
+	id := parseCreatedID(out)
 	if id == "" {
 		return "", fmt.Errorf("bd create returned no issue ID")
 	}
@@ -117,6 +118,24 @@ func realBDCreateWithLabels(dir string, passthrough []string, labels []string) (
 		}
 	}
 	return id, nil
+}
+
+// parseCreatedID extracts the new issue's ID from `bd create` stdout.
+// --silent normally reduces it to the bare ID, but a caller-supplied
+// --json wins over --silent and bd prints the full issue object instead —
+// which used to be taken verbatim as the "ID", so every label stamp failed
+// and the issue landed without its src:/session: provenance.
+func parseCreatedID(out []byte) string {
+	trimmed := strings.TrimSpace(string(out))
+	if strings.HasPrefix(trimmed, "{") {
+		var issue struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(trimmed), &issue); err == nil {
+			return issue.ID
+		}
+	}
+	return trimmed
 }
 
 // hasFlag reports whether args contains the given flag in any accepted

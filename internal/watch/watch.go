@@ -2,7 +2,7 @@
 // a tracked bd workspace" signal on every filesystem event under
 // the registered .beads directories. The TUI subscribes once at
 // startup; every tick the channel emits, the model dispatches the
-// same refresh it would otherwise run from the 10-second timer —
+// same refresh it would otherwise run from the 20-second timer —
 // just sooner. The polling timer stays in place as a fallback for
 // platforms where fsnotify can't watch the path (rare; mostly
 // network filesystems).
