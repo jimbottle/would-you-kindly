@@ -142,10 +142,10 @@ func createWithLabels(ctx context.Context, c bdCreator, passthrough []string, la
 
 // truncOutput bounds raw bd output quoted into an error message.
 func truncOutput(out []byte) string {
-	const max = 200
+	const maxRunes = 200
 	r := []rune(strings.TrimSpace(string(out)))
-	if len(r) > max {
-		return string(r[:max]) + "…"
+	if len(r) > maxRunes {
+		return string(r[:maxRunes]) + "…"
 	}
 	return string(r)
 }
@@ -170,8 +170,9 @@ func createsFromFile(args []string) bool {
 // and the issue landed without its src:/session: provenance. An array
 // (`bd create -f` with --json) yields every element's ID. JSON that can't
 // be decoded, an issue without an ID, or plain text that can't be a single
-// ID (e.g. bd's multi-line "Created N issues" summary) yields nil so the
-// caller reports "no issue ID" rather than stamping a blob.
+// ID (e.g. bd's multi-line "Created N issues" summary) yields nil, so the
+// caller reports the create as succeeded with labels NOT applied (quoting
+// the raw output) rather than stamping a blob.
 func parseCreatedIDs(out []byte) []string {
 	trimmed := strings.TrimSpace(string(out))
 	type created struct {
