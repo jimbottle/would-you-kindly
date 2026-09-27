@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -160,6 +162,7 @@ func TestHasFlag(t *testing.T) {
 func TestParseCreatedIDs(t *testing.T) {
 	cases := map[string]string{
 		"wyk-abc\n": "wyk-abc",
+		"✓ Created 2 issues from x.md:\n  wyk-a: one\n  wyk-b: two\n":                                     "",
 		"{\n  \"created_at\": \"2026-09-27T17:35:42Z\",\n  \"id\": \"wyk-abc\",\n  \"title\": \"x\"\n}\n": "wyk-abc",
 		"":                                    "",
 		`[{"id":"wyk-abc","title":"x"}]`:      "wyk-abc",
@@ -177,13 +180,86 @@ func TestParseCreatedIDs(t *testing.T) {
 }
 
 func TestCreatesFromFile(t *testing.T) {
-	for _, args := range [][]string{{"-f", "x.md"}, {"--file", "x.md"}, {"-f=x.md"}, {"--file=x.md"}} {
+	for _, args := range [][]string{{"-f", "x.md"}, {"--file", "x.md"}, {"-f=x.md"}, {"-fx.md"}, {"--file=x.md"}} {
 		if !createsFromFile(args) {
 			t.Errorf("createsFromFile(%q) = false, want true", args)
 		}
 	}
-	if createsFromFile([]string{"file", "--title", "f"}) {
-		t.Error("createsFromFile: positional 'file' must not count as the flag")
+	if createsFromFile([]string{"file", "--title", "f", "--force"}) {
+		t.Error("createsFromFile: positional 'file' / --force must not count as the flag")
+	}
+}
+
+// fakeCreator records the bd args and label stamps createWithLabels issues.
+type fakeCreator struct {
+	out    string
+	args   []string
+	stamps []string
+}
+
+func (f *fakeCreator) RawRun(_ context.Context, args []string) ([]byte, error) {
+	f.args = args
+	return []byte(f.out), nil
+}
+
+func (f *fakeCreator) AddLabel(_ context.Context, id, label string) error {
+	f.stamps = append(f.stamps, id+"="+label)
+	return nil
+}
+
+// TestCreateWithLabels pins the arg wiring (--json added for -f only when
+// absent) and that every returned ID gets every non-empty label.
+func TestCreateWithLabels(t *testing.T) {
+	cases := []struct {
+		name        string
+		passthrough []string
+		out         string
+		wantArgs    []string
+		wantCreated string
+		wantStamps  []string
+	}{
+		{
+			name:        "single create",
+			passthrough: []string{"Quick task"},
+			out:         "wyk-a\n",
+			wantArgs:    []string{"create", "Quick task", "--silent", "--dolt-auto-commit=on"},
+			wantCreated: "wyk-a",
+			wantStamps:  []string{"wyk-a=src:agent", "wyk-a=session:s"},
+		},
+		{
+			name:        "-f adds --json and stamps each ID",
+			passthrough: []string{"-f", "x.md"},
+			out:         `[{"id":"wyk-a"},{"id":"wyk-b"}]`,
+			wantArgs:    []string{"create", "-f", "x.md", "--silent", "--dolt-auto-commit=on", "--json"},
+			wantCreated: "wyk-a, wyk-b",
+			wantStamps:  []string{"wyk-a=src:agent", "wyk-a=session:s", "wyk-b=src:agent", "wyk-b=session:s"},
+		},
+		{
+			name:        "-f with caller --json is not duplicated",
+			passthrough: []string{"-fx.md", "--json"},
+			out:         `[{"id":"wyk-a"}]`,
+			wantArgs:    []string{"create", "-fx.md", "--json", "--silent", "--dolt-auto-commit=on"},
+			wantCreated: "wyk-a",
+			wantStamps:  []string{"wyk-a=src:agent", "wyk-a=session:s"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeCreator{out: tc.out}
+			created, err := createWithLabels(context.Background(), f, tc.passthrough, []string{"src:agent", "", "session:s"})
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if created != tc.wantCreated {
+				t.Errorf("created = %q, want %q", created, tc.wantCreated)
+			}
+			if !reflect.DeepEqual(f.args, tc.wantArgs) {
+				t.Errorf("args = %q, want %q", f.args, tc.wantArgs)
+			}
+			if !reflect.DeepEqual(f.stamps, tc.wantStamps) {
+				t.Errorf("stamps = %q, want %q", f.stamps, tc.wantStamps)
+			}
+		})
 	}
 }
 

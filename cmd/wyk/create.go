@@ -84,8 +84,17 @@ var runBDCreateWithLabels = realBDCreateWithLabels
 func realBDCreateWithLabels(dir string, passthrough []string, labels []string) (string, error) {
 	c := beads.NewClient()
 	c.Dir = dir
-	ctx := context.Background()
+	return createWithLabels(context.Background(), c, passthrough, labels)
+}
 
+// bdCreator is the slice of beads.Client that createWithLabels needs, so
+// tests can assert the forwarded args and per-ID label stamps with a fake.
+type bdCreator interface {
+	RawRun(ctx context.Context, args []string) ([]byte, error)
+	AddLabel(ctx context.Context, id, label string) error
+}
+
+func createWithLabels(ctx context.Context, c bdCreator, passthrough []string, labels []string) (string, error) {
 	// Forward the user's args verbatim. --silent makes bd emit only the
 	// new ID on stdout (clean to capture); --dolt-auto-commit=on is the
 	// project's mandatory write flag. Add each only if absent so a user
@@ -129,11 +138,13 @@ func realBDCreateWithLabels(dir string, passthrough []string, labels []string) (
 	return created, nil
 }
 
-// createsFromFile reports whether the bd create args use -f/--file (in
-// either the separate-value or =value form).
+// createsFromFile reports whether the bd create args use -f/--file in any
+// form bd's pflag parser accepts: `-f x`, `-f=x`, `-fx`, `--file x`,
+// `--file=x`.
 func createsFromFile(args []string) bool {
 	for _, a := range args {
-		if a == "-f" || a == "--file" || strings.HasPrefix(a, "-f=") || strings.HasPrefix(a, "--file=") {
+		if a == "--file" || strings.HasPrefix(a, "--file=") ||
+			(strings.HasPrefix(a, "-f") && !strings.HasPrefix(a, "--")) {
 			return true
 		}
 	}
@@ -146,8 +157,9 @@ func createsFromFile(args []string) bool {
 // which used to be taken verbatim as the "ID", so every label stamp failed
 // and the issue landed without its src:/session: provenance. An array
 // (`bd create -f` with --json) yields every element's ID. JSON that can't
-// be decoded, or an issue without an ID, yields nil so the caller reports
-// "no issue ID" rather than stamping a blob.
+// be decoded, an issue without an ID, or plain text that can't be a single
+// ID (e.g. bd's multi-line "Created N issues" summary) yields nil so the
+// caller reports "no issue ID" rather than stamping a blob.
 func parseCreatedIDs(out []byte) []string {
 	trimmed := strings.TrimSpace(string(out))
 	type created struct {
@@ -165,7 +177,7 @@ func parseCreatedIDs(out []byte) []string {
 		if json.Unmarshal([]byte(trimmed), &issues) != nil {
 			return nil
 		}
-	case trimmed == "":
+	case trimmed == "" || strings.ContainsAny(trimmed, " \t\r\n"):
 		return nil
 	default:
 		return []string{trimmed}
