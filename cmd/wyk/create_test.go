@@ -160,7 +160,12 @@ func TestParseCreatedID(t *testing.T) {
 	cases := map[string]string{
 		"wyk-abc\n": "wyk-abc",
 		"{\n  \"created_at\": \"2026-09-27T17:35:42Z\",\n  \"id\": \"wyk-abc\",\n  \"title\": \"x\"\n}\n": "wyk-abc",
-		"": "",
+		"":                                    "",
+		`[{"id":"wyk-abc","title":"x"}]`:      "wyk-abc",
+		`[{"id":"wyk-a"},{"id":"wyk-b"}]`:     "",
+		`{"id": "wyk-abc"`:                    "",
+		`[{"id"`:                              "",
+		`{"error":"failed to open database"}`: "",
 	}
 	for in, want := range cases {
 		if got := parseCreatedID([]byte(in)); got != want {

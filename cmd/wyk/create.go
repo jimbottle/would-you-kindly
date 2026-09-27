@@ -124,16 +124,27 @@ func realBDCreateWithLabels(dir string, passthrough []string, labels []string) (
 // --silent normally reduces it to the bare ID, but a caller-supplied
 // --json wins over --silent and bd prints the full issue object instead —
 // which used to be taken verbatim as the "ID", so every label stamp failed
-// and the issue landed without its src:/session: provenance.
+// and the issue landed without its src:/session: provenance. A one-element
+// array (`bd create -f` with --json) yields its ID; any other JSON shape
+// yields "" so the caller reports "no issue ID" rather than stamping a blob.
 func parseCreatedID(out []byte) string {
 	trimmed := strings.TrimSpace(string(out))
-	if strings.HasPrefix(trimmed, "{") {
-		var issue struct {
-			ID string `json:"id"`
+	type created struct {
+		ID string `json:"id"`
+	}
+	switch {
+	case strings.HasPrefix(trimmed, "{"):
+		var issue created
+		if json.Unmarshal([]byte(trimmed), &issue) != nil {
+			return ""
 		}
-		if err := json.Unmarshal([]byte(trimmed), &issue); err == nil {
-			return issue.ID
+		return issue.ID
+	case strings.HasPrefix(trimmed, "["):
+		var issues []created
+		if json.Unmarshal([]byte(trimmed), &issues) != nil || len(issues) != 1 {
+			return ""
 		}
+		return issues[0].ID
 	}
 	return trimmed
 }
