@@ -97,56 +97,87 @@ func realBDCreateWithLabels(dir string, passthrough []string, labels []string) (
 	if !hasFlag(passthrough, "--dolt-auto-commit") {
 		args = append(args, "--dolt-auto-commit=on")
 	}
+	// `bd create -f <file>` files several issues and ignores --silent,
+	// printing a human summary instead; --json makes it a parseable array
+	// so every created issue gets stamped.
+	if createsFromFile(passthrough) && !hasFlag(passthrough, "--json") {
+		args = append(args, "--json")
+	}
 
 	out, err := c.RawRun(ctx, args)
 	if err != nil {
 		return "", err
 	}
-	id := parseCreatedID(out)
-	if id == "" {
+	ids := parseCreatedIDs(out)
+	if len(ids) == 0 {
 		return "", fmt.Errorf("bd create returned no issue ID")
 	}
-	for _, l := range labels {
-		if l == "" {
-			continue
-		}
-		if lerr := c.AddLabel(ctx, id, l); lerr != nil {
-			// The issue exists; only a label stamp failed. Surface which
-			// label but return the ID so the caller can still report the
-			// create itself succeeded (partial success).
-			return id, fmt.Errorf("created %s but failed to stamp label %q: %w", id, l, lerr)
+	created := strings.Join(ids, ", ")
+	for _, id := range ids {
+		for _, l := range labels {
+			if l == "" {
+				continue
+			}
+			if lerr := c.AddLabel(ctx, id, l); lerr != nil {
+				// The issues exist; only a label stamp failed. Surface which
+				// label but return the IDs so the caller can still report the
+				// create itself succeeded (partial success).
+				return created, fmt.Errorf("created %s but failed to stamp label %q on %s: %w", created, l, id, lerr)
+			}
 		}
 	}
-	return id, nil
+	return created, nil
 }
 
-// parseCreatedID extracts the new issue's ID from `bd create` stdout.
+// createsFromFile reports whether the bd create args use -f/--file (in
+// either the separate-value or =value form).
+func createsFromFile(args []string) bool {
+	for _, a := range args {
+		if a == "-f" || a == "--file" || strings.HasPrefix(a, "-f=") || strings.HasPrefix(a, "--file=") {
+			return true
+		}
+	}
+	return false
+}
+
+// parseCreatedIDs extracts the new issues' IDs from `bd create` stdout.
 // --silent normally reduces it to the bare ID, but a caller-supplied
 // --json wins over --silent and bd prints the full issue object instead —
 // which used to be taken verbatim as the "ID", so every label stamp failed
-// and the issue landed without its src:/session: provenance. A one-element
-// array (`bd create -f` with --json) yields its ID; any other JSON shape
-// yields "" so the caller reports "no issue ID" rather than stamping a blob.
-func parseCreatedID(out []byte) string {
+// and the issue landed without its src:/session: provenance. An array
+// (`bd create -f` with --json) yields every element's ID. JSON that can't
+// be decoded, or an issue without an ID, yields nil so the caller reports
+// "no issue ID" rather than stamping a blob.
+func parseCreatedIDs(out []byte) []string {
 	trimmed := strings.TrimSpace(string(out))
 	type created struct {
 		ID string `json:"id"`
 	}
+	var issues []created
 	switch {
 	case strings.HasPrefix(trimmed, "{"):
 		var issue created
 		if json.Unmarshal([]byte(trimmed), &issue) != nil {
-			return ""
+			return nil
 		}
-		return issue.ID
+		issues = []created{issue}
 	case strings.HasPrefix(trimmed, "["):
-		var issues []created
-		if json.Unmarshal([]byte(trimmed), &issues) != nil || len(issues) != 1 {
-			return ""
+		if json.Unmarshal([]byte(trimmed), &issues) != nil {
+			return nil
 		}
-		return issues[0].ID
+	case trimmed == "":
+		return nil
+	default:
+		return []string{trimmed}
 	}
-	return trimmed
+	ids := make([]string, 0, len(issues))
+	for _, i := range issues {
+		if i.ID == "" {
+			return nil
+		}
+		ids = append(ids, i.ID)
+	}
+	return ids
 }
 
 // hasFlag reports whether args contains the given flag in any accepted

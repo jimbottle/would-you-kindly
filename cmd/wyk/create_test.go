@@ -154,23 +154,36 @@ func TestHasFlag(t *testing.T) {
 	}
 }
 
-// TestParseCreatedID pins that a caller-supplied --json (which overrides
-// the appended --silent) still yields the bare ID, not the whole object.
-func TestParseCreatedID(t *testing.T) {
+// TestParseCreatedIDs pins that a caller-supplied --json (which overrides
+// the appended --silent) still yields bare IDs, not the whole object, and
+// that a multi-issue `-f` array yields every ID.
+func TestParseCreatedIDs(t *testing.T) {
 	cases := map[string]string{
 		"wyk-abc\n": "wyk-abc",
 		"{\n  \"created_at\": \"2026-09-27T17:35:42Z\",\n  \"id\": \"wyk-abc\",\n  \"title\": \"x\"\n}\n": "wyk-abc",
 		"":                                    "",
 		`[{"id":"wyk-abc","title":"x"}]`:      "wyk-abc",
-		`[{"id":"wyk-a"},{"id":"wyk-b"}]`:     "",
+		`[{"id":"wyk-a"},{"id":"wyk-b"}]`:     "wyk-a,wyk-b",
+		`[{"id":"wyk-a"},{"title":"no id"}]`:  "",
 		`{"id": "wyk-abc"`:                    "",
 		`[{"id"`:                              "",
 		`{"error":"failed to open database"}`: "",
 	}
 	for in, want := range cases {
-		if got := parseCreatedID([]byte(in)); got != want {
-			t.Errorf("parseCreatedID(%q) = %q, want %q", in, got, want)
+		if got := strings.Join(parseCreatedIDs([]byte(in)), ","); got != want {
+			t.Errorf("parseCreatedIDs(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestCreatesFromFile(t *testing.T) {
+	for _, args := range [][]string{{"-f", "x.md"}, {"--file", "x.md"}, {"-f=x.md"}, {"--file=x.md"}} {
+		if !createsFromFile(args) {
+			t.Errorf("createsFromFile(%q) = false, want true", args)
+		}
+	}
+	if createsFromFile([]string{"file", "--title", "f"}) {
+		t.Error("createsFromFile: positional 'file' must not count as the flag")
 	}
 }
 
