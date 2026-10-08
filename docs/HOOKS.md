@@ -173,7 +173,7 @@ and wyk never rolls those back. So a failing hook leaves the human with
 the task in bd and only the external mirror missing. wyk reports it
 loudly and distinctly:
 
-- `wyk handoff` prints the script's stderr and exits **3** — not 1, so
+- `wyk handoff` (and `wyk hook dispatch`) prints the script's stderr and exits **3** — not 1, so
   an agent can tell "the handoff failed, retry it" (1) from "the human
   has the task; the mirror is missing" (3). It names the replay command.
 - A timeout (`timeout_seconds`, default 15) is reported as such with the

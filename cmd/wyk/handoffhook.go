@@ -198,7 +198,10 @@ func fireHandoffHook(ctx context.Context, client hookIssueClient, d *hooks.Dispa
 // on: what failed, the script's own words, and the exact command
 // that re-sends the same event once the cause is fixed.
 func reportHookFailure(errw io.Writer, in handoffHookInput, err error) {
-	fmt.Fprintf(errw, "wyk handoff: the bd handoff landed, but the handoff hook failed: %v\n", err)
+	// Worded for both callers: after `wyk handoff` the bd write has
+	// already landed; after `wyk hook dispatch` there was no bd write.
+	// Either way bd is as it was and only the external mirror is missing.
+	fmt.Fprintf(errw, "wyk: the handoff hook failed for %s %s (bd is unaffected, the mirror is missing): %v\n", in.Event, in.ID, err)
 	if errors.Is(err, hooks.ErrTimedOut) {
 		fmt.Fprintln(errw, "  Raise it with: wyk config set hooks.handoff.timeout_seconds <n>")
 	}

@@ -163,7 +163,7 @@ func TestFireHandoffHook_FailureReportsReplayAndExit3(t *testing.T) {
 		t.Fatalf("exit %d, want %d", code, exitHookFailed)
 	}
 	for _, want := range []string{
-		"the bd handoff landed",
+		"handoff hook failed for handoff wyk-42 (bd is unaffected",
 		"BASICDO_API_KEY is not set",
 		"wyk hook dispatch -C /tmp/repo handoff wyk-42",
 	} {
