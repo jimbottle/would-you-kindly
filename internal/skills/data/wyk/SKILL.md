@@ -48,8 +48,9 @@ when another agent holds a live lease: pick something else. A row badged
 `@<owner>` in the TUI is checked out by that agent: don't touch it.
 `EXPIRED` means the holder stopped renewing; claiming it takes it over
 and leaves a note. Use `-force` only when you know the holder is gone.
-If several agents run on this machine, each needs its own
-`WYK_AGENT_IDENTITY`, or they all claim as the same bd actor.
+Your identity defaults to `claude-<session id>`, unique per session, so
+concurrent agents never collide. Set `WYK_AGENT_IDENTITY` only if you
+have a defined role (`reviewer`, `release-bot`) and want a stable name.
 
 ## File new work
 

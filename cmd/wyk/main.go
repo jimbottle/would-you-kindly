@@ -165,7 +165,7 @@ func main() {
 
 	flag.Usage = printTopLevelUsage
 	dir := flag.String("C", "", "run as if bd had been started in this directory")
-	me := flag.String("me", "", "current user, used by the 'mine' preset (default: $WYK_AGENT_IDENTITY, then bd's actor: $BEADS_ACTOR / git user.name / $USER)")
+	me := flag.String("me", "", "current user, used by the 'mine' preset (default: $WYK_AGENT_IDENTITY, then the Claude session's claude-<id>, then bd's actor: $BEADS_ACTOR / git user.name / $USER)")
 	probe := flag.Bool("probe", false, "non-TTY: print the human-flagged issues and exit (useful in scripts/CI)")
 	startupPreset := flag.String("preset", "", "launch into a specific preset (all, ready, human, mine, blocked)")
 	noColor := flag.Bool("no-color", false, "disable colored output (same as NO_COLOR / WYK_NO_COLOR)")
@@ -1309,8 +1309,9 @@ query, run: wyk conventions
 }
 
 // defaultMe resolves the current identity as the identity claims are
-// written under (wyk-contract/v4): $WYK_AGENT_IDENTITY, else bd's actor
-// chain ($BEADS_ACTOR, git user.name, $USER) — the value bd itself
+// written under (wyk-contract/v4): $WYK_AGENT_IDENTITY, else the Claude
+// session's claude-<id>, else bd's actor chain ($BEADS_ACTOR, git
+// user.name, $USER) — the value bd itself
 // stores as assignee on `--claim`, so `mine` shows what I've checked
 // out. git user.email is a last resort for a machine with no user.name
 // and no $USER. Empty string is a fine fallback — the "mine" preset

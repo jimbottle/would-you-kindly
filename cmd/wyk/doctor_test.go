@@ -1113,6 +1113,7 @@ func TestCheckAgentIdentity(t *testing.T) {
 	t.Cleanup(func() { gitConfigValue, doctorListInProgress = prevGit, prevList })
 	gitConfigValue = func(string) string { return "jimbottle" }
 	t.Setenv("BEADS_ACTOR", "")
+	t.Setenv(sessionEnvVar, "")
 	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	held := func(owner string) beads.Issue {
 		return beads.Issue{Status: "in_progress", Metadata: beads.Metadata{lease.KeyOwner: owner, lease.KeyUntil: until}}
@@ -1136,5 +1137,11 @@ func TestCheckAgentIdentity(t *testing.T) {
 	c := checkAgentIdentity(repos)
 	if c.status != statusWarn || !strings.Contains(c.detail, "codex-1, jimbottle") || !strings.Contains(c.detail, identityEnvVar) {
 		t.Fatalf("two holders, no identity: %+v", c)
+	}
+
+	// Inside a Claude session the default is already distinct: no warning.
+	t.Setenv(sessionEnvVar, "88ef57f5-1924")
+	if c := checkAgentIdentity(repos); c.status != statusPass || !strings.Contains(c.detail, "claude-88ef57f5") {
+		t.Fatalf("session default: %+v", c)
 	}
 }

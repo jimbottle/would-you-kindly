@@ -10,11 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Several agents in one repo: identity-owned, expiring claims**
   (would-you-kindly-ahnz, wyk-contract/v4). A claim is now a lease:
-  owned by an agent identity (`$WYK_AGENT_IDENTITY`, else bd's actor —
-  never a session) and expiring after `claim_ttl` (default 2h) unless
+  owned by an agent identity (`$WYK_AGENT_IDENTITY` for a role-named
+  agent, else `claude-<session id>` derived from the Claude Code session
+  so concurrent agents never collide, else bd's actor for a human outside
+  any session) and expiring after `claim_ttl` (default 2h) unless
   renewed, so an abandoned session can't hold work forever. The lease is
   bd's own atomic `update --claim` plus bd metadata
-  `wyk.lease.{owner,until,branch}`; expiry is computed on read, with no
+  `wyk.lease.{owner,until,branch}` (would-you-kindly-2j7b added the
+  session default); expiry is computed on read, with no
   daemon, and a bare `bd update --claim` gets an implicit lease
   (`updated_at` + TTL). New `wyk claim <id>` (`-renew`, `-release`,
   `-force`, `-ttl`, `-json`; exit 3 names the holder of a live lease;
@@ -22,11 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (held work, then the inbox, then ready work and lapsed claims, minus
   other identities' live leases and `agent-handoff`/`human` rows; exit 4
   when there's nothing to claim). The agent-nudge Stop hook renews the
-  identity's leases every turn. TUI: the Owner column shows `@<owner>`
+  identity's leases every turn, using the session from its payload. TUI: the Owner column shows `@<owner>`
   for a live lease and `EXPIRED` for a lapsed one (theme keys
   `claimed_badge_{bg,fg}` / `expired_badge_{bg,fg}`), and the detail view
-  gains a lease line. `wyk doctor` warns when several identities hold
-  leases but `$WYK_AGENT_IDENTITY` is unset. New config key `claim_ttl`
+  gains a lease line. `wyk doctor` warns when the identity falls back to
+  bd's actor while several identities hold leases. New config key `claim_ttl`
   and env `$WYK_CLAIM_TTL`; `beads.Issue` gains `StartedAt`/`Metadata`;
   `beads.Client` gains `Claim`, `Reassign`, `SetMetadata`, `Release`,
   `ListInProgress`, `ListInProgressBy`; new package `internal/lease`.
@@ -155,7 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The `mine` preset defaults to the claim identity**
   (would-you-kindly-ahnz). `-me` now defaults to `$WYK_AGENT_IDENTITY`,
-  then bd's actor (`$BEADS_ACTOR`, git `user.name`, `$USER`) — the value
+  then the Claude session identity, then bd's actor (`$BEADS_ACTOR`, git `user.name`, `$USER`) — the value
   bd writes as assignee on a claim — instead of git `user.email`, which
   never matched a claimed issue. Pass `-me` to keep the old behavior.
 

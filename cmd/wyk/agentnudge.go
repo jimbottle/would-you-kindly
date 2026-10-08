@@ -51,8 +51,11 @@ var nudgeFetchInbox = func() ([]beads.Issue, error) {
 // every registered repo (registry-wide like the nudge itself) under the
 // configured TTL. Best-effort: any failure is swallowed, since a missed
 // renewal only means an earlier expiry.
-var nudgeRenewLeases = func() {
-	me, _, err := resolveClaimIdentity("")
+var nudgeRenewLeases = func(sessionID string) {
+	// The session comes from the hook payload: Claude Code may not export
+	// $CLAUDE_CODE_SESSION_ID to hook processes, and a session-derived
+	// identity (the default) must match the one the agent claimed under.
+	me, _, err := resolveClaimIdentityFor("", sessionID)
 	if err != nil {
 		return
 	}
@@ -183,7 +186,7 @@ func runHookAgentNudge(stdin io.Reader) int {
 
 	// Heartbeat first: the agent is demonstrably alive (it just finished a
 	// turn), so extend whatever it holds before deciding whether to nudge.
-	nudgeRenewLeases()
+	nudgeRenewLeases(in.SessionID)
 
 	all, err := nudgeFetchInbox()
 	if err != nil {

@@ -132,7 +132,7 @@ wyk claim -force would-you-kindly-1k2j     # take over a LIVE lease (leaves a no
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-C` | `_(empty)_` | workspace the issue lives in; default: the cwd workspace, then the registered repo whose name prefixes the id |
-| `-identity` | `_(empty)_` | claim as this agent identity; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER) |
+| `-identity` | `_(empty)_` | claim as this agent identity; falls back to $WYK_AGENT_IDENTITY, then the Claude session (claude-<id>), then bd's actor ($BEADS_ACTOR / git user.name / $USER) |
 | `-ttl` | `_(empty)_` | lease length for THIS claim (duration like 2h / 90m, or whole minutes); default: $WYK_CLAIM_TTL, then config claim_ttl, then 2h |
 | `-renew` | `false` | extend a lease I already hold (with no <id>: every lease I hold, across the configured scope) |
 | `-release` | `false` | give the issue back: clear my lease, unassign, and reopen it |
@@ -160,7 +160,7 @@ wyk next -claim -json    # claim the top pick and print it (the agent-loop one-l
 | `-C` | `_(empty)_` | scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config') |
 | `-all` | `false` | query every registered repo, ignoring the configured default scope |
 | `-repo` | `_(empty)_` | restrict to the registered repo with this name (mutually exclusive with -C/-all) |
-| `-identity` | `_(empty)_` | the agent asking; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER). Leases held by this identity count as mine |
+| `-identity` | `_(empty)_` | the agent asking; falls back to $WYK_AGENT_IDENTITY, then the Claude session (claude-<id>), then bd's actor ($BEADS_ACTOR / git user.name / $USER). Leases held by this identity count as mine |
 | `-limit` | `-1` | cap the list at N rows (-1 disables) |
 | `-claim` | `false` | atomically claim the top pick (same lease as `wyk claim`); exit 4 when there is nothing to claim |
 | `-json` | `false` | emit a JSON {issues, degraded, errors, identity, claimed} envelope; each issue carries its lease {owner, until, state} |

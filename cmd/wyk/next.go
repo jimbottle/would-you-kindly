@@ -211,7 +211,7 @@ func runNext(args []string) int {
 	dir := fs.String("C", "", "scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config')")
 	allFlag := fs.Bool("all", false, "query every registered repo, ignoring the configured default scope")
 	repoName := fs.String("repo", "", "restrict to the registered repo with this name (mutually exclusive with -C/-all)")
-	identity := fs.String("identity", "", "the agent asking, as identity `name`; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER). Leases held by this identity count as mine")
+	identity := fs.String("identity", "", "the agent asking, as identity `name`; falls back to $WYK_AGENT_IDENTITY, then the Claude session (claude-<id>), then bd's actor ($BEADS_ACTOR / git user.name / $USER). Leases held by this identity count as mine")
 	limit := fs.Int("limit", -1, "cap the list at N rows (-1 disables)")
 	claim := fs.Bool("claim", false, "atomically claim the top pick (the same lease wyk claim writes); exit 4 when there is nothing to claim")
 	asJSON := fs.Bool("json", false, "emit a JSON {issues, degraded, errors, identity, claimed} envelope; each issue carries its lease {owner, until, state}")

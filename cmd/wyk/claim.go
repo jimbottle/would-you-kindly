@@ -60,16 +60,61 @@ var gitConfigValue = func(key string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// resolveClaimIdentity is the identity a claim is recorded under. The
-// explicit agent identity (-identity / $WYK_AGENT_IDENTITY) wins — that
-// is the multi-agent case the lease exists for. Without one, fall back
-// along bd's own actor chain ($BEADS_ACTOR, git user.name, $USER) — the
-// SAME value a bare `bd update --claim` would put in assignee, so a
-// single-agent user's wyk and raw-bd claims agree on who "me" is and
-// neither looks like a stranger's to the other. Not slugified: the
-// slug rule exists for labels, and assignee is free text. The source
-// is returned so the output can say which was used.
+// sessionIdentityPrefix heads an identity derived from a Claude Code
+// session ID. Recognisable in a badge ("@claude-88ef57f5") as "an agent
+// session with no role name", as opposed to a role-named agent.
+const sessionIdentityPrefix = "claude-"
+
+// sessionIdentity derives the default agent identity from a Claude Code
+// session ID: "claude-" + its first 8 label-safe characters. Every
+// concurrent session therefore gets a DISTINCT identity with nothing to
+// configure — the gap that made several agents on one machine all claim
+// as the same git user (would-you-kindly-2j7b). Empty when no session.
+//
+// Tying the default to the session is safe here because leases expire:
+// a session that ends stops renewing, and its claims lapse back into the
+// pool one TTL later. An agent with a role and the context to name
+// itself sets $WYK_AGENT_IDENTITY instead, which outranks this.
+func sessionIdentity(session string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(session)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			if b.Len() == 8 {
+				break
+			}
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return sessionIdentityPrefix + b.String()
+}
+
+// resolveClaimIdentity is resolveClaimIdentityFor with the session taken
+// from $CLAUDE_CODE_SESSION_ID — the right source for every command an
+// agent runs from its shell.
 func resolveClaimIdentity(flagVal string) (name, source string, err error) {
+	return resolveClaimIdentityFor(flagVal, os.Getenv(sessionEnvVar))
+}
+
+// resolveClaimIdentityFor is the identity a claim is recorded under:
+//
+//  1. -identity, then $WYK_AGENT_IDENTITY — an agent with a role names
+//     itself ("reviewer", "release-bot"); the name survives restarts.
+//  2. the Claude Code session ("claude-<8 chars>") — the default for an
+//     ordinary agent session: unique per concurrent agent, zero setup.
+//  3. bd's actor chain ($BEADS_ACTOR, git user.name, $USER) — a human at
+//     the CLI or TUI, outside any agent session. The same value a bare
+//     `bd update --claim` writes as assignee, so wyk and raw-bd claims
+//     agree on who "me" is. Not slugified: assignee is free text.
+//
+// session is passed in rather than read here because the Stop hook gets
+// it from its JSON payload, not its environment. Only CLAIMS use the
+// session default; inbox routing (resolveIdentity) deliberately does not,
+// since a bounce-back routed to a session would be stranded when it ends.
+// The source is returned so output can say where the name came from.
+func resolveClaimIdentityFor(flagVal, session string) (name, source string, err error) {
 	ident, err := resolveIdentity(flagVal)
 	if err != nil {
 		return "", "", err
@@ -79,6 +124,9 @@ func resolveClaimIdentity(flagVal string) (name, source string, err error) {
 			return ident, "-identity", nil
 		}
 		return ident, "$" + identityEnvVar, nil
+	}
+	if id := sessionIdentity(session); id != "" {
+		return id, "Claude session", nil
 	}
 	for _, c := range []struct{ val, src string }{
 		{os.Getenv("BEADS_ACTOR"), "$BEADS_ACTOR"},
@@ -90,6 +138,16 @@ func resolveClaimIdentity(flagVal string) (name, source string, err error) {
 		}
 	}
 	return "", "", fmt.Errorf("no agent identity: set $%s (or pass -identity) so the claim records who holds it", identityEnvVar)
+}
+
+// isActorFallback reports whether an identity source is bd's actor chain
+// — the one source several concurrent agents can share.
+func isActorFallback(source string) bool {
+	switch source {
+	case "$BEADS_ACTOR", "git user.name", "$USER":
+		return true
+	}
+	return false
 }
 
 // currentBranch is the git branch of dir ("" when not a git checkout or
@@ -382,7 +440,7 @@ func runClaim(args []string) int {
 	fs.Usage = subcommandUsage(fs, "claim")
 	cfg := loadConfigBestEffort()
 	dir := fs.String("C", "", "workspace the issue lives in; default: the cwd workspace, then the registered repo whose name prefixes the id")
-	identity := fs.String("identity", "", "claim as this agent identity `name`; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER)")
+	identity := fs.String("identity", "", "claim as this agent identity `name`; falls back to $WYK_AGENT_IDENTITY, then the Claude session (claude-<id>), then bd's actor ($BEADS_ACTOR / git user.name / $USER)")
 	ttlFlag := fs.String("ttl", "", "lease length for THIS claim (duration like 2h / 90m, or whole minutes); default: $WYK_CLAIM_TTL, then config claim_ttl, then "+lease.DefaultTTL.String())
 	renew := fs.Bool("renew", false, "extend a lease I already hold (with no <id>: every lease I hold, across the configured scope)")
 	release := fs.Bool("release", false, "give the issue back: clear my lease, unassign, and reopen it")

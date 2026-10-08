@@ -142,7 +142,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 		},
 		Flags: []cliFlag{
 			{Name: "-C", Default: "", Description: "workspace the issue lives in; default: the cwd workspace, then the registered repo whose name prefixes the id"},
-			{Name: "-identity", Default: "", Description: "claim as this agent identity; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER)"},
+			{Name: "-identity", Default: "", Description: "claim as this agent identity; falls back to $WYK_AGENT_IDENTITY, then the Claude session (claude-<id>), then bd's actor ($BEADS_ACTOR / git user.name / $USER)"},
 			{Name: "-ttl", Default: "", Description: "lease length for THIS claim (duration like 2h / 90m, or whole minutes); default: $WYK_CLAIM_TTL, then config claim_ttl, then 2h"},
 			{Name: "-renew", Default: "false", Description: "extend a lease I already hold (with no <id>: every lease I hold, across the configured scope)"},
 			{Name: "-release", Default: "false", Description: "give the issue back: clear my lease, unassign, and reopen it"},
@@ -163,7 +163,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-C", Default: "", Description: "scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config')"},
 			{Name: "-all", Default: "false", Description: "query every registered repo, ignoring the configured default scope"},
 			{Name: "-repo", Default: "", Description: "restrict to the registered repo with this name (mutually exclusive with -C/-all)"},
-			{Name: "-identity", Default: "", Description: "the agent asking; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER). Leases held by this identity count as mine"},
+			{Name: "-identity", Default: "", Description: "the agent asking; falls back to $WYK_AGENT_IDENTITY, then the Claude session (claude-<id>), then bd's actor ($BEADS_ACTOR / git user.name / $USER). Leases held by this identity count as mine"},
 			{Name: "-limit", Default: "-1", Description: "cap the list at N rows (-1 disables)"},
 			{Name: "-claim", Default: "false", Description: "atomically claim the top pick (same lease as `wyk claim`); exit 4 when there is nothing to claim"},
 			{Name: "-json", Default: "false", Description: "emit a JSON {issues, degraded, errors, identity, claimed} envelope; each issue carries its lease {owner, until, state}"},

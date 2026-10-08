@@ -1237,8 +1237,9 @@ var doctorListInProgress = func(r registry.Repo) ([]beads.Issue, error) {
 
 // checkAgentIdentity reports which identity `wyk claim` / `wyk next`
 // would record leases under (wyk-contract/v4) and WARNs in the one case
-// that bites: no explicit $WYK_AGENT_IDENTITY while more than one
-// identity holds a live lease across the registered repos. Several
+// that bites: the identity fell through to bd's actor (no explicit name,
+// no Claude session) while more than one identity holds a live lease
+// across the registered repos. Several
 // agents on one machine then all claim as the same bd actor and can't
 // tell each other's work apart. Never FAILs — one agent per machine
 // needs no identity at all.
@@ -1248,7 +1249,7 @@ func checkAgentIdentity(repos []registry.Repo) check {
 	if err != nil {
 		return check{name: name, status: statusWarn, detail: err.Error()}
 	}
-	if source != "$"+identityEnvVar {
+	if isActorFallback(source) {
 		owners := liveLeaseOwners(repos)
 		if len(owners) > 1 {
 			return check{name: name, status: statusWarn, detail: fmt.Sprintf(
@@ -1258,7 +1259,7 @@ func checkAgentIdentity(repos []registry.Repo) check {
 		return check{name: name, status: statusPass, detail: fmt.Sprintf(
 			"unset — claims use bd's actor %q (%s); fine for one agent. Set $%s per agent when several share a workspace", sanitize.Inline(me), source, identityEnvVar)}
 	}
-	return check{name: name, status: statusPass, detail: fmt.Sprintf("$%s = %s", identityEnvVar, me)}
+	return check{name: name, status: statusPass, detail: fmt.Sprintf("%s (from %s)", sanitize.Inline(me), source)}
 }
 
 // liveLeaseOwners returns the sorted distinct owners of LIVE leases

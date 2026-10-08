@@ -84,8 +84,9 @@ Work on your own git branch, and check work out before starting it:
     wyk claim -renew         # keep everything you hold alive
     wyk claim -release <id>  # give it back
 
-A claim is a LEASE owned by your agent identity ($WYK_AGENT_IDENTITY;
-else bd's actor) and it EXPIRES after claim_ttl (default 2h) unless
+A claim is a LEASE owned by your agent identity — $WYK_AGENT_IDENTITY if
+you have a role name, else claude-<session id> (automatic, unique per
+session), else bd's actor — and it EXPIRES after claim_ttl (default 2h) unless
 renewed — the Stop hook renews on every turn. It is stored on the issue
 as bd metadata wyk.lease.owner / .until / .branch alongside bd's own
 assignee + in_progress. Expiry is computed on read; nothing sweeps.
@@ -93,8 +94,8 @@ assignee + in_progress. Expiry is computed on read; nothing sweeps.
   - A row badged @<owner> is checked out by that agent: do NOT touch it.
   - EXPIRED means its holder stopped renewing: claimable (wyk next offers
     it; claiming leaves a note naming the previous holder).
-  - Several agents on one machine must each set WYK_AGENT_IDENTITY, or
-    they all claim as the same bd actor.
+  - Set WYK_AGENT_IDENTITY only for an agent with a role ('reviewer');
+    plain agent sessions are told apart by their session ID already.
 
 Prefer 'wyk handoff <id>' over hand-rolling these labels — it applies the
 right labels AND lets you attach a runbook from stdin in one shot.

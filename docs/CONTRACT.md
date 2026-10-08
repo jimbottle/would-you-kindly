@@ -147,12 +147,28 @@ tied to a session that may already be dead. v4 makes a claim a
 | **Until when**     | bd metadata `wyk.lease.until` — RFC3339. Default TTL 2h (`wyk config set claim_ttl …`, `$WYK_CLAIM_TTL`). |
 | **Where the work is** | bd metadata `wyk.lease.branch` — the holder's git branch at claim time.                     |
 
-**Identity.** `-identity`, then `$WYK_AGENT_IDENTITY`, then bd's actor
-chain (`$BEADS_ACTOR`, git `user.name`, `$USER`) — the same value a bare
-`bd update --claim` writes as assignee, so one agent needs no setup.
-Several agents on one machine MUST each set `$WYK_AGENT_IDENTITY`,
-otherwise they all claim as the same actor; `wyk doctor` warns when it
-sees more than one lease owner and no identity set.
+**Identity.** Resolved in this order, so concurrent agents never share
+one without anyone configuring anything:
+
+1. `-identity`, then `$WYK_AGENT_IDENTITY` — for an agent with a role and
+   the context to name itself (`reviewer`, `release-bot`). The name
+   survives restarts.
+2. The Claude Code session: `claude-<first 8 chars of the session ID>`,
+   from `$CLAUDE_CODE_SESSION_ID` (the Stop hook reads it from its
+   payload). The default for an ordinary agent session — unique per
+   concurrent agent, zero setup. Tying it to the session is safe because
+   leases expire: a session that ends stops renewing and its claims lapse
+   one TTL later. A NEW session is a new identity, so it sees its
+   predecessor's still-live claims as someone else's until they lapse
+   (or it takes one over with `-force`).
+3. bd's actor chain (`$BEADS_ACTOR`, git `user.name`, `$USER`) — a human
+   at the CLI or TUI outside any agent session; the same value a bare
+   `bd update --claim` writes as assignee.
+
+Only claims use the session default. Inbox routing (`src:agent:<name>`)
+keeps requiring an explicit identity, since a bounce-back routed to a
+session would be stranded when it ends. `wyk doctor` warns when the
+identity falls through to bd's actor while several lease owners exist.
 
 **Expiry is computed on read.** Nothing sweeps the workspace and no
 daemon runs. A reader compares `wyk.lease.until` with the clock: past

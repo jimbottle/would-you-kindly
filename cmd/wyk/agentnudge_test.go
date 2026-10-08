@@ -215,7 +215,12 @@ func TestRunHookAgentNudge_BlockDedupAllow(t *testing.T) {
 	// count it rather than let it reach bd.
 	renewals := 0
 	oldRenew := nudgeRenewLeases
-	nudgeRenewLeases = func() { renewals++ }
+	nudgeRenewLeases = func(session string) {
+		if session == "" {
+			t.Error("the heartbeat must receive the hook payload's session_id")
+		}
+		renewals++
+	}
 	defer func() { nudgeRenewLeases = oldRenew }()
 
 	runCap := func(payload string) string {

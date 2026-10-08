@@ -235,6 +235,7 @@ func TestResolveClaimIdentity_PrecedenceAndSlug(t *testing.T) {
 	t.Cleanup(func() { gitConfigValue = prev })
 	gitConfigValue = func(key string) string { return "Evan Ray" }
 
+	t.Setenv(sessionEnvVar, "") // the actor-chain cases below run outside a session
 	t.Setenv(identityEnvVar, "claude-a")
 	t.Setenv("BEADS_ACTOR", "bot")
 	if name, src, _ := resolveClaimIdentity(""); name != "claude-a" || src != "$"+identityEnvVar {
@@ -324,5 +325,59 @@ func TestClaimOutput_SanitizesHolderNames(t *testing.T) {
 	})
 	if strings.ContainsRune(out, '\x1b') {
 		t.Fatalf("takeover line leaked an escape: %q", out)
+	}
+}
+
+func TestSessionIdentity(t *testing.T) {
+	cases := map[string]string{
+		"88ef57f5-1924-4dab-9aab-24e4de33a1d0": "claude-88ef57f5",
+		"ABCD-ef12-3456":                       "claude-abcdef12",
+		"  ":                                   "",
+		"../..":                                "",
+	}
+	for in, want := range cases {
+		got := sessionIdentity(in)
+		if got != want {
+			t.Errorf("sessionIdentity(%q)=%q, want %q", in, got, want)
+		}
+		if got != "" && validateIdentity(got) != nil {
+			t.Errorf("%q is not a legal identity slug", got)
+		}
+	}
+}
+
+func TestResolveClaimIdentity_SessionDefault(t *testing.T) {
+	prev := gitConfigValue
+	t.Cleanup(func() { gitConfigValue = prev })
+	gitConfigValue = func(string) string { return "jimbottle" }
+	t.Setenv("BEADS_ACTOR", "")
+
+	// No role name: each Claude session gets its own identity, ahead of
+	// the shared git user.
+	t.Setenv(identityEnvVar, "")
+	t.Setenv(sessionEnvVar, "88ef57f5-1924-4dab-9aab-24e4de33a1d0")
+	if name, src, _ := resolveClaimIdentity(""); name != "claude-88ef57f5" || src != "Claude session" {
+		t.Fatalf("got %q from %q, want the session default", name, src)
+	}
+	// Two concurrent sessions never collide.
+	a, _, _ := resolveClaimIdentityFor("", "11111111-aaaa")
+	b, _, _ := resolveClaimIdentityFor("", "22222222-bbbb")
+	if a == b {
+		t.Fatalf("two sessions share identity %q", a)
+	}
+	// A role-named agent outranks the session.
+	t.Setenv(identityEnvVar, "reviewer")
+	if name, _, _ := resolveClaimIdentity(""); name != "reviewer" {
+		t.Fatalf("got %q, want the explicit role name", name)
+	}
+	// The Stop hook passes the payload's session even when the env lacks it.
+	t.Setenv(identityEnvVar, "")
+	t.Setenv(sessionEnvVar, "")
+	if name, _, _ := resolveClaimIdentityFor("", "33333333-cccc"); name != "claude-33333333" {
+		t.Fatalf("got %q, want the passed-in session", name)
+	}
+	// Outside any session: bd's actor, as before.
+	if name, src, _ := resolveClaimIdentity(""); name != "jimbottle" || !isActorFallback(src) {
+		t.Fatalf("got %q from %q, want the actor fallback", name, src)
 	}
 }

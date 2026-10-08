@@ -370,12 +370,16 @@ git branch — they need to see what is already checked out. A claim is a
 unless renewed, so a dead session can't hold work forever.
 
 ```bash
-export WYK_AGENT_IDENTITY=claude-a   # one per concurrent agent
 wyk next -claim                      # pick the best unclaimed issue and check it out
-# > claimed would-you-kindly-1k2j as claude-a until 2026-10-08T16:00:00-04:00 on feat/x
+# > claimed would-you-kindly-1k2j as claude-88ef57f5 until 2026-10-08T16:00:00-04:00 on feat/x
 wyk claim -renew                     # keep everything I hold alive
 wyk claim -release would-you-kindly-1k2j
 ```
+
+Each Claude Code session claims as `claude-<session id>`, so concurrent
+agents are told apart with no setup. An agent with a defined role can
+name itself instead with `WYK_AGENT_IDENTITY=reviewer`; outside any
+session, claims use bd's actor (git `user.name`).
 
 `wyk next` ranks the issues you already hold, then your inbox, then
 ready work and claims other agents abandoned. It never offers an issue
