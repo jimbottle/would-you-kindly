@@ -14,6 +14,8 @@ func TestQueryWithClosed(t *testing.T) {
 		{"human with closed", PresetHuman, "ev", true, `label=human`},
 		{"mine open-only with me", PresetMine, "ev", false, `assignee=ev AND status!=closed`},
 		{"mine with closed and me", PresetMine, "ev", true, `assignee=ev`},
+		{"mine quotes a multi-word name", PresetMine, "Evan Ray", false, `assignee="Evan Ray" AND status!=closed`},
+		{"mine escapes quotes", PresetMine, `a"b`, true, `assignee="a\"b"`},
 		{"mine open-only without me", PresetMine, "", false, `status!=closed`},
 		{"mine with closed without me", PresetMine, "", true, ``},
 		{"blocked stays blocked", PresetBlocked, "ev", false, `status=blocked`},

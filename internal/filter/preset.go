@@ -5,6 +5,8 @@
 // in the status bar without ceremony.
 package filter
 
+import "strings"
+
 // Preset is a named issue-list view.
 type Preset string
 
@@ -107,7 +109,7 @@ func QueryWithClosed(p Preset, me string, includeClosed bool) string {
 	case PresetMine:
 		base := ``
 		if me != "" {
-			base = `assignee=` + me
+			base = `assignee=` + queryValue(me)
 		}
 		if includeClosed {
 			if base == "" {
@@ -127,4 +129,18 @@ func QueryWithClosed(p Preset, me string, includeClosed bool) string {
 		}
 		return `status!=closed`
 	}
+}
+
+// queryValue renders a value for a bd query clause. A bare word passes
+// through unchanged; anything with whitespace, quotes, or query syntax is
+// double-quoted with `"` and `\` escaped — `assignee=Evan Ray` is a bd
+// parse error ("unexpected token"), `assignee="Evan Ray"` matches. The
+// `mine` preset's default identity is bd's actor, typically git
+// user.name, which often contains a space.
+func queryValue(v string) string {
+	if v != "" && !strings.ContainsAny(v, " \t\"'\\()=!<>,") {
+		return v
+	}
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + r.Replace(v) + `"`
 }

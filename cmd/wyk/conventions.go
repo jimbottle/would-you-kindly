@@ -96,6 +96,10 @@ assignee + in_progress. Expiry is computed on read; nothing sweeps.
     it; claiming leaves a note naming the previous holder).
   - Set WYK_AGENT_IDENTITY only for an agent with a role ('reviewer');
     plain agent sessions are told apart by their session ID already.
+  - A NEW session (including after /clear) is a new identity: your
+    earlier claims show as another agent's until they lapse. Resume one
+    now with 'wyk claim -force <id>', or set WYK_AGENT_IDENTITY for a
+    name that survives sessions.
 
 Prefer 'wyk handoff <id>' over hand-rolling these labels — it applies the
 right labels AND lets you attach a runbook from stdin in one shot.

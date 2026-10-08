@@ -1267,6 +1267,13 @@ func checkAgentIdentity(repos []registry.Repo) check {
 // advisory and the per-repo checks above already report bd failures.
 func liveLeaseOwners(repos []registry.Repo) []string {
 	now := time.Now()
+	// The configured TTL, as claim / next use it — lease.TTL is only set on
+	// the TUI path, so reading it here would apply the 2h default to
+	// implicit leases regardless of claim_ttl.
+	ttl, err := resolveClaimTTL(loadConfigBestEffort())
+	if err != nil {
+		ttl = lease.TTL
+	}
 	seen := map[string]bool{}
 	for _, r := range repos {
 		issues, err := doctorListInProgress(r)
@@ -1274,7 +1281,7 @@ func liveLeaseOwners(repos []registry.Repo) []string {
 			continue
 		}
 		for _, i := range issues {
-			if l := lease.Of(i, now, lease.TTL); l.State == lease.Live && l.Owner != "" {
+			if l := lease.Of(i, now, ttl); l.State == lease.Live && l.Owner != "" {
 				seen[l.Owner] = true
 			}
 		}

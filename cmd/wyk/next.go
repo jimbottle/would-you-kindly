@@ -257,9 +257,14 @@ func runNext(args []string) int {
 		}
 		return code
 	}
-	// Per-identity routing (wyk-contract/v3): drop inbox rows routed to a
-	// different identity. Ready rows carry no routing, so they pass.
-	rows = filterRowsToIdentity(rows, me)
+	// Per-identity routing (wyk-contract/v3) keys off the EXPLICIT identity
+	// only (flag / $WYK_AGENT_IDENTITY), exactly like `wyk inbox`. The
+	// session / actor fallback in `me` is for lease ownership: routing by
+	// it would hide every routed bounce-back from an agent that never
+	// named itself, while `wyk inbox` shows them (would-you-kindly-ahnz
+	// review). Unset → the collective view, no filtering.
+	route, _ := resolveIdentity(*identity)
+	rows = filterRowsToIdentity(rows, route)
 	if *limit >= 0 && *limit < len(rows) {
 		rows = rows[:*limit]
 	}
@@ -311,8 +316,12 @@ func runNext(args []string) int {
 }
 
 // filterRowsToIdentity applies the v3 routing rule to ranked rows: keep
-// rows routed to me or un-routed; drop rows routed to someone else.
+// rows routed to me or un-routed; drop rows routed to someone else. An
+// empty identity is the collective view and keeps everything.
 func filterRowsToIdentity(rows []nextRow, me string) []nextRow {
+	if me == "" {
+		return rows
+	}
 	out := rows[:0]
 	for _, r := range rows {
 		if issueBelongsToIdentity(r.Issue, me) {

@@ -69,7 +69,9 @@ var nudgeRenewLeases = func(sessionID string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*beads.BDTimeoutFromEnv())
 	defer cancel()
-	_, _ = renewHeld(ctx, subs, me, ttl, time.Now())
+	// Only re-stamp leases past half their TTL: the hook fires every turn
+	// and each renewal is a Dolt commit.
+	_, _ = renewHeld(ctx, subs, me, ttl, ttl/2, time.Now())
 }
 
 // runHookInstallNudge installs (or removes) the agent-nudge Stop hook in a

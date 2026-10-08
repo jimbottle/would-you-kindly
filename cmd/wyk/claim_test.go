@@ -48,6 +48,10 @@ func (f *fakeClaimClient) Release(_ context.Context, _, actor string, keys []str
 	f.calls = append(f.calls, "release:"+actor+":"+strings.Join(keys, ","))
 	return nil
 }
+func (f *fakeClaimClient) SetAssignee(_ context.Context, _ string, who string) error {
+	f.calls = append(f.calls, "assign:"+who)
+	return nil
+}
 func (f *fakeClaimClient) Note(_ context.Context, _ string, text string) error {
 	f.calls = append(f.calls, "note")
 	f.noteText = text
@@ -379,5 +383,104 @@ func TestResolveClaimIdentity_SessionDefault(t *testing.T) {
 	// Outside any session: bd's actor, as before.
 	if name, src, _ := resolveClaimIdentity(""); name != "jimbottle" || !isActorFallback(src) {
 		t.Fatalf("got %q from %q, want the actor fallback", name, src)
+	}
+}
+
+func TestClaimIssue_OpenButAssignedElsewhereIsClearedThenClaimed(t *testing.T) {
+	// Project convention assigns issues at creation without checking them
+	// out; bd's --claim refuses those. wyk clears the assignment, claims
+	// atomically, confirms, and notes the previous assignee.
+	f := &assignTracker{fakeClaimClient: &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Assignee: "jimbottle"}}}
+	f.afterClaim = func() {
+		f.issue = beads.Issue{ID: "x-1", Status: "in_progress", Assignee: "claude-a", Metadata: f.meta}
+	}
+	out, err := claimIssue(context.Background(), f, "x-1", baseOpts())
+	if err != nil || out.Action != actionClaimed || out.Previous != "jimbottle" {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+	if got := strings.Join(f.calls, " "); got != "show assign: claim:claude-a show note" {
+		t.Fatalf("calls=%q, want clear → claim → confirm → note", got)
+	}
+	if !strings.Contains(f.noteText, "was assigned to jimbottle") {
+		t.Fatalf("note=%q", f.noteText)
+	}
+}
+
+func TestClaimIssue_AssignedElsewhereLosesRaceAndReportsWinner(t *testing.T) {
+	f := &assignTracker{fakeClaimClient: &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Assignee: "jimbottle"},
+		claimErr: errors.New("bd update x-1: Error claiming x-1: issue already claimed by codex-1")}}
+	f.afterClaim = func() {
+		f.issue = beads.Issue{ID: "x-1", Status: "in_progress", Assignee: "codex-1", UpdatedAt: claimNow}
+	}
+	_, err := claimIssue(context.Background(), f, "x-1", baseOpts())
+	var held *errHeldByOther
+	if !errors.As(err, &held) || held.l.Owner != "codex-1" {
+		t.Fatalf("err=%v, want held by the winner", err)
+	}
+	for _, c := range f.calls {
+		if c == "assign:jimbottle" {
+			t.Fatal("must not restore the old assignee over the winner")
+		}
+	}
+}
+
+func TestClaimIssue_ClaimFailureRestoresTheAssignment(t *testing.T) {
+	f := &assignTracker{fakeClaimClient: &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Assignee: "jimbottle"},
+		claimErr: errors.New("bd update x-1: database is locked")}}
+	f.afterClaim = func() { f.issue = beads.Issue{ID: "x-1", Status: "open"} }
+	if _, err := claimIssue(context.Background(), f, "x-1", baseOpts()); err == nil {
+		t.Fatal("want the bd error")
+	}
+	if last := f.calls[len(f.calls)-1]; last != "assign:jimbottle" {
+		t.Fatalf("calls=%v, want the assignment restored", f.calls)
+	}
+}
+
+// assignTracker records SetAssignee and lets a test change the issue the
+// moment Claim runs.
+type assignTracker struct {
+	*fakeClaimClient
+	afterClaim func()
+}
+
+func (a *assignTracker) SetAssignee(_ context.Context, _ string, who string) error {
+	a.calls = append(a.calls, "assign:"+who)
+	return nil
+}
+
+func (a *assignTracker) Claim(ctx context.Context, id, actor string, meta beads.Metadata) error {
+	err := a.fakeClaimClient.Claim(ctx, id, actor, meta)
+	if a.afterClaim != nil {
+		a.afterClaim()
+	}
+	return err
+}
+
+func TestNeedsRenewal(t *testing.T) {
+	ttl := 2 * time.Hour
+	mk := func(owner string, left time.Duration) lease.Lease {
+		l := lease.Lease{Owner: owner, Until: claimNow.Add(left), State: lease.Live}
+		if left < 0 {
+			l.State = lease.Expired
+		}
+		return l
+	}
+	cases := []struct {
+		name  string
+		l     lease.Lease
+		below time.Duration
+		want  bool
+	}{
+		{"fresh, throttled", mk("me", 110*time.Minute), ttl / 2, false},
+		{"past half, throttled", mk("me", 30*time.Minute), ttl / 2, true},
+		{"my lapsed lease is revived", mk("me", -time.Minute), ttl / 2, true},
+		{"explicit renew ignores the throttle", mk("me", 110*time.Minute), 0, true},
+		{"someone else's", mk("them", 10*time.Minute), ttl / 2, false},
+		{"no lease", lease.Lease{State: lease.None}, 0, false},
+	}
+	for _, tc := range cases {
+		if got := needsRenewal(tc.l, "me", claimNow, tc.below); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

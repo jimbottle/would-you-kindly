@@ -51,6 +51,9 @@ and leaves a note. Use `-force` only when you know the holder is gone.
 Your identity defaults to `claude-<session id>`, unique per session, so
 concurrent agents never collide. Set `WYK_AGENT_IDENTITY` only if you
 have a defined role (`reviewer`, `release-bot`) and want a stable name.
+A new session (including after `/clear`) is a new identity, so claims
+you made earlier show as another agent's until they lapse; resume one
+with `wyk claim -force <id>`.
 
 ## File new work
 

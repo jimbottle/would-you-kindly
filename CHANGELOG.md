@@ -21,11 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daemon, and a bare `bd update --claim` gets an implicit lease
   (`updated_at` + TTL). New `wyk claim <id>` (`-renew`, `-release`,
   `-force`, `-ttl`, `-json`; exit 3 names the holder of a live lease;
-  an expired one is taken over with a note) and `wyk next [-claim]`
+  an expired one is taken over with a note; an open issue merely
+  *assigned* to someone else is not checked out, so it is claimed by
+  clearing the assignment and claiming atomically, with a note) and
+  `wyk next [-claim]`
   (held work, then the inbox, then ready work and lapsed claims, minus
   other identities' live leases and `agent-handoff`/`human` rows; exit 4
   when there's nothing to claim). The agent-nudge Stop hook renews the
-  identity's leases every turn, using the session from its payload. TUI: the Owner column shows `@<owner>`
+  identity's leases, using the session from its payload, but only those
+  past half their TTL (each renewal is a Dolt commit), and it revives the
+  identity's own lapsed leases. The `mine` preset quotes multi-word names
+  in its bd query. TUI: the Owner column shows `@<owner>`
   for a live lease and `EXPIRED` for a lapsed one (theme keys
   `claimed_badge_{bg,fg}` / `expired_badge_{bg,fg}`), and the detail view
   gains a lease line. `wyk doctor` warns when the identity falls back to

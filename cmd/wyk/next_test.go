@@ -135,3 +135,12 @@ func TestFilterRowsToIdentity(t *testing.T) {
 		t.Fatalf("got=%+v", got)
 	}
 }
+
+func TestFilterRowsToIdentity_EmptyIsCollective(t *testing.T) {
+	// With no explicit identity, wyk next shows routed bounce-backs just as
+	// wyk inbox does; the session / actor fallback never routes.
+	rows := []nextRow{{Issue: beads.Issue{ID: "routed", Labels: []string{"src:agent", "src:agent:reviewer"}}}}
+	if got := filterRowsToIdentity(rows, ""); len(got) != 1 {
+		t.Fatalf("got=%+v, want the routed row kept", got)
+	}
+}

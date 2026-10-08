@@ -178,6 +178,7 @@ type claimClient interface {
 	SetMetadata(ctx context.Context, id string, meta beads.Metadata) error
 	Release(ctx context.Context, id, actor string, unsetKeys []string) error
 	Note(ctx context.Context, id, text string) error
+	SetAssignee(ctx context.Context, id, assignee string) error
 }
 
 // claimAction is what claimIssue did.
@@ -283,20 +284,68 @@ func claimIssue(ctx context.Context, c claimClient, id string, o claimOpts) (cla
 		}
 		return out, nil
 	default:
-		if err := c.Claim(ctx, id, o.me, stamp); err != nil {
-			if beads.IsAlreadyClaimed(err) {
-				// Lost a race with a concurrent claimer, or bd's assignee is
-				// set on a row our read didn't see as leased. Re-read so the
-				// refusal names the actual holder.
-				if cur, rerr := c.Show(ctx, id); rerr == nil {
-					return out, &errHeldByOther{id: id, l: lease.Of(cur, o.now, o.ttl), now: o.now}
-				}
-			}
-			return out, err
-		}
-		out.Action = actionClaimed
-		return out, nil
+		return claimUnleased(ctx, c, i, o, stamp, out)
 	}
+}
+
+// claimUnleased claims an issue nobody holds a lease on. The usual case
+// is one atomic `bd --claim`. But under this project's conventions most
+// open issues are ASSIGNED at creation (to the human who owns them, or a
+// named agent) without being checked out, and bd's --claim refuses any
+// issue whose assignee isn't the claimer. Assignment is not a checkout —
+// the lease contract's lock is assignee + in_progress — so an open issue
+// assigned to someone else is claimable: clear the assignee, then claim
+// atomically, then re-read to confirm the win.
+//
+// Concurrency: bd's --claim is the only compare-and-set bd offers, and
+// it only succeeds on an empty (or own) assignee. Two agents racing for
+// the same issue both clear it, but only one --claim lands; the loser is
+// refused and reports the winner. The re-read catches the narrower case
+// where a slower agent's clear lands after the winner's claim and lets
+// the slower agent claim over it: whoever the re-read shows is the
+// holder, the other gets errHeldByOther.
+func claimUnleased(ctx context.Context, c claimClient, i beads.Issue, o claimOpts, stamp beads.Metadata, out claimOutcome) (claimOutcome, error) {
+	id := i.ID
+	prevAssignee := ""
+	if i.Assignee != "" && i.Assignee != o.me {
+		prevAssignee = i.Assignee
+		if err := c.SetAssignee(ctx, id, ""); err != nil {
+			return out, fmt.Errorf("%s is assigned to %s (not in progress); clearing the assignment to claim it failed: %w", id, sanitize.Inline(prevAssignee), err)
+		}
+	}
+	if err := c.Claim(ctx, id, o.me, stamp); err != nil {
+		cur, rerr := c.Show(ctx, id)
+		if rerr == nil {
+			if l := lease.Of(cur, o.now, o.ttl); l.State == lease.Live && l.Owner != o.me {
+				return out, &errHeldByOther{id: id, l: l, now: o.now}
+			}
+			// Our clear landed but the claim didn't, and nobody else took it:
+			// put the assignment back rather than orphan the issue.
+			if prevAssignee != "" && cur.Assignee == "" && cur.Status == i.Status {
+				_ = c.SetAssignee(ctx, id, prevAssignee)
+			}
+			if beads.IsAlreadyClaimed(err) {
+				return out, fmt.Errorf("%s: bd refused the claim (assigned to %s, status %s, not checked out); retry: %w",
+					id, orUnrecorded(cur.Assignee), cur.Status, err)
+			}
+		}
+		return out, err
+	}
+	if prevAssignee != "" {
+		// We took the slow path, so confirm the win (see the race note above).
+		cur, err := c.Show(ctx, id)
+		if err != nil {
+			return out, fmt.Errorf("claimed %s but could not confirm it: %w", id, err)
+		}
+		if l := lease.Of(cur, o.now, o.ttl); l.Owner != o.me {
+			return out, &errHeldByOther{id: id, l: l, now: o.now}
+		}
+		out.Previous = prevAssignee
+		_ = c.Note(ctx, id, fmt.Sprintf("wyk claim: was assigned to %s (open, not checked out); claimed by %s at %s",
+			prevAssignee, o.me, o.now.UTC().Format(time.RFC3339)))
+	}
+	out.Action = actionClaimed
+	return out, nil
 }
 
 // takeoverNote is the audit line left on an issue whose lease was
@@ -337,12 +386,31 @@ func releaseIssue(ctx context.Context, c claimClient, id string, o claimOpts) (c
 	return out, nil
 }
 
-// renewHeld renews every live lease identity `me` holds across subs — the
+// needsRenewal decides whether renewHeld re-stamps a lease. It must be
+// mine — held or LAPSED: a lease whose holder outlived the TTL (one long
+// turn, an idle stretch) is still assigned to me, and the rest of the
+// contract treats it as mine to resume, so the heartbeat revives it
+// rather than leaving it for takeover. renewBelow throttles the
+// heartbeat: only leases with less than that left are re-stamped, so a
+// Stop hook firing every turn doesn't write (one Dolt commit each) to a
+// lease that still has most of its TTL. renewBelow <= 0 renews every
+// lease I hold (an explicit `wyk claim -renew`).
+func needsRenewal(l lease.Lease, me string, now time.Time, renewBelow time.Duration) bool {
+	if l.State == lease.None || me == "" || l.Owner != me {
+		return false
+	}
+	if renewBelow <= 0 || l.State == lease.Expired || l.Until.IsZero() {
+		return true
+	}
+	return l.Until.Sub(now) < renewBelow
+}
+
+// renewHeld renews the leases identity `me` holds across subs — the
 // Stop-hook auto-renew and `wyk claim -renew` with no id. Rows whose
 // lease is implicit (a bare bd claim under this actor) get a proper
 // stamp from here on. Returns the renewed IDs and per-repo errors;
 // best-effort by design, since a renewal that fails just expires later.
-func renewHeld(ctx context.Context, subs []inboxSub, me string, ttl time.Duration, now time.Time) (renewed []string, errs []subError) {
+func renewHeld(ctx context.Context, subs []inboxSub, me string, ttl, renewBelow time.Duration, now time.Time) (renewed []string, errs []subError) {
 	type res struct {
 		ids []string
 		err error
@@ -360,7 +428,7 @@ func renewHeld(ctx context.Context, subs []inboxSub, me string, ttl time.Duratio
 			}
 			for _, is := range held {
 				l := lease.Of(is, now, ttl)
-				if l.State != lease.Live || l.Owner != me {
+				if !needsRenewal(l, me, now, renewBelow) {
 					continue
 				}
 				branch := l.Branch
@@ -485,7 +553,7 @@ func runClaim(args []string) int {
 		if code != 0 {
 			return code
 		}
-		renewed, subErrs := renewHeld(ctx, subs, me, ttl, now)
+		renewed, subErrs := renewHeld(ctx, subs, me, ttl, 0, now)
 		if *asJSON {
 			res := struct {
 				Renewed []string    `json:"renewed"`
@@ -577,7 +645,11 @@ func printClaimOutcome(out claimOutcome, asJSON, compact bool) {
 	case actionRenewed:
 		fmt.Printf("renewed %s for %s until %s%s\n", where, orUnrecorded(out.Owner), out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
 	default:
-		fmt.Printf("claimed %s as %s until %s%s\n", where, orUnrecorded(out.Owner), out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
+		was := ""
+		if out.Previous != "" {
+			was = " (was assigned to " + orUnrecorded(out.Previous) + ")"
+		}
+		fmt.Printf("claimed %s as %s until %s%s%s\n", where, orUnrecorded(out.Owner), out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch), was)
 	}
 }
 
