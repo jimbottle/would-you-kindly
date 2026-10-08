@@ -248,34 +248,45 @@ func typeFilter(t *testing.T, m Model, q string) Model {
 	return m
 }
 
-func TestFilter_EscInPromptClearsFilter(t *testing.T) {
-	// The query narrows the list live as the user types, so esc
-	// must drop it rather than just close the prompt — otherwise a
-	// half-typed filter keeps hiding rows with no prompt on screen
-	// to explain why.
-	src := &stubSource{issues: sampleIssues()}
-	m := applyFetched(New(src), src)
-	m = typeFilter(t, m, "rotate")
-	if len(m.visible) != 1 {
-		t.Fatalf("setup: live filter should narrow to 1 row; got %d", len(m.visible))
-	}
+func TestFilter_ClosingPromptKeepsFilter(t *testing.T) {
+	// The query applies live as the user types, so every way out of
+	// the prompt — esc, enter, or / again — just closes it and keeps
+	// the filter. There's no separate "apply" step to forget, and
+	// reaching for esc doesn't throw the typed query away.
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{"esc", tea.KeyMsg{Type: tea.KeyEsc}},
+		{"enter", tea.KeyMsg{Type: tea.KeyEnter}},
+		{"slash", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := &stubSource{issues: sampleIssues()}
+			m := applyFetched(New(src), src)
+			m = typeFilter(t, m, "rotate")
+			if len(m.visible) != 1 {
+				t.Fatalf("setup: live filter should narrow to 1 row; got %d", len(m.visible))
+			}
 
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = model.(Model)
-	if m.mode != modeList {
-		t.Fatalf("esc should return to modeList; got %v", m.mode)
-	}
-	if m.query != "" {
-		t.Errorf("esc should clear the query; got %q", m.query)
-	}
-	if got := len(m.visible); got != len(sampleIssues()) {
-		t.Errorf("esc should restore the full list; visible=%d", got)
-	}
-	// Reopening the prompt must not resurrect the abandoned text.
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	if v := m.input.Value(); v != "" {
-		t.Errorf("reopened prompt should be empty; got %q", v)
+			model, _ := m.Update(tc.key)
+			m = model.(Model)
+			if m.mode != modeList {
+				t.Fatalf("%s should return to modeList; got %v", tc.name, m.mode)
+			}
+			if m.query != "rotate" {
+				t.Errorf("%s should keep the query; got %q", tc.name, m.query)
+			}
+			if got := len(m.visible); got != 1 {
+				t.Errorf("%s should keep the list narrowed; visible=%d", tc.name, got)
+			}
+			// Reopening the prompt resumes editing the kept query.
+			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			m = model.(Model)
+			if v := m.input.Value(); v != "rotate" {
+				t.Errorf("reopened prompt should hold the kept query; got %q", v)
+			}
+		})
 	}
 }
 
@@ -332,8 +343,9 @@ func TestFilter_EscInListClearsFilterBeforeMarks(t *testing.T) {
 func TestFilter_EscClearResolvesDepsUnderDepsSort(t *testing.T) {
 	// Clearing the filter widens the list to rows the filter had
 	// hidden; under the deps sort those rows may have no cached
-	// edges, so both esc paths must schedule resolution the way
-	// enter does (roborev #4692).
+	// edges, so esc from the list must schedule resolution the way
+	// enter does (roborev #4692). (esc in the prompt keeps the filter,
+	// so it never widens the list.)
 	src := &stubDepSource{
 		stubSource: stubSource{issues: sampleIssues()},
 		edges:      map[string][]string{"a-2": {"a-1"}},
@@ -348,21 +360,11 @@ func TestFilter_EscClearResolvesDepsUnderDepsSort(t *testing.T) {
 	m.depCache = map[string][]beads.Issue{"a-1": nil}
 	defer withFlashClearDelay(t, time.Millisecond)()
 
-	// Prompt path: type a filter, esc.
+	// Type a filter, close the prompt, then esc from the list.
 	m = typeFilter(t, m, "rotate")
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
 	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = model.(Model)
-	m = applyResolveCmd(t, m, cmd)
-	if _, ok := m.depCache["a-2"]; !ok {
-		t.Error("esc in the prompt should resolve the widened list's deps; a-2 still uncached")
-	}
-	delete(m.depCache, "a-2")
-
-	// List path: apply a filter with enter, then esc from the list.
-	m = typeFilter(t, m, "rotate")
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = model.(Model)
-	model, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = model.(Model)
 	if m.query != "" {
 		t.Fatalf("esc in the list should clear the filter; got %q", m.query)
