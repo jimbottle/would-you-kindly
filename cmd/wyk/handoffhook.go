@@ -170,7 +170,14 @@ func fireHandoffHook(ctx context.Context, client hookIssueClient, d *hooks.Dispa
 		return 0
 	}
 	if err != nil {
-		reportHookFailure(errw, in, err, "bd is unaffected, the external mirror is missing")
+		state := "bd is unaffected, the external mirror is missing"
+		if errors.Is(err, hooks.ErrInterrupted) {
+			// The group was killed, but a create the script had already
+			// sent may have landed. Do not call the mirror missing: a
+			// replay on that assumption is how a duplicate gets made.
+			state = "bd is unaffected; the external mirror may or may not exist, check before replaying"
+		}
+		reportHookFailure(errw, in, err, state)
 		return exitHookFailed
 	}
 

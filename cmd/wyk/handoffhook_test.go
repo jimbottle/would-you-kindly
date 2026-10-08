@@ -176,6 +176,18 @@ func TestFireHandoffHook_FailureReportsReplayAndExit3(t *testing.T) {
 	}
 }
 
+func TestFireHandoffHook_InterruptedDoesNotCallMirrorMissing(t *testing.T) {
+	c := &stubHookClient{issue: beads.Issue{ID: "wyk-42"}}
+	r := &stubHookRunner{err: hooks.ErrInterrupted}
+	var out, errw bytes.Buffer
+	if code := fireHandoffHook(context.Background(), c, newTestDispatcher(r), baseInput(), &out, &errw); code != exitHookFailed {
+		t.Fatalf("exit %d, want %d", code, exitHookFailed)
+	}
+	if !strings.Contains(errw.String(), "may or may not exist") || strings.Contains(errw.String(), "mirror is missing") {
+		t.Errorf("interrupted hook must not claim the mirror is missing:\n%s", errw.String())
+	}
+}
+
 func TestFireHandoffHook_RefWriteFailureIsAHookFailure(t *testing.T) {
 	c := &stubHookClient{issue: beads.Issue{ID: "wyk-42"}, refErr: errors.New("dolt locked")}
 	r := &stubHookRunner{stdout: `{"ref":"r1"}`}

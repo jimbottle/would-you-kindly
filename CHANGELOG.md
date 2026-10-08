@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of leaving it running without wyk (`hooks.ErrInterrupted`);
   the Unix-only `Setpgid`/`Kill` moved to `procgroup_unix.go` with a
   no-op `procgroup_other.go`, so `GOOS=windows go build` compiles again.
+  Then (roborev #5549): the interrupt and timeout tests wait for the
+  hook to write its child's pid instead of sleeping, and assert that pid
+  is gone afterwards (ESRCH), so they prove the group was killed rather
+  than that WaitDelay returned; an interrupted hook is reported as "the
+  mirror may or may not exist" rather than missing, and the docs say so.
 
 - **Split layout: the list and the selected issue's runbook side by
   side** (would-you-kindly-g1ud). On a terminal of at least 140×36 the

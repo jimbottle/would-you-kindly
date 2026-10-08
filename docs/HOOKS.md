@@ -182,8 +182,10 @@ loudly and distinctly:
   cannot keep the run alive.
 - Ctrl-C (or SIGTERM to wyk) while the hook runs kills the hook and its
   children too, and is reported as interrupted. Nothing of the hook
-  outlives wyk, so an interrupted handoff never leaves a mirror whose ref
-  wyk was not around to record.
+  outlives wyk — but a create the script had already sent may have
+  landed before the kill, with no ref recorded. wyk says the mirror "may
+  or may not exist"; check the external system (or rely on a script that
+  dedupes by its own key, as the BasicDo adapter does) before replaying.
 - `ref` came back but could not be written to bd: also a failure with
   the replay command, because losing the link is the duplicate risk the
   ref exists to prevent. Replaying sends the (absent) ref and lets the
