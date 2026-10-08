@@ -156,10 +156,9 @@ type errHeldByOther struct {
 }
 
 func (e *errHeldByOther) Error() string {
-	owner := e.l.Owner
-	if owner == "" {
-		owner = "an unrecorded holder"
-	}
+	// The holder comes from bd metadata / assignee — untrusted text bound
+	// for a terminal, so strip escapes (would-you-kindly-5zlr).
+	owner := orUnrecorded(e.l.Owner)
 	return fmt.Sprintf("%s is held by %s (%s); pick something else, or -force to take it over", e.id, owner, lease.Remaining(e.l, e.now))
 }
 
@@ -441,7 +440,7 @@ func runClaim(args []string) int {
 			}
 			_ = emitJSON(os.Stdout, res, *compact)
 		} else {
-			fmt.Printf("renewed %d lease(s) held by %s until %s\n", len(renewed), me, now.Add(ttl).Local().Format(time.RFC3339))
+			fmt.Printf("renewed %d lease(s) held by %s until %s\n", len(renewed), orUnrecorded(me), now.Add(ttl).Local().Format(time.RFC3339))
 			for _, id := range renewed {
 				fmt.Printf("  %s\n", id)
 			}
@@ -515,12 +514,12 @@ func printClaimOutcome(out claimOutcome, asJSON, compact bool) {
 	case actionReleased:
 		fmt.Printf("released %s (was %s)\n", where, orUnrecorded(out.Previous))
 	case actionTookOver:
-		fmt.Printf("took over %s from %s as %s until %s%s\n", where, orUnrecorded(out.Previous), out.Owner,
+		fmt.Printf("took over %s from %s as %s until %s%s\n", where, orUnrecorded(out.Previous), orUnrecorded(out.Owner),
 			out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
 	case actionRenewed:
-		fmt.Printf("renewed %s for %s until %s%s\n", where, out.Owner, out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
+		fmt.Printf("renewed %s for %s until %s%s\n", where, orUnrecorded(out.Owner), out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
 	default:
-		fmt.Printf("claimed %s as %s until %s%s\n", where, out.Owner, out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
+		fmt.Printf("claimed %s as %s until %s%s\n", where, orUnrecorded(out.Owner), out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
 	}
 }
 
@@ -531,9 +530,11 @@ func branchSuffix(b string) string {
 	return " on " + sanitize.Inline(b)
 }
 
+// orUnrecorded renders an owner for terminal output: sanitized (it is bd
+// content, or an env value) and never blank.
 func orUnrecorded(s string) string {
 	if s == "" {
 		return "an unrecorded holder"
 	}
-	return s
+	return sanitize.Inline(s)
 }

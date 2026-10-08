@@ -360,16 +360,16 @@ func renderNextText(res nextResult, now time.Time) {
 				break
 			}
 		}
-		fmt.Printf("%d candidate(s) for %s, best first:\n", len(res.Issues), res.Identity)
+		fmt.Printf("%d candidate(s) for %s, best first:\n", len(res.Issues), sanitize.Inline(res.Identity))
 		for _, r := range res.Issues {
 			tag := string(r.Source)
 			if r.Lease != nil && r.Source == sourceMine {
 				tag = "mine, " + lease.Remaining(*r.Lease, now)
 			}
 			if multiRepo {
-				fmt.Printf("  [%s] %-22s P%d  %-18s %s\n", sanitize.Inline(r.Repo), r.ID, r.Priority, tag, sanitize.Inline(r.Title))
+				fmt.Printf("  [%s] %-22s P%d  %-18s %s\n", sanitize.Inline(r.Repo), sanitize.Inline(r.ID), r.Priority, tag, sanitize.Inline(r.Title))
 			} else {
-				fmt.Printf("  %-22s P%d  %-18s %s\n", r.ID, r.Priority, tag, sanitize.Inline(r.Title))
+				fmt.Printf("  %-22s P%d  %-18s %s\n", sanitize.Inline(r.ID), r.Priority, tag, sanitize.Inline(r.Title))
 			}
 		}
 	}

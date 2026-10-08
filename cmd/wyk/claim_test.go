@@ -310,3 +310,19 @@ func TestClaimIssue_MyOwnLapsedLeaseRenewsNotTakesOver(t *testing.T) {
 		t.Fatalf("calls=%v, want no takeover note", f.calls)
 	}
 }
+
+func TestClaimOutput_SanitizesHolderNames(t *testing.T) {
+	// Owner names come from bd metadata / assignee: untrusted text that
+	// must not reach the terminal with escape sequences intact.
+	evil := "bad\x1b]0;pwned\x07guy"
+	err := &errHeldByOther{id: "x-1", l: lease.Lease{Owner: evil, Until: claimNow.Add(time.Hour)}, now: claimNow}
+	if strings.ContainsRune(err.Error(), '\x1b') {
+		t.Fatalf("refusal leaked an escape: %q", err.Error())
+	}
+	out := captureHandoffStdout(t, func() {
+		printClaimOutcome(claimOutcome{ID: "x-1", Action: actionTookOver, Owner: "me", Previous: evil, Until: claimNow}, false, false)
+	})
+	if strings.ContainsRune(out, '\x1b') {
+		t.Fatalf("takeover line leaked an escape: %q", out)
+	}
+}

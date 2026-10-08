@@ -21,6 +21,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/lease"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 	"github.com/jimbottle/would-you-kindly/internal/skills"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
@@ -1252,10 +1253,10 @@ func checkAgentIdentity(repos []registry.Repo) check {
 		if len(owners) > 1 {
 			return check{name: name, status: statusWarn, detail: fmt.Sprintf(
 				"unset — claims fall back to bd's actor %q (%s), but %d identities hold live leases (%s). "+
-					"Give each concurrent agent its own: export %s=<name>", me, source, len(owners), strings.Join(owners, ", "), identityEnvVar)}
+					"Give each concurrent agent its own: export %s=<name>", sanitize.Inline(me), source, len(owners), sanitize.Inline(strings.Join(owners, ", ")), identityEnvVar)}
 		}
 		return check{name: name, status: statusPass, detail: fmt.Sprintf(
-			"unset — claims use bd's actor %q (%s); fine for one agent. Set $%s per agent when several share a workspace", me, source, identityEnvVar)}
+			"unset — claims use bd's actor %q (%s); fine for one agent. Set $%s per agent when several share a workspace", sanitize.Inline(me), source, identityEnvVar)}
 	}
 	return check{name: name, status: statusPass, detail: fmt.Sprintf("$%s = %s", identityEnvVar, me)}
 }
