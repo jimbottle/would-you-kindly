@@ -63,23 +63,42 @@ func TestShellRunner_InterruptKillsGroup(t *testing.T) {
 	assertProcessGone(t, childPid)
 }
 
-// The timeout path must kill the forked child too, not just sh.
+// The timeout path must kill the forked child too, not just sh. The pid
+// is read BEFORE the timeout is allowed to matter: Dispatch runs in the
+// background and the test first waits for the script to reach the echo,
+// so a slow sh start on a loaded runner cannot make the kill land before
+// the file exists (which would read as "hook never wrote its pid").
 func TestShellRunner_TimeoutKillsChildProcess(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	const timeout = 1500 * time.Millisecond
 	d := &Dispatcher{Config: Config{
 		Command: `sleep 30 & echo $! > "$PIDFILE"; wait`,
-		Timeout: 300 * time.Millisecond,
+		Timeout: timeout,
 	}}
 	t.Setenv("PIDFILE", pidFile)
+	type res struct {
+		fired bool
+		err   error
+	}
+	done := make(chan res, 1)
 	start := time.Now()
-	_, fired, err := d.Dispatch(context.Background(), samplePayload())
-	if !fired || !errors.Is(err, ErrTimedOut) {
-		t.Fatalf("fired=%v err=%v, want true, ErrTimedOut", fired, err)
+	go func() {
+		_, fired, err := d.Dispatch(context.Background(), samplePayload())
+		done <- res{fired, err}
+	}()
+	childPid := waitForPidFile(t, pidFile)
+	select {
+	case r := <-done:
+		if !r.fired || !errors.Is(r.err, ErrTimedOut) {
+			t.Fatalf("fired=%v err=%v, want true, ErrTimedOut", r.fired, r.err)
+		}
+		if elapsed := time.Since(start); elapsed > timeout+waitDelayAfterCancel {
+			t.Fatalf("took %s; a killed group returns well inside the timeout plus WaitDelay", elapsed)
+		}
+	case <-time.After(timeout + waitDelayAfterCancel + 5*time.Second):
+		t.Fatal("Dispatch did not return after the timeout")
 	}
-	if elapsed := time.Since(start); elapsed > 300*time.Millisecond+waitDelayAfterCancel {
-		t.Fatalf("took %s; a killed group returns well inside the timeout plus WaitDelay", elapsed)
-	}
-	assertProcessGone(t, waitForPidFile(t, pidFile))
+	assertProcessGone(t, childPid)
 }
 
 func waitForPidFile(t *testing.T, path string) int {
