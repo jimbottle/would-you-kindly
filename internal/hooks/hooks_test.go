@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
 )
 
 // recordingRunner captures the one call Dispatch makes and answers
@@ -251,5 +252,34 @@ func TestShellRunner_RealProcess(t *testing.T) {
 	var xe *ExecError
 	if !errors.As(err, &xe) || xe.ExitCode != 3 || !strings.Contains(xe.Stderr, "nope") {
 		t.Errorf("real non-zero exit: err = %v", err)
+	}
+}
+
+// A hook whose shell forks a child that outlives it must still end at the
+// timeout: `sleep 30 &` holds the stdout pipe after sh is killed, which
+// without the process-group kill + WaitDelay made Run block ~30s.
+func TestShellRunner_TimeoutKillsOrphanedChildren(t *testing.T) {
+	d := &Dispatcher{Config: Config{Command: `sleep 30 & wait`, Timeout: 100 * time.Millisecond}}
+	start := time.Now()
+	_, fired, err := d.Dispatch(context.Background(), samplePayload())
+	elapsed := time.Since(start)
+	if !fired || !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("fired=%v err=%v, want true, ErrTimedOut", fired, err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("Dispatch took %s; the orphaned child held the run open past the timeout", elapsed)
+	}
+}
+
+// wykconfig validates `hooks.handoff.events` against its own copy of the
+// event names (it must stay dependency-free); this is the pin that keeps
+// that copy equal to what the dispatcher actually sends.
+func TestEventNamesMatchConfigVocabulary(t *testing.T) {
+	var ours []string
+	for _, e := range AllEvents {
+		ours = append(ours, string(e))
+	}
+	if strings.Join(ours, ",") != strings.Join(wykconfig.HandoffHookEvents, ",") {
+		t.Fatalf("hooks.AllEvents = %v but wykconfig.HandoffHookEvents = %v; keep them identical", ours, wykconfig.HandoffHookEvents)
 	}
 }

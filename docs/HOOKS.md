@@ -23,7 +23,7 @@ of everything below.
 wyk config set hooks.handoff.command 'node ~/Projects/basicdo/scripts/wyk-handoff-hook.mjs'
 wyk config set hooks.handoff.timeout_seconds 30        # optional; default 15
 wyk config set hooks.handoff.events handoff,close      # optional; default: all
-wyk doctor                                             # proves the command runs
+wyk hook dispatch ping                                 # proves the command runs and reaches its server
 ```
 
 That writes a `hooks.handoff` block to `~/.config/wyk/config.json`

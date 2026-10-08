@@ -35,7 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout + injectable runner, result parsing). Contract and adapter
   guide: `docs/HOOKS.md`; the BasicDo adapter lives in the basicdo
   repo. Agent-owned issues never fire the hook; raw `bd label add`
-  does not either (documented).
+  does not either (documented). Review follow-ups (roborev #5537, #5542):
+  the hook runs in its own process group, is killed as a group on
+  timeout and capped with `WaitDelay`, so a forked child (`cd x && node
+  …`) can no longer hold `wyk handoff` open past `timeout_seconds`;
+  `wyk hook dispatch` reads the issue first and exits 1 on a failed `bd
+  show` instead of firing with a near-empty issue (the duplicate the ref
+  exists to prevent); a lost-ref failure names the ref and the by-hand
+  `bd update --external-ref` instead of calling the mirror missing; all
+  hook diagnostics share the `wyk: hook:` prefix; a test pins
+  `wykconfig.HandoffHookEvents` to `hooks.AllEvents`.
 
 - **Split layout: the list and the selected issue's runbook side by
   side** (would-you-kindly-g1ud). On a terminal of at least 140×36 the

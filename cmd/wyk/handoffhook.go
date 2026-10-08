@@ -108,6 +108,12 @@ type handoffHookInput struct {
 	Runbook  string
 	Identity string
 	Note     string
+	// Issue, when set, is used as-is and bd is not consulted. The replay
+	// path (wyk hook dispatch) reads the issue first and refuses to run
+	// on a failed read; the live handoff path leaves it nil and falls
+	// back to a minimal issue, because there the bd write has already
+	// landed and the hook is the only thing left to do.
+	Issue *beads.Issue
 }
 
 // fireHandoffHook builds the payload for in, runs the hook, and
@@ -130,10 +136,14 @@ func fireHandoffHook(ctx context.Context, client hookIssueClient, d *hooks.Dispa
 	// not fatal — the hook still fires with what the caller knows —
 	// but it is said out loud, because a script that never sees
 	// external_ref will create a duplicate.
-	issue, err := client.Show(ctx, in.ID)
-	if err != nil {
-		fmt.Fprintf(errw, "wyk handoff: hook: could not read %s for the payload (%v); sending a minimal issue\n", in.ID, err)
+	var issue beads.Issue
+	if in.Issue != nil {
+		issue = *in.Issue
+	} else if got, err := client.Show(ctx, in.ID); err != nil {
+		fmt.Fprintf(errw, "wyk: hook: could not read %s for the payload (%v); sending a minimal issue\n", in.ID, err)
 		issue = beads.Issue{ID: in.ID}
+	} else {
+		issue = got
 	}
 	runbook := in.Runbook
 	if runbook == "" {
@@ -160,7 +170,7 @@ func fireHandoffHook(ctx context.Context, client hookIssueClient, d *hooks.Dispa
 		return 0
 	}
 	if err != nil {
-		reportHookFailure(errw, in, err)
+		reportHookFailure(errw, in, err, "bd is unaffected, the external mirror is missing")
 		return exitHookFailed
 	}
 
@@ -174,13 +184,18 @@ func fireHandoffHook(ctx context.Context, client hookIssueClient, d *hooks.Dispa
 	// script dedupe.
 	if res.Ref != "" && res.Ref != issue.ExternalRef {
 		if err := client.SetExternalRef(ctx, in.ID, res.Ref); err != nil {
-			reportHookFailure(errw, in, fmt.Errorf("hook returned ref %q but recording it on %s failed: %w", res.Ref, in.ID, err))
+			// The external task EXISTS; only the link to it was lost. Say
+			// so, and give the one-liner that restores the link, because a
+			// bare replay would resend without the ref and risk a duplicate.
+			fmt.Fprintf(errw, "wyk: the handoff hook created the external task (ref %q) but recording that ref on %s failed: %v\n", res.Ref, in.ID, err)
+			fmt.Fprintf(errw, "  Record it by hand: bd update %s --external-ref=%s --dolt-auto-commit=on\n", in.ID, res.Ref)
+			fmt.Fprintf(errw, "  Then, if needed, replay with: %s\n", replayCommand(in))
 			return exitHookFailed
 		}
 	}
 	if res.URL != "" && in.Event == hooks.EventHandoff && (issue.ExternalRef == "" || res.Ref != issue.ExternalRef) {
 		if err := client.Note(ctx, in.ID, "Handed off to "+res.URL); err != nil {
-			fmt.Fprintf(errw, "wyk handoff: hook: note failed (ref recorded, task exists): %v\n", err)
+			fmt.Fprintf(errw, "wyk: hook: note failed (ref recorded, task exists): %v\n", err)
 		}
 	}
 	switch {
@@ -197,19 +212,37 @@ func fireHandoffHook(ctx context.Context, client hookIssueClient, d *hooks.Dispa
 // reportHookFailure prints the failure in a shape an agent can act
 // on: what failed, the script's own words, and the exact command
 // that re-sends the same event once the cause is fixed.
-func reportHookFailure(errw io.Writer, in handoffHookInput, err error) {
-	// Worded for both callers: after `wyk handoff` the bd write has
-	// already landed; after `wyk hook dispatch` there was no bd write.
-	// Either way bd is as it was and only the external mirror is missing.
-	fmt.Fprintf(errw, "wyk: the handoff hook failed for %s %s (bd is unaffected, the mirror is missing): %v\n", in.Event, in.ID, err)
+//
+// state is the parenthetical describing what the failure leaves behind,
+// supplied by the caller because it differs by path: a hook that never
+// answered leaves no mirror; one that answered but whose ref could not
+// be recorded leaves a mirror wyk cannot find. Worded for both callers:
+// after `wyk handoff` the bd write has already landed, after `wyk hook
+// dispatch` there was none, and either way bd is as it was.
+func reportHookFailure(errw io.Writer, in handoffHookInput, err error, state string) {
+	fmt.Fprintf(errw, "wyk: the handoff hook failed for %s %s (%s): %v\n", in.Event, in.ID, state, err)
 	if errors.Is(err, hooks.ErrTimedOut) {
 		fmt.Fprintln(errw, "  Raise it with: wyk config set hooks.handoff.timeout_seconds <n>")
 	}
-	replay := fmt.Sprintf("wyk hook dispatch %s %s", in.Event, in.ID)
+	fmt.Fprintf(errw, "  Retry once fixed with: %s\n", replayCommand(in))
+}
+
+// replayCommand is the exact `wyk hook dispatch` invocation that re-sends
+// in's event, with -C when the original ran against another directory.
+func replayCommand(in handoffHookInput) string {
 	if in.Dir != "" {
-		replay = fmt.Sprintf("wyk hook dispatch -C %s %s %s", in.Dir, in.Event, in.ID)
+		return fmt.Sprintf("wyk hook dispatch -C %s %s %s", in.Dir, in.Event, in.ID)
 	}
-	fmt.Fprintf(errw, "  Retry once fixed with: %s\n", replay)
+	return fmt.Sprintf("wyk hook dispatch %s %s", in.Event, in.ID)
+}
+
+// newHandoffHookClient is the bd seam for `wyk hook dispatch`: production
+// shells out through beads.Client; tests substitute a stub so a failed
+// `bd show` can be exercised without a bd binary.
+var newHandoffHookClient = func(dir string) hookIssueClient {
+	c := beads.NewClient()
+	c.Dir = dir
+	return c
 }
 
 // runHookDispatch implements `wyk hook dispatch <event> <id>`: rebuild
@@ -217,8 +250,9 @@ func reportHookFailure(errw io.Writer, in handoffHookInput, err error) {
 // the replay path named in every hook failure, and the backfill path
 // for issues handed off before the hook was configured.
 //
-// Exit codes: 0 fired (or no hook configured — said on stderr), 1
-// bd read failure, 3 the hook fired and failed, 64 usage.
+// Exit codes: 0 fired (or no hook configured — said on stderr), 1 bd
+// could not read the issue (nothing is sent), 2 bd missing / no
+// workspace, 3 the hook fired and failed, 64 usage.
 func runHookDispatch(args []string) int {
 	fs := flag.NewFlagSet("hook dispatch", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -253,8 +287,7 @@ func runHookDispatch(args []string) int {
 		fmt.Fprintln(os.Stderr, "wyk hook dispatch: no handoff hook configured (wyk config set hooks.handoff.command …)")
 		return 0
 	}
-	client := beads.NewClient()
-	client.Dir = *dir
+	client := newHandoffHookClient(*dir)
 	ctx := context.Background()
 	if event == hooks.EventPing {
 		p := hooks.Payload{Event: hooks.EventPing, Actor: hooks.ActorCLI, WykVersion: versionString(), Repo: hookRepo(ctx, client, *dir)}
@@ -265,7 +298,20 @@ func runHookDispatch(args []string) int {
 		fmt.Println("hook (ping): ok")
 		return 0
 	}
+	// Replay has no bd write to protect, so it must not guess: a mistyped
+	// id or a transient bd error would otherwise fire the hook with a
+	// near-empty issue and no external_ref — the duplicate the ref exists
+	// to prevent. Read first; refuse on failure.
+	issue, err := client.Show(ctx, fs.Arg(1))
+	if err != nil {
+		if code, msg, ok := classifyBDSentinel(err); ok {
+			fmt.Fprintln(os.Stderr, msg)
+			return code
+		}
+		fmt.Fprintf(os.Stderr, "wyk hook dispatch: cannot read %s from bd (nothing sent): %v\n", fs.Arg(1), err)
+		return 1
+	}
 	return fireHandoffHook(ctx, client, d, handoffHookInput{
-		Event: event, Actor: hooks.ActorCLI, ID: fs.Arg(1), Dir: *dir,
+		Event: event, Actor: hooks.ActorCLI, ID: fs.Arg(1), Dir: *dir, Issue: &issue,
 	}, os.Stdout, os.Stderr)
 }

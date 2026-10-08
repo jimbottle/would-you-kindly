@@ -116,7 +116,8 @@ type HandoffHook struct {
 
 // HandoffHookEvents is the vocabulary ValidateHandoffEvents accepts.
 // Kept here (not imported from internal/hooks) so the config package
-// stays dependency-free; internal/hooks pins the two lists equal.
+// stays dependency-free; internal/hooks pins the two lists equal
+// (TestEventNamesMatchConfigVocabulary).
 var HandoffHookEvents = []string{"handoff", "bounce", "close", "ping"}
 
 // ValidateHandoffEvents accepts an empty list (all events) or any

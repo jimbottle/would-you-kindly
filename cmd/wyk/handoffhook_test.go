@@ -163,7 +163,7 @@ func TestFireHandoffHook_FailureReportsReplayAndExit3(t *testing.T) {
 		t.Fatalf("exit %d, want %d", code, exitHookFailed)
 	}
 	for _, want := range []string{
-		"handoff hook failed for handoff wyk-42 (bd is unaffected",
+		"handoff hook failed for handoff wyk-42 (bd is unaffected, the external mirror is missing)",
 		"BASICDO_API_KEY is not set",
 		"wyk hook dispatch -C /tmp/repo handoff wyk-42",
 	} {
@@ -181,8 +181,66 @@ func TestFireHandoffHook_RefWriteFailureIsAHookFailure(t *testing.T) {
 	r := &stubHookRunner{stdout: `{"ref":"r1"}`}
 	var out, errw bytes.Buffer
 	code := fireHandoffHook(context.Background(), c, newTestDispatcher(r), baseInput(), &out, &errw)
-	if code != exitHookFailed || !strings.Contains(errw.String(), "dolt locked") || !strings.Contains(errw.String(), "wyk hook dispatch handoff wyk-42") {
-		t.Fatalf("exit %d stderr %q", code, errw.String())
+	if code != exitHookFailed {
+		t.Fatalf("exit %d, want %d", code, exitHookFailed)
+	}
+	// The task exists; the message must say so, name the ref, and give the
+	// by-hand fix — not call the mirror "missing" and suggest a bare replay.
+	for _, want := range []string{
+		"created the external task (ref \"r1\")",
+		"dolt locked",
+		"bd update wyk-42 --external-ref=r1",
+		"wyk hook dispatch handoff wyk-42",
+	} {
+		if !strings.Contains(errw.String(), want) {
+			t.Errorf("stderr missing %q:\n%s", want, errw.String())
+		}
+	}
+	if strings.Contains(errw.String(), "mirror is missing") {
+		t.Errorf("lost-ref failure must not claim the mirror is missing:\n%s", errw.String())
+	}
+}
+
+func TestFireHandoffHook_PreReadIssueSkipsShow(t *testing.T) {
+	c := &stubHookClient{showErr: errors.New("must not be called")}
+	r := &stubHookRunner{stdout: `{}`}
+	var out, errw bytes.Buffer
+	in := baseInput()
+	in.Issue = &beads.Issue{ID: "wyk-42", Title: "pre-read", ExternalRef: "r0"}
+	if code := fireHandoffHook(context.Background(), c, newTestDispatcher(r), in, &out, &errw); code != 0 {
+		t.Fatalf("exit %d: %s", code, errw.String())
+	}
+	if r.payload.Issue == nil || r.payload.Issue.Title != "pre-read" || r.payload.External == nil || r.payload.External.Ref != "r0" {
+		t.Errorf("pre-read issue not used: %+v ext=%+v", r.payload.Issue, r.payload.External)
+	}
+	if errw.Len() != 0 {
+		t.Errorf("unexpected stderr: %s", errw.String())
+	}
+}
+
+// Replay must not guess: a failed bd show exits 1 and never runs the hook.
+func TestHookDispatch_ShowFailureSendsNothing(t *testing.T) {
+	withSilencedStderr(t)
+	t.Setenv(handoffHookEnvVar, "")
+	prevD, prevC := newHandoffHookDispatcher, newHandoffHookClient
+	t.Cleanup(func() { newHandoffHookDispatcher, newHandoffHookClient = prevD, prevC })
+	r := &stubHookRunner{stdout: `{"ref":"dup"}`}
+	newHandoffHookDispatcher = func() *hooks.Dispatcher { return newTestDispatcher(r) }
+	c := &stubHookClient{showErr: errors.New("issue not found: wyk-99")}
+	newHandoffHookClient = func(string) hookIssueClient { return c }
+	if code := runHookDispatch([]string{"handoff", "wyk-99"}); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if r.called {
+		t.Fatal("hook ran although bd could not read the issue")
+	}
+	if c.refSet != "" {
+		t.Fatal("a ref was recorded on an unreadable issue")
+	}
+	// bd-level sentinels keep their usual exit code.
+	c.showErr = beads.ErrNoWorkspace
+	if code := runHookDispatch([]string{"close", "wyk-99"}); code != 2 {
+		t.Errorf("no-workspace: exit %d, want 2", code)
 	}
 }
 

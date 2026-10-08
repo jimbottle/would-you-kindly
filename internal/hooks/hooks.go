@@ -30,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
@@ -341,9 +342,35 @@ func shellRunner(ctx context.Context, command string, stdin []byte, env []string
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
+	// The timeout has to end the whole run, not just `sh`. With buffered
+	// stdout/stderr, Run waits until every writer has closed the pipes;
+	// a child the shell forked (`cd x && node hook.mjs`, `a | b`, a script
+	// that daemonises) would keep them open after sh was killed and hang
+	// `wyk handoff` past the deadline. So: run the hook in its own process
+	// group, kill the group on cancel, and cap the post-cancel wait with
+	// WaitDelay so even a child that ignores SIGKILL's reach (a grandchild
+	// that re-parented first) cannot hold Run open.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// Negative pid = the whole group. Fall back to the process alone
+		// if the group is already gone.
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	cmd.WaitDelay = waitDelayAfterCancel
 	err := cmd.Run()
 	return out.Bytes(), errb.Bytes(), err
 }
+
+// waitDelayAfterCancel bounds how long Run may block on the hook's pipes
+// after the context is cancelled (exec.Cmd.WaitDelay). Short: by then the
+// process group has been killed and anything still writing is a stray.
+const waitDelayAfterCancel = 2 * time.Second
 
 // ClassifyRunbook returns RunbookTask when the runbook carries a
 // "## Steps" heading, RunbookQuestion for "## Question", else "". It
