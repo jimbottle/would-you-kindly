@@ -25,6 +25,8 @@ var wykSubcommands = []string{
 	"create",
 	"init",
 	"inbox",
+	"claim",
+	"next",
 	"stats",
 	"doctor",
 	"bugreport",

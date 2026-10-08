@@ -87,6 +87,12 @@ type Config struct {
 	// Color: "" (unset → "auto"), "auto", or "never". NO_COLOR /
 	// WYK_NO_COLOR / --no-color still force color off regardless.
 	Color string `json:"color,omitempty"`
+	// ClaimTTL is how long a `wyk claim` lease lives without renewal —
+	// a Go duration ("2h", "90m") or whole minutes. "" means the
+	// built-in default (internal/lease.DefaultTTL). $WYK_CLAIM_TTL
+	// overrides it per run. Stored as the user's string and parsed at
+	// use so the file stays hand-editable; the CLI validates on set.
+	ClaimTTL string `json:"claim_ttl,omitempty"`
 	// Hooks holds the external commands wyk runs on label transitions.
 	// omitzero (not omitempty): encoding/json only elides a struct with
 	// omitzero, and a config without hooks should serialise exactly as

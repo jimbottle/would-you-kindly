@@ -52,6 +52,19 @@ type Issue struct {
 	DueAt       time.Time `json:"due_at,omitzero"`
 	ExternalRef string    `json:"external_ref,omitempty"`
 
+	// StartedAt is when bd first moved the issue to in_progress (set by
+	// `bd update --claim`). bd does NOT reset it on a later claim by
+	// someone else, so it dates the FIRST claim, not the current one —
+	// internal/lease uses UpdatedAt for the implicit-lease fallback for
+	// exactly that reason. Parsed so the detail view and `wyk claim`
+	// can show it.
+	StartedAt time.Time `json:"started_at,omitzero"`
+	// Metadata is bd's free-form per-issue key/value store (`bd update
+	// --set-metadata k=v`). wyk keeps the agent lease here under the
+	// `wyk.lease.*` keys (internal/lease); every other key is passed
+	// through untouched. Present in list / ready / query / show JSON.
+	Metadata Metadata `json:"metadata,omitempty"`
+
 	// Dependencies is the issue's outgoing edge set, which bd embeds
 	// inline in `bd list --json` and `bd ready --json` (but NOT in
 	// `bd query --json`). Parsing it means the HUMAN-BLOCK scan can

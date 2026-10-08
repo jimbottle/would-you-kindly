@@ -13,6 +13,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/lease"
 )
 
 // This file holds rendering: the table, badges, status bar, and text measurement.
@@ -812,5 +813,69 @@ func TestTruncID(t *testing.T) {
 				t.Errorf("truncID(%q, %d) = %q is %d cells — over budget", c.id, c.width, got, w)
 			}
 		})
+	}
+}
+
+func TestResponsibilityBadge_Lease(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	prev := leaseNow
+	leaseNow = func() time.Time { return now }
+	t.Cleanup(func() { leaseNow = prev })
+	stamp := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+
+	live := beads.Issue{Status: "in_progress", Labels: []string{"src:agent"},
+		Metadata: beads.Metadata{lease.KeyOwner: "claude-a", lease.KeyUntil: stamp(time.Hour)}}
+	if got := responsibilityBadgeFor(live); !strings.Contains(got, "@claude-a") {
+		t.Errorf("live lease should badge @owner; got %q", got)
+	}
+	lapsed := live
+	lapsed.Metadata = beads.Metadata{lease.KeyOwner: "claude-a", lease.KeyUntil: stamp(-time.Hour)}
+	if got := responsibilityBadgeFor(lapsed); !strings.Contains(got, "EXPIRED") {
+		t.Errorf("lapsed lease should badge EXPIRED; got %q", got)
+	}
+	// Precedence: an explicit human flag, the agent-handoff fence, and a
+	// human blocker all outrank the lease.
+	h := live
+	h.Labels = []string{"human", "src:agent"}
+	if got := responsibilityBadgeFor(h); !strings.Contains(got, "HUMAN") || strings.Contains(got, "@") {
+		t.Errorf("human label must outrank the lease; got %q", got)
+	}
+	hb := live
+	hb.BlockedByHuman = true
+	if got := responsibilityBadgeFor(hb); !strings.Contains(got, "HUMAN-BLOCK") {
+		t.Errorf("HUMAN-BLOCK must outrank the lease; got %q", got)
+	}
+	// Long owners fit the column; an unrecorded holder still shows.
+	long := live
+	long.Metadata = beads.Metadata{lease.KeyOwner: "a-very-long-agent-identity", lease.KeyUntil: stamp(time.Hour)}
+	if w := lipgloss.Width(responsibilityBadgeFor(long)); w > colResp {
+		t.Errorf("badge width %d exceeds the owner column (%d)", w, colResp)
+	}
+	anon := beads.Issue{Status: "in_progress", UpdatedAt: now}
+	if got := responsibilityBadgeFor(anon); !strings.Contains(got, "@?") {
+		t.Errorf("unrecorded holder should badge @?; got %q", got)
+	}
+	// Open rows are untouched.
+	if got := responsibilityBadgeFor(beads.Issue{Status: "open", Labels: []string{"src:agent"}}); !strings.Contains(got, "AGENT") {
+		t.Errorf("open row should stay AGENT; got %q", got)
+	}
+}
+
+func TestLeaseDetailLine(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	prev := leaseNow
+	leaseNow = func() time.Time { return now }
+	t.Cleanup(func() { leaseNow = prev })
+	i := beads.Issue{Status: "in_progress", Metadata: beads.Metadata{
+		lease.KeyOwner: "claude-a", lease.KeyUntil: now.Add(90 * time.Minute).Format(time.RFC3339), lease.KeyBranch: "feat/x"}}
+	if got, want := leaseDetailLine(i), "claude-a · 1h30m left · on feat/x"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	bare := beads.Issue{Status: "in_progress", Assignee: "jimbottle", UpdatedAt: now}
+	if got := leaseDetailLine(bare); !strings.Contains(got, "inferred") {
+		t.Errorf("bare bd claim should be marked inferred; got %q", got)
+	}
+	if got := leaseDetailLine(beads.Issue{Status: "open"}); got != "" {
+		t.Errorf("unclaimed issue should have no lease line; got %q", got)
 	}
 }

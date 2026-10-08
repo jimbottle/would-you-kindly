@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filters"
+	"github.com/jimbottle/would-you-kindly/internal/lease"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/skills"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
@@ -389,6 +391,7 @@ func collectDoctorChecks() []check {
 	}
 
 	checks = append(checks, checkSkills())
+	checks = append(checks, checkAgentIdentity(repos))
 
 	// Conventions stanza — informational, always pass. Terse on
 	// purpose; refers the reader to `wyk conventions` for the
@@ -399,6 +402,7 @@ func collectDoctorChecks() []check {
 		detail: "human-flagged tasks carry: label=human + label=src:agent\n" +
 			"agent inbox: " + agentInboxQuery + "\n" +
 			"multi-agent: route with `wyk handoff --identity <name>` (label src:agent:<name>); read with `wyk inbox --identity <name>` / $WYK_AGENT_IDENTITY\n" +
+			"shared workspace: `wyk next -claim` picks + checks out work as an expiring lease; `wyk claim -renew` keeps it\n" +
 			"prefer `wyk handoff <id>` over hand-rolling labels; full text in `wyk conventions`",
 		leadingBlank: true,
 	})
@@ -1217,5 +1221,66 @@ func checkRepo(r registry.Repo) []check {
 		}
 		out = append(out, check{name: prefix + ": core.hooksPath redirect", status: statusWarn, detail: detail})
 	}
+	return out
+}
+
+// doctorListInProgress is the per-repo read behind checkAgentIdentity, a
+// seam so the check is testable without bd.
+var doctorListInProgress = func(r registry.Repo) ([]beads.Issue, error) {
+	c := beads.NewClient()
+	c.Dir = r.Path
+	ctx, cancel := context.WithTimeout(context.Background(), doctorPerRepoTimeout)
+	defer cancel()
+	return c.ListInProgress(ctx)
+}
+
+// checkAgentIdentity reports which identity `wyk claim` / `wyk next`
+// would record leases under (wyk-contract/v4) and WARNs in the one case
+// that bites: no explicit $WYK_AGENT_IDENTITY while more than one
+// identity holds a live lease across the registered repos. Several
+// agents on one machine then all claim as the same bd actor and can't
+// tell each other's work apart. Never FAILs — one agent per machine
+// needs no identity at all.
+func checkAgentIdentity(repos []registry.Repo) check {
+	const name = "agent identity"
+	me, source, err := resolveClaimIdentity("")
+	if err != nil {
+		return check{name: name, status: statusWarn, detail: err.Error()}
+	}
+	if source != "$"+identityEnvVar {
+		owners := liveLeaseOwners(repos)
+		if len(owners) > 1 {
+			return check{name: name, status: statusWarn, detail: fmt.Sprintf(
+				"unset — claims fall back to bd's actor %q (%s), but %d identities hold live leases (%s). "+
+					"Give each concurrent agent its own: export %s=<name>", me, source, len(owners), strings.Join(owners, ", "), identityEnvVar)}
+		}
+		return check{name: name, status: statusPass, detail: fmt.Sprintf(
+			"unset — claims use bd's actor %q (%s); fine for one agent. Set $%s per agent when several share a workspace", me, source, identityEnvVar)}
+	}
+	return check{name: name, status: statusPass, detail: fmt.Sprintf("$%s = %s", identityEnvVar, me)}
+}
+
+// liveLeaseOwners returns the sorted distinct owners of LIVE leases
+// across repos. A repo that fails to answer is skipped — this check is
+// advisory and the per-repo checks above already report bd failures.
+func liveLeaseOwners(repos []registry.Repo) []string {
+	now := time.Now()
+	seen := map[string]bool{}
+	for _, r := range repos {
+		issues, err := doctorListInProgress(r)
+		if err != nil {
+			continue
+		}
+		for _, i := range issues {
+			if l := lease.Of(i, now, lease.TTL); l.State == lease.Live && l.Owner != "" {
+				seen[l.Owner] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for o := range seen {
+		out = append(out, o)
+	}
+	sort.Strings(out)
 	return out
 }

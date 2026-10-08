@@ -1,0 +1,539 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/lease"
+	"github.com/jimbottle/would-you-kindly/internal/registry"
+	"github.com/jimbottle/would-you-kindly/internal/sanitize"
+	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
+)
+
+// claimTTLEnvVar overrides the configured claim_ttl for one run — the
+// same env-beats-config precedence WYK_DEFAULT_SCOPE / WYK_AGENT_IDENTITY
+// follow, so an orchestrator can hand each agent its own TTL.
+const claimTTLEnvVar = "WYK_CLAIM_TTL"
+
+// Exit code for a claim refused because another identity holds a live
+// lease. Distinct from 1 (bd failure) so an agent loop can branch:
+// "pick something else" versus "something is broken".
+const exitHeldByOther = 3
+
+// resolveClaimTTL picks the lease TTL: $WYK_CLAIM_TTL, then config.json's
+// claim_ttl, then lease.DefaultTTL. A set-but-invalid value is an error
+// rather than a silent fallthrough — a typo'd TTL must not quietly make
+// every lease two hours.
+func resolveClaimTTL(cfg wykconfig.Config) (time.Duration, error) {
+	if v := strings.TrimSpace(os.Getenv(claimTTLEnvVar)); v != "" {
+		d, err := lease.ParseTTL(v)
+		if err != nil {
+			return 0, fmt.Errorf("$%s: %w", claimTTLEnvVar, err)
+		}
+		return d, nil
+	}
+	if v := strings.TrimSpace(cfg.ClaimTTL); v != "" {
+		d, err := lease.ParseTTL(v)
+		if err != nil {
+			return 0, fmt.Errorf("config claim_ttl: %w", err)
+		}
+		return d, nil
+	}
+	return lease.DefaultTTL, nil
+}
+
+// gitConfigValue is a swappable seam for `git config <key>` so the
+// identity fallback is testable without a git checkout.
+var gitConfigValue = func(key string) string {
+	out, err := exec.Command("git", "config", key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// resolveClaimIdentity is the identity a claim is recorded under. The
+// explicit agent identity (-identity / $WYK_AGENT_IDENTITY) wins — that
+// is the multi-agent case the lease exists for. Without one, fall back
+// along bd's own actor chain ($BEADS_ACTOR, git user.name, $USER) — the
+// SAME value a bare `bd update --claim` would put in assignee, so a
+// single-agent user's wyk and raw-bd claims agree on who "me" is and
+// neither looks like a stranger's to the other. Not slugified: the
+// slug rule exists for labels, and assignee is free text. The source
+// is returned so the output can say which was used.
+func resolveClaimIdentity(flagVal string) (name, source string, err error) {
+	ident, err := resolveIdentity(flagVal)
+	if err != nil {
+		return "", "", err
+	}
+	if ident != "" {
+		if flagVal != "" {
+			return ident, "-identity", nil
+		}
+		return ident, "$" + identityEnvVar, nil
+	}
+	for _, c := range []struct{ val, src string }{
+		{os.Getenv("BEADS_ACTOR"), "$BEADS_ACTOR"},
+		{gitConfigValue("user.name"), "git user.name"},
+		{os.Getenv("USER"), "$USER"},
+	} {
+		if v := strings.TrimSpace(c.val); v != "" {
+			return v, c.src, nil
+		}
+	}
+	return "", "", fmt.Errorf("no agent identity: set $%s (or pass -identity) so the claim records who holds it", identityEnvVar)
+}
+
+// currentBranch is the git branch of dir ("" when not a git checkout or
+// detached). Swappable for tests. Recorded on the lease so a human (or
+// another agent) can see where the holder's work lives.
+var currentBranch = func(dir string) string {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	b := strings.TrimSpace(string(out))
+	if b == "HEAD" {
+		return ""
+	}
+	return b
+}
+
+// claimClient is the slice of beads.Client the claim state machine
+// needs, so tests drive it with a fake.
+type claimClient interface {
+	Show(ctx context.Context, id string) (beads.Issue, error)
+	Claim(ctx context.Context, id, actor string, meta beads.Metadata) error
+	Reassign(ctx context.Context, id, actor string, meta beads.Metadata) error
+	SetMetadata(ctx context.Context, id string, meta beads.Metadata) error
+	Release(ctx context.Context, id, actor string, unsetKeys []string) error
+	Note(ctx context.Context, id, text string) error
+}
+
+// claimAction is what claimIssue did.
+type claimAction string
+
+const (
+	actionClaimed  claimAction = "claimed"
+	actionRenewed  claimAction = "renewed"
+	actionTookOver claimAction = "took-over"
+	actionReleased claimAction = "released"
+)
+
+// claimOutcome is the -json shape and the source for the text line.
+type claimOutcome struct {
+	ID       string      `json:"id"`
+	Repo     string      `json:"repo,omitempty"`
+	Action   claimAction `json:"action"`
+	Owner    string      `json:"owner"`
+	Until    time.Time   `json:"until,omitzero"`
+	Branch   string      `json:"branch,omitempty"`
+	Previous string      `json:"previous_owner,omitempty"`
+	// Identity source ("-identity", "$WYK_AGENT_IDENTITY", "git user.name"…)
+	// so a surprising owner can be traced to where it came from.
+	IdentitySource string `json:"identity_source,omitempty"`
+}
+
+// errHeldByOther is returned by claimIssue when a live lease belongs to
+// someone else and -force wasn't given. The message names the holder
+// and how long they have left.
+type errHeldByOther struct {
+	id  string
+	l   lease.Lease
+	now time.Time // the instant the decision was made, so the message agrees with it
+}
+
+func (e *errHeldByOther) Error() string {
+	owner := e.l.Owner
+	if owner == "" {
+		owner = "an unrecorded holder"
+	}
+	return fmt.Sprintf("%s is held by %s (%s); pick something else, or -force to take it over", e.id, owner, lease.Remaining(e.l, e.now))
+}
+
+// claimOpts parameterises one claimIssue run.
+type claimOpts struct {
+	me     string
+	ttl    time.Duration
+	branch string
+	now    time.Time
+	force  bool
+	renew  bool // renew-only: refuse rather than claim when not held by me
+}
+
+// claimIssue is the lease state machine for one issue:
+//
+//   - no lease            → bd --claim (atomic; a concurrent claimer loses)
+//   - mine (live or lapsed) → renew (metadata-only write, status untouched)
+//   - live, someone else  → refuse (errHeldByOther) unless force
+//   - expired             → take over: force assignee + stamp, and leave a
+//     note naming the lapsed holder so the trail is visible on the issue
+//
+// The stamp written is the same in every branch: owner, now+ttl, branch.
+func claimIssue(ctx context.Context, c claimClient, id string, o claimOpts) (claimOutcome, error) {
+	i, err := c.Show(ctx, id)
+	if err != nil {
+		return claimOutcome{}, err
+	}
+	if i.Status == "closed" {
+		return claimOutcome{}, fmt.Errorf("%s is closed; reopen it before claiming", id)
+	}
+	until := o.now.Add(o.ttl)
+	stamp := lease.Stamp(o.me, until, o.branch)
+	out := claimOutcome{ID: id, Owner: o.me, Until: until, Branch: o.branch}
+	l := lease.Of(i, o.now, o.ttl)
+
+	switch {
+	case l.State != lease.None && l.Owner == o.me:
+		// Mine — live, or lapsed with nobody having taken it since. Either
+		// way the assignee is still me, so re-stamping IS the resume; going
+		// through the takeover path would note "taken over by me from me".
+		if err := c.SetMetadata(ctx, id, stamp); err != nil {
+			return out, err
+		}
+		out.Action = actionRenewed
+		return out, nil
+	case l.State == lease.Live && !o.force:
+		return out, &errHeldByOther{id: id, l: l, now: o.now}
+	case o.renew:
+		return out, fmt.Errorf("%s is not held by %s (lease %s); run `wyk claim %s` to claim it", id, o.me, l.State, id)
+	case l.State == lease.Live && o.force, l.State == lease.Expired:
+		// Takeover. bd's --claim would refuse (assignee is someone else),
+		// so force the assignee; the note keeps the previous holder on the
+		// record since the metadata is about to be overwritten.
+		if err := c.Reassign(ctx, id, o.me, stamp); err != nil {
+			return out, err
+		}
+		out.Action = actionTookOver
+		out.Previous = l.Owner
+		note := takeoverNote(l, o.me, o.now)
+		if err := c.Note(ctx, id, note); err != nil {
+			// The takeover landed; only the trail note failed. Report it
+			// without undoing the claim — a retry would not help.
+			return out, fmt.Errorf("took over %s but could not record the note: %w", id, err)
+		}
+		return out, nil
+	default:
+		if err := c.Claim(ctx, id, o.me, stamp); err != nil {
+			if beads.IsAlreadyClaimed(err) {
+				// Lost a race with a concurrent claimer, or bd's assignee is
+				// set on a row our read didn't see as leased. Re-read so the
+				// refusal names the actual holder.
+				if cur, rerr := c.Show(ctx, id); rerr == nil {
+					return out, &errHeldByOther{id: id, l: lease.Of(cur, o.now, o.ttl), now: o.now}
+				}
+			}
+			return out, err
+		}
+		out.Action = actionClaimed
+		return out, nil
+	}
+}
+
+// takeoverNote is the audit line left on an issue whose lease was
+// taken over. Previous owner and lapse time are what the next reader
+// needs to understand why the assignee changed under them.
+func takeoverNote(prev lease.Lease, me string, now time.Time) string {
+	owner := prev.Owner
+	if owner == "" {
+		owner = "an unrecorded holder"
+	}
+	if prev.State == lease.Live {
+		return fmt.Sprintf("wyk claim: lease forcibly taken from %s by %s at %s (was live, %s)",
+			owner, me, now.UTC().Format(time.RFC3339), lease.Remaining(prev, now))
+	}
+	return fmt.Sprintf("wyk claim: lease from %s expired at %s; taken over by %s at %s",
+		owner, prev.Until.UTC().Format(time.RFC3339), me, now.UTC().Format(time.RFC3339))
+}
+
+// releaseIssue drops my lease: clears assignee + metadata and reopens.
+// Refuses to release someone else's live lease unless forced, so one
+// agent can't silently unseat another by "releasing".
+func releaseIssue(ctx context.Context, c claimClient, id string, o claimOpts) (claimOutcome, error) {
+	i, err := c.Show(ctx, id)
+	if err != nil {
+		return claimOutcome{}, err
+	}
+	l := lease.Of(i, o.now, o.ttl)
+	out := claimOutcome{ID: id, Owner: o.me, Action: actionReleased, Previous: l.Owner}
+	if l.State == lease.None {
+		return out, fmt.Errorf("%s is not claimed (status %s)", id, i.Status)
+	}
+	if l.State == lease.Live && l.Owner != o.me && !o.force {
+		return out, &errHeldByOther{id: id, l: l, now: o.now}
+	}
+	if err := c.Release(ctx, id, o.me, lease.Keys()); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// renewHeld renews every live lease identity `me` holds across subs — the
+// Stop-hook auto-renew and `wyk claim -renew` with no id. Rows whose
+// lease is implicit (a bare bd claim under this actor) get a proper
+// stamp from here on. Returns the renewed IDs and per-repo errors;
+// best-effort by design, since a renewal that fails just expires later.
+func renewHeld(ctx context.Context, subs []inboxSub, me string, ttl time.Duration, now time.Time) (renewed []string, errs []subError) {
+	type res struct {
+		ids []string
+		err error
+	}
+	results := make([]res, len(subs))
+	var wg sync.WaitGroup
+	for i, s := range subs {
+		wg.Add(1)
+		go func(i int, s inboxSub) {
+			defer wg.Done()
+			held, err := s.client.ListInProgressBy(ctx, me)
+			if err != nil {
+				results[i].err = err
+				return
+			}
+			for _, is := range held {
+				l := lease.Of(is, now, ttl)
+				if l.State != lease.Live || l.Owner != me {
+					continue
+				}
+				branch := l.Branch
+				if branch == "" {
+					branch = currentBranch(s.client.Dir)
+				}
+				if err := s.client.SetMetadata(ctx, is.ID, lease.Stamp(me, now.Add(ttl), branch)); err != nil {
+					results[i].err = errors.Join(results[i].err, fmt.Errorf("%s: %w", is.ID, err))
+					continue
+				}
+				results[i].ids = append(results[i].ids, is.ID)
+			}
+		}(i, s)
+	}
+	wg.Wait()
+	for i, s := range subs {
+		renewed = append(renewed, results[i].ids...)
+		if results[i].err != nil {
+			errs = append(errs, subError{repo: s.name, err: results[i].err})
+		}
+	}
+	return renewed, errs
+}
+
+// locateIssue finds the workspace that owns id. An explicit dir wins.
+// Otherwise the cwd workspace is tried first (the common case: an agent
+// claiming in the repo it sits in); if cwd isn't a bd workspace, or bd
+// there doesn't know the id, the registry is scanned for a repo whose
+// name is the id's prefix — so `wyk claim other-repo-1k2j` works from
+// anywhere the way the multi-repo views do. Returns the client positioned
+// on the owning workspace, its registry name, and the issue.
+func locateIssue(ctx context.Context, id, dir string) (*beads.Client, string, beads.Issue, error) {
+	if dir != "" {
+		c := beads.NewClient()
+		c.Dir = dir
+		i, err := c.Show(ctx, id)
+		return c, "", i, err
+	}
+	c := beads.NewClient()
+	i, err := c.Show(ctx, id)
+	if err == nil {
+		return c, "", i, nil
+	}
+	if errors.Is(err, beads.ErrBDNotFound) {
+		return nil, "", beads.Issue{}, err
+	}
+	firstErr := err
+	regPath, rerr := registry.DefaultPath()
+	if rerr != nil {
+		return nil, "", beads.Issue{}, firstErr
+	}
+	reg, rerr := registry.Load(regPath)
+	if rerr != nil {
+		return nil, "", beads.Issue{}, firstErr
+	}
+	for _, r := range reg.Repos {
+		if !strings.HasPrefix(id, r.Name+"-") {
+			continue
+		}
+		rc := beads.NewClient()
+		rc.Dir = r.Path
+		if ri, rerr := rc.Show(ctx, id); rerr == nil {
+			return rc, r.Name, ri, nil
+		}
+	}
+	return nil, "", beads.Issue{}, firstErr
+}
+
+// runClaim implements `wyk claim`: take, renew, or release an identity-
+// owned, expiring lease on an issue (wyk-contract/v4).
+//
+// Exit codes: 0 done; 1 bd error or claim refused for a non-contention
+// reason (closed, not held); 2 bd missing / no workspace; 3 held by
+// another identity's LIVE lease; 64 usage.
+func runClaim(args []string) int {
+	fs := flag.NewFlagSet("claim", flag.ContinueOnError)
+	fs.Usage = subcommandUsage(fs, "claim")
+	cfg := loadConfigBestEffort()
+	dir := fs.String("C", "", "workspace the issue lives in; default: the cwd workspace, then the registered repo whose name prefixes the id")
+	identity := fs.String("identity", "", "claim as this agent identity `name`; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER)")
+	ttlFlag := fs.String("ttl", "", "lease length for THIS claim (duration like 2h / 90m, or whole minutes); default: $WYK_CLAIM_TTL, then config claim_ttl, then "+lease.DefaultTTL.String())
+	renew := fs.Bool("renew", false, "extend a lease I already hold (with no <id>: every lease I hold, across the configured scope)")
+	release := fs.Bool("release", false, "give the issue back: clear my lease, unassign, and reopen it")
+	force := fs.Bool("force", false, "take over (or release) a LIVE lease held by someone else — leaves a note naming them; use only when you know the holder is gone")
+	asJSON := fs.Bool("json", false, "emit the outcome as JSON ({id, action, owner, until, branch, previous_owner})")
+	compact := fs.Bool("compact", cfg.CompactJSON, "with -json, emit non-indented JSON")
+	fs.SetOutput(os.Stderr)
+	if err := fs.Parse(args); err != nil {
+		return flagParseExit(err)
+	}
+	if *renew && *release {
+		fmt.Fprintln(os.Stderr, "wyk claim: -renew and -release are mutually exclusive")
+		return 64
+	}
+	if fs.NArg() > 1 || (fs.NArg() == 0 && !*renew) {
+		fmt.Fprintln(os.Stderr, "usage: "+usageLine("claim"))
+		return 64
+	}
+
+	me, source, err := resolveClaimIdentity(*identity)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk claim:", err)
+		return 64
+	}
+	ttl, err := resolveClaimTTL(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk claim:", err)
+		return 64
+	}
+	if *ttlFlag != "" {
+		if ttl, err = lease.ParseTTL(*ttlFlag); err != nil {
+			fmt.Fprintln(os.Stderr, "wyk claim: -ttl:", err)
+			return 64
+		}
+	}
+	ctx := context.Background()
+	now := time.Now()
+
+	// `wyk claim -renew` with no id: keep everything I hold alive.
+	if fs.NArg() == 0 {
+		subs, code := inboxSubs(*dir, "", false)
+		if code != 0 {
+			return code
+		}
+		renewed, subErrs := renewHeld(ctx, subs, me, ttl, now)
+		if *asJSON {
+			res := struct {
+				Renewed []string    `json:"renewed"`
+				Owner   string      `json:"owner"`
+				Until   time.Time   `json:"until"`
+				Errors  []repoError `json:"errors,omitempty"`
+			}{Renewed: renewed, Owner: me, Until: now.Add(ttl), Errors: subErrorsToRepoErrors(subErrs)}
+			if res.Renewed == nil {
+				res.Renewed = []string{}
+			}
+			_ = emitJSON(os.Stdout, res, *compact)
+		} else {
+			fmt.Printf("renewed %d lease(s) held by %s until %s\n", len(renewed), me, now.Add(ttl).Local().Format(time.RFC3339))
+			for _, id := range renewed {
+				fmt.Printf("  %s\n", id)
+			}
+			if len(subErrs) > 0 {
+				fmt.Fprintf(os.Stderr, "wyk claim: %d repo(s) failed: %s\n", len(subErrs), joinRepoErrors(subErrorsToRepoErrors(subErrs)))
+			}
+		}
+		if len(renewed) == 0 && len(subErrs) == len(subs) && len(subs) > 0 {
+			return 1
+		}
+		return 0
+	}
+
+	id := fs.Arg(0)
+	c, repoName, _, err := locateIssue(ctx, id, *dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk claim:", err)
+		switch {
+		case errors.Is(err, beads.ErrBDNotFound), errors.Is(err, beads.ErrNoWorkspace):
+			return 2
+		}
+		return 1
+	}
+	maybeAutoRegister("wyk claim", c.Dir, os.Stderr)
+
+	opts := claimOpts{me: me, ttl: ttl, branch: currentBranch(c.Dir), now: now, force: *force, renew: *renew}
+	var out claimOutcome
+	if *release {
+		out, err = releaseIssue(ctx, c, id, opts)
+	} else {
+		out, err = claimIssue(ctx, c, id, opts)
+	}
+	out.Repo = repoName
+	out.IdentitySource = source
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wyk claim:", err)
+		var held *errHeldByOther
+		if errors.As(err, &held) {
+			if *asJSON {
+				_ = emitJSON(os.Stdout, struct {
+					claimOutcome
+					HeldBy string    `json:"held_by"`
+					Until  time.Time `json:"held_until,omitzero"`
+				}{out, held.l.Owner, held.l.Until}, *compact)
+			}
+			return exitHeldByOther
+		}
+		if out.Action == actionTookOver {
+			// The takeover itself landed; only the note failed. Say so
+			// on stdout like a success, exit 1 for the partial.
+			printClaimOutcome(out, *asJSON, *compact)
+		}
+		return 1
+	}
+	printClaimOutcome(out, *asJSON, *compact)
+	return 0
+}
+
+// printClaimOutcome renders the result line (or JSON) for a single-issue
+// claim / renew / release / takeover.
+func printClaimOutcome(out claimOutcome, asJSON, compact bool) {
+	if asJSON {
+		_ = emitJSON(os.Stdout, out, compact)
+		return
+	}
+	where := out.ID
+	if out.Repo != "" {
+		where = "[" + sanitize.Inline(out.Repo) + "] " + out.ID
+	}
+	switch out.Action {
+	case actionReleased:
+		fmt.Printf("released %s (was %s)\n", where, orUnrecorded(out.Previous))
+	case actionTookOver:
+		fmt.Printf("took over %s from %s as %s until %s%s\n", where, orUnrecorded(out.Previous), out.Owner,
+			out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
+	case actionRenewed:
+		fmt.Printf("renewed %s for %s until %s%s\n", where, out.Owner, out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
+	default:
+		fmt.Printf("claimed %s as %s until %s%s\n", where, out.Owner, out.Until.Local().Format(time.RFC3339), branchSuffix(out.Branch))
+	}
+}
+
+func branchSuffix(b string) string {
+	if b == "" {
+		return ""
+	}
+	return " on " + sanitize.Inline(b)
+}
+
+func orUnrecorded(s string) string {
+	if s == "" {
+		return "an unrecorded holder"
+	}
+	return s
+}

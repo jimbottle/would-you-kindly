@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -713,4 +714,122 @@ func parseIssues(b []byte) ([]Issue, error) {
 		return nil, fmt.Errorf("parse bd json: %w", err)
 	}
 	return issues, nil
+}
+
+// --- claim / lease writes ------------------------------------------
+
+// metadataArgs renders meta as repeated `--set-metadata k=v` flags in
+// key order. bd 1.0.4 accepts the flag repeatedly on `update`.
+func metadataArgs(meta Metadata) []string {
+	var args []string
+	for _, k := range meta.SortedKeys() {
+		args = append(args, "--set-metadata", k+"="+meta[k])
+	}
+	return args
+}
+
+// Claim runs `bd --actor <actor> update <id> --claim [--set-metadata …]`.
+// bd's --claim is atomic: it sets assignee to the actor and status to
+// in_progress, is idempotent when the actor already holds the issue, and
+// REFUSES ("issue already claimed by <other>") when someone else does —
+// that refusal is the lock `wyk claim` relies on. The actor is passed
+// with bd's global --actor flag rather than $BEADS_ACTOR so the identity
+// can't be lost to an environment the caller doesn't control. meta (the
+// lease stamp) rides along in the same write so a claim and its expiry
+// land together.
+func (c *Client) Claim(ctx context.Context, id, actor string, meta Metadata) error {
+	args := []string{"--actor", actor, "update", id, "--claim"}
+	args = append(args, metadataArgs(meta)...)
+	args = append(args, autoCommitFlag)
+	_, err := c.run(ctx, nil, args...)
+	return err
+}
+
+// ErrAlreadyClaimed reports a Claim refused because another actor holds
+// the issue. Wrapped into the returned error (errors.Is) so the caller
+// can tell a contended claim from a bd failure; bd's message, which
+// names the holder, is kept in the text.
+var ErrAlreadyClaimed = errors.New("issue already claimed")
+
+// IsAlreadyClaimed reports whether err is bd's claim-contention refusal.
+// bd 1.0.4 phrases it "Error claiming <id>: issue already claimed by
+// <actor>"; the match is on the stable middle so a changed prefix still
+// classifies.
+func IsAlreadyClaimed(err error) bool {
+	return err != nil && (errors.Is(err, ErrAlreadyClaimed) ||
+		strings.Contains(err.Error(), "already claimed by"))
+}
+
+// Reassign forces an issue onto actor — `bd update <id> --assignee
+// <actor> --status in_progress [--set-metadata …]` — bypassing --claim's
+// contention check. It is the lease TAKEOVER path: the caller has
+// already established that the previous holder's lease expired, so the
+// refusal Claim would produce is exactly what must be overridden. Never
+// call it on a live lease.
+func (c *Client) Reassign(ctx context.Context, id, actor string, meta Metadata) error {
+	args := []string{"--actor", actor, "update", id, "--assignee", actor, "--status", "in_progress"}
+	args = append(args, metadataArgs(meta)...)
+	args = append(args, autoCommitFlag)
+	_, err := c.run(ctx, nil, args...)
+	return err
+}
+
+// SetMetadata writes the given keys (`bd update <id> --set-metadata k=v
+// …`) without touching assignee or status — the lease RENEWAL path. bd
+// bumps updated_at on the write, so a renewal also refreshes the
+// implicit (metadata-less) expiry other readers compute.
+func (c *Client) SetMetadata(ctx context.Context, id string, meta Metadata) error {
+	if len(meta) == 0 {
+		return nil
+	}
+	args := []string{"update", id}
+	args = append(args, metadataArgs(meta)...)
+	args = append(args, autoCommitFlag)
+	_, err := c.run(ctx, nil, args...)
+	return err
+}
+
+// Release returns an issue to the pool: clears the assignee, sets status
+// back to open, and drops the given metadata keys (the lease stamp) in
+// ONE `bd update` so a reader can't observe a half-released row. Pass
+// actor for the audit trail; empty inherits bd's default.
+func (c *Client) Release(ctx context.Context, id, actor string, unsetKeys []string) error {
+	var args []string
+	if actor != "" {
+		args = append(args, "--actor", actor)
+	}
+	args = append(args, "update", id, "--assignee", "", "--status", "open")
+	keys := append([]string(nil), unsetKeys...)
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--unset-metadata", k)
+	}
+	args = append(args, autoCommitFlag)
+	_, err := c.run(ctx, nil, args...)
+	return err
+}
+
+// ListInProgress runs `bd list --status in_progress --limit=0 --json`:
+// every claimed issue in the workspace, whoever holds it. `wyk next`
+// reads it to resume my own leases and to find LAPSED ones — `bd ready`
+// excludes in_progress, so without this an abandoned claim would never
+// flow back to another agent.
+func (c *Client) ListInProgress(ctx context.Context) ([]Issue, error) {
+	out, err := c.run(ctx, nil, "list", "--status", "in_progress", noLimitFlag, "--json")
+	if err != nil {
+		return nil, err
+	}
+	return parseIssues(out)
+}
+
+// ListInProgressBy runs `bd list --status in_progress --assignee
+// <assignee> --limit=0 --json`: the issues an actor currently holds.
+// The lease renewer uses it to find everything a given identity should
+// keep alive without scanning the whole workspace.
+func (c *Client) ListInProgressBy(ctx context.Context, assignee string) ([]Issue, error) {
+	out, err := c.run(ctx, nil, "list", "--status", "in_progress", "--assignee", assignee, noLimitFlag, "--json")
+	if err != nil {
+		return nil, err
+	}
+	return parseIssues(out)
 }

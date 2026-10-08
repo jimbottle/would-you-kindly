@@ -16,6 +16,7 @@ import (
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
+	"github.com/jimbottle/would-you-kindly/internal/lease"
 	"github.com/jimbottle/would-you-kindly/internal/uiconfig"
 )
 
@@ -269,6 +270,8 @@ func (m Model) viewHelp() string {
 		{agentBadge.Render("AGENT"), "AGENT", "the agent's move (the default — no human label)"},
 		{humanBlockBadge.Render("HUMAN-BLOCK"), "HUMAN-BLOCK", "agent task blocked by a human-flagged dependency"},
 		{agentHandoffBadge.Render("AGENT-HANDOFF"), "AGENT-HANDOFF", "another agent owns it; a human coordinates — don't touch"},
+		{claimedBadge.Render("@name"), "@name", "checked out by that agent identity (`wyk claim`); lapses unless renewed"},
+		{expiredBadge.Render("EXPIRED"), "EXPIRED", "its holder stopped renewing — claimable by takeover (`wyk next`)"},
 	}
 	for _, e := range ownerLegend {
 		pad := strings.Repeat(" ", max(0, len("AGENT-HANDOFF")-len(e.plain)))
@@ -1164,7 +1167,31 @@ func responsibilityBadgeFor(i beads.Issue) string {
 	if i.BlockedByHuman {
 		return humanBlockBadge.Render("HUMAN-BLOCK")
 	}
+	// Lease (wyk-contract/v4): who has it checked out, or that their
+	// checkout lapsed. Below HUMAN-BLOCK because "can't move" outranks
+	// "who's on it"; above plain AGENT because a named holder is strictly
+	// more information than the default.
+	switch l := lease.Of(i, leaseNow(), lease.TTL); l.State {
+	case lease.Live:
+		return claimedBadge.Render(leaseBadgeText(l.Owner))
+	case lease.Expired:
+		return expiredBadge.Render("EXPIRED")
+	}
 	return agentBadge.Render("AGENT")
+}
+
+// leaseNow is the clock the owner badge reads leases against. A seam so
+// badge tests are deterministic.
+var leaseNow = time.Now
+
+// leaseBadgeText is "@<owner>" fitted to the owner column: colResp minus
+// the badge's one-cell padding each side. An unrecorded holder (a bare
+// in_progress with no assignee) renders as "@?" rather than vanishing.
+func leaseBadgeText(owner string) string {
+	if owner == "" {
+		owner = "?"
+	}
+	return trunc("@"+sanitizeInline(owner), colResp-2)
 }
 
 // abbrevType returns a fixed-width type slug. Most bd types fit in

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/lease"
 )
 
 // The detail surface: modeDetail's handlers, dep-link cycling,
@@ -645,6 +646,12 @@ func (m Model) viewDetail() string {
 	b.WriteString(meta)
 	b.WriteString("\n\n")
 
+	if line := leaseDetailLine(i); line != "" {
+		b.WriteString(detailLabelStyle.Render("lease: "))
+		b.WriteString(line)
+		b.WriteString("\n\n")
+	}
+
 	if len(i.Labels) > 0 {
 		b.WriteString(detailLabelStyle.Render("labels: "))
 		// Labels are unconstrained bd content (no charset limit), so a
@@ -729,4 +736,28 @@ func (m Model) detailPromptOverlay() (string, int) {
 		return hint + "\n" + m.noteArea.View(), m.noteArea.Height()
 	}
 	return "", 0
+}
+
+// leaseDetailLine summarises the issue's lease for the detail view —
+// holder, time left (or since lapse), branch, and whether it was stamped
+// by wyk or inferred from a bare bd claim. Empty when nobody holds it.
+// Owner and branch are bd content, so they're sanitized.
+func leaseDetailLine(i beads.Issue) string {
+	now := leaseNow()
+	l := lease.Of(i, now, lease.TTL)
+	if l.State == lease.None {
+		return ""
+	}
+	owner := l.Owner
+	if owner == "" {
+		owner = "an unrecorded holder"
+	}
+	parts := []string{sanitizeInline(owner), lease.Remaining(l, now)}
+	if l.Branch != "" {
+		parts = append(parts, "on "+sanitizeInline(l.Branch))
+	}
+	if l.Implicit {
+		parts = append(parts, "(inferred: claimed without wyk)")
+	}
+	return strings.Join(parts, " · ")
 }

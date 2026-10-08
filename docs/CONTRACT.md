@@ -86,7 +86,9 @@ from the inbox query), with a human expected to orchestrate the overall
 coordination. `wyk-contract/v3` adds the per-identity routing described
 in the next section for the assignment the `agent-handoff` fence can't
 express; `agent-handoff` remains the orthogonal "no agent auto-works
-this" signal.
+this" signal. `wyk-contract/v4` adds expiring, identity-owned claims
+(leases) so concurrent agents can see what is checked out right now —
+see "Claims are expiring leases" below.
 
 ### Per-identity routing (`src:agent:<name>`, wyk-contract/v3)
 
@@ -127,9 +129,76 @@ shared (any named agent's default inbox surfaces it, first-come). That's
 the intended split — explicit assignment isolates, un-assigned work
 stays claimable.
 
+Routing decides whose inbox a bounce-back lands in. It does not say who
+is working an issue *right now* — that is the lease, next.
+
+### Claims are expiring leases (wyk-contract/v4)
+
+Several agents working one repo at the same time (each on its own git
+branch — assumed practice, not something wyk enforces) need to see,
+unambiguously, what is checked out and by whom, without a claim being
+tied to a session that may already be dead. v4 makes a claim a
+**lease**: owned by a stable agent identity, and expiring unless renewed.
+
+| Concern            | Encoding                                                                                       |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| **The lock**       | bd's own `assignee` + `status=in_progress`, set atomically by `bd update --claim`, which refuses a second holder. |
+| **Who holds it**   | bd metadata `wyk.lease.owner` — the agent identity, never a session ID.                        |
+| **Until when**     | bd metadata `wyk.lease.until` — RFC3339. Default TTL 2h (`wyk config set claim_ttl …`, `$WYK_CLAIM_TTL`). |
+| **Where the work is** | bd metadata `wyk.lease.branch` — the holder's git branch at claim time.                     |
+
+**Identity.** `-identity`, then `$WYK_AGENT_IDENTITY`, then bd's actor
+chain (`$BEADS_ACTOR`, git `user.name`, `$USER`) — the same value a bare
+`bd update --claim` writes as assignee, so one agent needs no setup.
+Several agents on one machine MUST each set `$WYK_AGENT_IDENTITY`,
+otherwise they all claim as the same actor; `wyk doctor` warns when it
+sees more than one lease owner and no identity set.
+
+**Expiry is computed on read.** Nothing sweeps the workspace and no
+daemon runs. A reader compares `wyk.lease.until` with the clock: past
+it, the lease is **expired** and the issue is claimable by takeover. The
+gate is bd's status — only `in_progress` (and `hooked`) issues can carry
+a lease, so a stale stamp on a reopened issue holds nothing. A claim
+made with raw `bd update --claim` (no stamp) gets an **implicit** lease:
+owner = assignee, expiry = `updated_at` + TTL. `hooked` issues are held
+by a non-wyk agent with no knowable expiry and stay held.
+
+**Renewal is the heartbeat.** `wyk claim -renew [<id>]` extends a lease
+(with no id: every lease the identity holds). The agent-nudge Stop hook
+(`wyk hook install-nudge`) renews on every turn, so a working Claude
+session never lets its claims lapse and a dead one loses them one TTL
+later.
+
+**The commands.**
+
+```bash
+wyk next                   # inbox → ready → lapsed claims, minus other identities' live leases
+wyk next -claim -json      # claim the top pick (exit 4: nothing to claim)
+wyk claim <id>             # take a lease; exit 3 names the holder if it's live and not yours
+wyk claim -renew           # keep everything I hold alive
+wyk claim -release <id>    # unassign, reopen, drop the stamp
+wyk claim -force <id>      # take over a LIVE lease (leaves a note naming the previous holder)
+```
+
+Taking over an expired lease is not an error: it reassigns the issue
+and appends a note (`lease from <old> expired at <t>; taken over by
+<new>`), so the trail stays on the issue. A row still assigned to me
+whose lease lapsed is mine to resume; re-claiming it just renews.
+
+**What a reader does with a lease** — the rule every consumer (`wyk
+next`, the TUI's owner badge, the agent's own judgement) follows:
+
+- Live, someone else's → **don't touch it.** It renders `@<owner>`.
+- Live, mine → resume it; renew while working.
+- Expired → claimable. It renders `EXPIRED`; `wyk next` offers it.
+
+`agent-handoff` stays the orthogonal, human-orchestrated fence: a lease
+says who is on an issue *now* and lapses on its own; `agent-handoff`
+says no agent should auto-work it until a human lifts the label.
+
 Prefer scoping heavy multi-agent collaboration to separate workspaces
-(one bd workspace per agent identity) only when even per-identity
-routing within one workspace proves insufficient.
+(one bd workspace per agent identity) only when leases plus per-identity
+routing within one workspace prove insufficient.
 
 **Partial-failure visibility for `wyk inbox -json`.** When one
 registered repo's bd is broken (moved, deleted, daemon unreachable),
@@ -242,7 +311,7 @@ bd 1.0.4's seven built-in statuses, with the convention for picking each:
 | Status        | Use when                                                                |
 |---------------|--------------------------------------------------------------------------|
 | `open`        | Actionable now. The default for newly-filed issues.                      |
-| `in_progress` | Someone has claimed it. `bd update --claim` sets this AND assigns.        |
+| `in_progress` | Someone has claimed it — `wyk claim` (a lease with an expiry, v4) or `bd update --claim`. Both set this AND assign. |
 | `hooked`      | Attached to an agent's hook — bd's own in-flight marker for hook-driven agent work. Treat like `in_progress` belonging to someone else; excluded from `bd ready` and the wyk inbox. |
 | `blocked`     | Waiting on another tracked bd issue. Pair with `--add-dependency <id>`. |
 | `deferred`    | Waiting on a subsystem that hasn't stabilised yet (WIP UI, redesigned API, polish that depends on an unfinished feature). Hidden from `bd ready` and the TUI's `ready` preset. |
@@ -457,9 +526,19 @@ means there's nothing to rewrite. If a future version ever makes a
 *breaking* change (renaming or repurposing a label), it will ship a
 one-shot relabel command and call it out here explicitly.
 
-**Schema:** `wyk-contract/v3`
+**Schema:** `wyk-contract/v4`
 
 Changelog:
+- **v4** — claims become expiring, identity-owned leases: bd metadata
+  `wyk.lease.{owner,until,branch}` on top of bd's own `--claim`, expiry
+  computed on read (no daemon), implicit leases for bare bd claims, and
+  the `wyk claim` / `wyk next` commands plus Stop-hook renewal. New
+  config key `claim_ttl` and env `$WYK_CLAIM_TTL`. The TUI's `mine`
+  preset now defaults to the claim identity (`$WYK_AGENT_IDENTITY`, then
+  bd's actor) instead of git `user.email`, so it matches the assignee bd
+  writes. Additive: no labels change, the inbox query is unchanged, and
+  an issue without lease metadata reads exactly as before (its
+  in_progress claim simply gains an implicit expiry).
 - **v3 (amended 2026-08-19)** — the inbox queries additionally exclude
   bd 1.0.4's `status=deferred` and `status=hooked`, on the 2026-06-10
   amendment's exact rationale: a deferred issue's unblocker (a date, a

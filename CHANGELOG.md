@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Several agents in one repo: identity-owned, expiring claims**
+  (would-you-kindly-ahnz, wyk-contract/v4). A claim is now a lease:
+  owned by an agent identity (`$WYK_AGENT_IDENTITY`, else bd's actor —
+  never a session) and expiring after `claim_ttl` (default 2h) unless
+  renewed, so an abandoned session can't hold work forever. The lease is
+  bd's own atomic `update --claim` plus bd metadata
+  `wyk.lease.{owner,until,branch}`; expiry is computed on read, with no
+  daemon, and a bare `bd update --claim` gets an implicit lease
+  (`updated_at` + TTL). New `wyk claim <id>` (`-renew`, `-release`,
+  `-force`, `-ttl`, `-json`; exit 3 names the holder of a live lease;
+  an expired one is taken over with a note) and `wyk next [-claim]`
+  (held work, then the inbox, then ready work and lapsed claims, minus
+  other identities' live leases and `agent-handoff`/`human` rows; exit 4
+  when there's nothing to claim). The agent-nudge Stop hook renews the
+  identity's leases every turn. TUI: the Owner column shows `@<owner>`
+  for a live lease and `EXPIRED` for a lapsed one (theme keys
+  `claimed_badge_{bg,fg}` / `expired_badge_{bg,fg}`), and the detail view
+  gains a lease line. `wyk doctor` warns when several identities hold
+  leases but `$WYK_AGENT_IDENTITY` is unset. New config key `claim_ttl`
+  and env `$WYK_CLAIM_TTL`; `beads.Issue` gains `StartedAt`/`Metadata`;
+  `beads.Client` gains `Claim`, `Reassign`, `SetMetadata`, `Release`,
+  `ListInProgress`, `ListInProgressBy`; new package `internal/lease`.
+  The wyk skill, `wyk conventions`, and the CLAUDE.md block `wyk init`
+  writes now teach `wyk next -claim`.
+
 - **Handoff hook: mirror human tasks into any task manager**
   (would-you-kindly-2pwr.1–.4). `wyk config set hooks.handoff.command
   <cmd>` names a command wyk runs — via `sh -c`, with one JSON payload
@@ -127,6 +152,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   45, with the badge count unchanged.
 
 ### Changed
+
+- **The `mine` preset defaults to the claim identity**
+  (would-you-kindly-ahnz). `-me` now defaults to `$WYK_AGENT_IDENTITY`,
+  then bd's actor (`$BEADS_ACTOR`, git `user.name`, `$USER`) — the value
+  bd writes as assignee on a claim — instead of git `user.email`, which
+  never matched a claimed issue. Pass `-me` to keep the old behavior.
 
 - **The ID column shows the FULL bd issue ID** (would-you-kindly-rvv9).
   It used to strip the repeated workspace prefix (`2oa` for

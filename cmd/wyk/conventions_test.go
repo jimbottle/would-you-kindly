@@ -38,6 +38,10 @@ func TestConventions_StructuredHasFixedSchema(t *testing.T) {
 		`"preferred_command"`,
 		`"bd_create_example"`,
 		`"contract_url"`,
+		`"lease"`,
+		`"owner_key"`,
+		`"until_key"`,
+		`"pick_command"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("structured form missing key %s in:\n%s", want, s)

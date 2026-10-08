@@ -362,6 +362,34 @@ status) and issues whose blocker is tracked elsewhere (`blocked` /
 `deferred` reappear when their status returns to open). Use this at
 the start of a session to find what you need to act on next.
 
+#### Several agents in one repo (`wyk next`, `wyk claim`)
+
+When more than one agent works the same repo at once — each on its own
+git branch — they need to see what is already checked out. A claim is a
+**lease**: owned by the agent's identity (never a session), and expiring
+unless renewed, so a dead session can't hold work forever.
+
+```bash
+export WYK_AGENT_IDENTITY=claude-a   # one per concurrent agent
+wyk next -claim                      # pick the best unclaimed issue and check it out
+# > claimed would-you-kindly-1k2j as claude-a until 2026-10-08T16:00:00-04:00 on feat/x
+wyk claim -renew                     # keep everything I hold alive
+wyk claim -release would-you-kindly-1k2j
+```
+
+`wyk next` ranks the issues you already hold, then your inbox, then
+ready work and claims other agents abandoned. It never offers an issue
+another identity holds a live lease on. `wyk claim <id>` on such an
+issue exits 3 and names the holder. The lease lives on the issue as bd
+metadata (`wyk.lease.owner`, `.until`, `.branch`) next to bd's own
+assignee and `in_progress` status. Expiry is computed on read, with no
+daemon. The default TTL is 2h (`wyk config set claim_ttl 90m`, or
+`$WYK_CLAIM_TTL`), and the Stop hook below renews it on every turn. An
+expired lease is claimable: taking it over leaves a note naming the
+previous holder. In the TUI a live lease shows as `@<owner>` in the
+Owner column and a lapsed one as `EXPIRED`. Full rules:
+[`docs/CONTRACT.md`](docs/CONTRACT.md) (wyk-contract/v4).
+
 #### Proactive nudge (opt-in Stop hook)
 
 `wyk inbox` is pull: the agent has to think to run it. To make the
@@ -395,6 +423,10 @@ nudges on *change*) and Claude's `stop_hook_active` flag (it never
 blocks while already continuing from a Stop hook, so it can't loop).
 It fails open: any bd hiccup just allows the stop. Dedup state lives in
 `$XDG_STATE_HOME/wyk/agent-nudge/<session>.json`.
+
+The same hook is the lease heartbeat: on every turn it renews the
+leases the agent's identity holds, so a working session keeps its
+claims and an abandoned one loses them one TTL later.
 
 #### Claude Code skills
 
@@ -576,6 +608,7 @@ to override any subset of the built-in lipgloss styles:
 {
   "human_badge_bg": "#ff66cc",
   "agent_badge_bg": "78",
+  "claimed_badge_bg": "37",
   "status_open":    "39"
 }
 ```
@@ -659,7 +692,7 @@ narrow terminal the lower-value ones auto-hide to keep rows intact.
 
 | Column     | Definition                                                                                                              |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `Owner`    | Whose move it is. `HUMAN` — a human must act. `AGENT` — agent-owned; the default for any issue without a `human` label. `HUMAN-BLOCK` — an agent issue blocked by a human-flagged dependency. `AGENT-HANDOFF` — another agent is working it, so this agent must not interfere (a human orchestrates the coordination). Label-driven; never blank. |
+| `Owner`    | Whose move it is. `HUMAN` — a human must act. `AGENT` — agent-owned; the default for any issue without a `human` label. `HUMAN-BLOCK` — an agent issue blocked by a human-flagged dependency. `AGENT-HANDOFF` — another agent is working it, so this agent must not interfere (a human orchestrates the coordination). `@<owner>` — checked out right now by that agent identity (`wyk claim`). `EXPIRED` — its holder stopped renewing, so it's claimable. Never blank. |
 | `Repo`     | The registered bd workspace the issue lives in. Shown when the view spans more than one repo.                            |
 | `Branch`   | That repo's current git branch. Shown in multi-repo mode.                                                                |
 | `ID`       | The full bd issue ID (e.g. `would-you-kindly-2oa`) — the same string bd and your agents use, so a quoted ID matches a row on sight. The column sizes itself to the longest ID in view. Yank it with `y`. |

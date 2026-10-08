@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/hooks"
+	"github.com/jimbottle/would-you-kindly/internal/lease"
 	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
 )
 
@@ -135,6 +136,24 @@ var configKeys = []configKey{
 			return nil
 		},
 		effectiveDefault: "all",
+	},
+	{
+		name: "claim_ttl",
+		desc: "how long a `wyk claim` lease lives without renewal (duration like 2h / 90m, or whole minutes); $WYK_CLAIM_TTL overrides per run",
+		get:  func(c wykconfig.Config) string { return c.ClaimTTL },
+		set: func(c *wykconfig.Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				c.ClaimTTL = ""
+				return nil
+			}
+			if _, err := lease.ParseTTL(v); err != nil {
+				return fmt.Errorf("%w for claim_ttl: %v", wykconfig.ErrInvalidValue, err)
+			}
+			c.ClaimTTL = v
+			return nil
+		},
+		effectiveDefault: lease.DefaultTTL.String(),
 	},
 	{
 		name:             "disable_update_check",

@@ -49,6 +49,10 @@ type Theme struct {
 	HumanBlockFG     string `json:"human_block_fg,omitempty"`
 	AgentHandoffBG   string `json:"agent_handoff_bg,omitempty"`
 	AgentHandoffFG   string `json:"agent_handoff_fg,omitempty"`
+	ClaimedBadgeBG   string `json:"claimed_badge_bg,omitempty"`
+	ClaimedBadgeFG   string `json:"claimed_badge_fg,omitempty"`
+	ExpiredBadgeBG   string `json:"expired_badge_bg,omitempty"`
+	ExpiredBadgeFG   string `json:"expired_badge_fg,omitempty"`
 	Cursor           string `json:"cursor,omitempty"`
 	StatusBarBG      string `json:"status_bar_bg,omitempty"`
 	StatusBarFG      string `json:"status_bar_fg,omitempty"`

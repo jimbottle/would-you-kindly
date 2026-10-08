@@ -211,6 +211,12 @@ func TestRunHookAgentNudge_BlockDedupAllow(t *testing.T) {
 	old := nudgeFetchInbox
 	nudgeFetchInbox = func() ([]beads.Issue, error) { return inbox, nil }
 	defer func() { nudgeFetchInbox = old }()
+	// The lease heartbeat runs on every non-looping turn (wyk-contract/v4);
+	// count it rather than let it reach bd.
+	renewals := 0
+	oldRenew := nudgeRenewLeases
+	nudgeRenewLeases = func() { renewals++ }
+	defer func() { nudgeRenewLeases = oldRenew }()
 
 	runCap := func(payload string) string {
 		return captureStdout(t, func() {
@@ -257,6 +263,12 @@ func TestRunHookAgentNudge_BlockDedupAllow(t *testing.T) {
 	// 5. A different session starts fresh — the whole inbox surfaces there.
 	if out := runCap(`{"session_id":"s2"}`); !strings.Contains(out, row("z")) || !strings.Contains(out, row("x")) {
 		t.Errorf("new session should surface the whole inbox; got %q", out)
+	}
+
+	// Four real turns renewed; the stop_hook_active turn (4) did not — a
+	// hook-driven continuation isn't new evidence the agent is alive.
+	if renewals != 4 {
+		t.Errorf("lease heartbeat ran %d times, want 4 (every turn except stop_hook_active)", renewals)
 	}
 }
 

@@ -45,6 +45,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/filters"
 	"github.com/jimbottle/would-you-kindly/internal/hooks"
+	"github.com/jimbottle/would-you-kindly/internal/lease"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 	"github.com/jimbottle/would-you-kindly/internal/theme"
@@ -105,6 +106,8 @@ var subcommandHandlers = map[string]func([]string) int{
 	"init":        runInit,
 	"hook":        runHook,
 	"inbox":       runInbox,
+	"claim":       runClaim,
+	"next":        runNext,
 	"stats":       runStats,
 	"doctor":      runDoctor,
 	"bugreport":   runBugreport,
@@ -162,7 +165,7 @@ func main() {
 
 	flag.Usage = printTopLevelUsage
 	dir := flag.String("C", "", "run as if bd had been started in this directory")
-	me := flag.String("me", "", "current user, used by the 'mine' preset (default: git user.email or $USER)")
+	me := flag.String("me", "", "current user, used by the 'mine' preset (default: $WYK_AGENT_IDENTITY, then bd's actor: $BEADS_ACTOR / git user.name / $USER)")
 	probe := flag.Bool("probe", false, "non-TTY: print the human-flagged issues and exit (useful in scripts/CI)")
 	startupPreset := flag.String("preset", "", "launch into a specific preset (all, ready, human, mine, blocked)")
 	noColor := flag.Bool("no-color", false, "disable colored output (same as NO_COLOR / WYK_NO_COLOR)")
@@ -200,6 +203,12 @@ func main() {
 	// on PATH unless the default is actually needed.
 	if *me == "" {
 		*me = defaultMe()
+	}
+	// The owner badge reads leases against the configured TTL (only the
+	// implicit, bare-bd-claim expiry depends on it). A bad value keeps the
+	// built-in default here; `wyk claim` / `wyk next` report it loudly.
+	if ttl, err := resolveClaimTTL(loadConfigBestEffort()); err == nil {
+		lease.TTL = ttl
 	}
 
 	src, repoPaths, hint, err := buildSource(*dir, *me)
@@ -1299,11 +1308,17 @@ query, run: wyk conventions
 `)
 }
 
-// defaultMe resolves the current identity the way bd itself does:
-// prefer git's configured user.email, then $USER. Empty string is a
-// fine fallback — the "mine" preset degrades to "all open" when the
-// identity is unknown.
+// defaultMe resolves the current identity as the identity claims are
+// written under (wyk-contract/v4): $WYK_AGENT_IDENTITY, else bd's actor
+// chain ($BEADS_ACTOR, git user.name, $USER) — the value bd itself
+// stores as assignee on `--claim`, so `mine` shows what I've checked
+// out. git user.email is a last resort for a machine with no user.name
+// and no $USER. Empty string is a fine fallback — the "mine" preset
+// degrades to "all open" when the identity is unknown.
 func defaultMe() string {
+	if name, _, err := resolveClaimIdentity(""); err == nil {
+		return name
+	}
 	if out, err := exec.Command("git", "config", "user.email").Output(); err == nil {
 		if s := strings.TrimSpace(string(out)); s != "" {
 			return s

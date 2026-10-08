@@ -84,6 +84,24 @@ var (
 				Bold(true).
 				Padding(0, 1)
 
+	// claimedBadge renders a LIVE lease (wyk-contract/v4): "@<owner>" —
+	// an agent identity has this checked out right now. Teal, so it reads
+	// as "in flight" like AGENT's green but distinguishable from it: AGENT
+	// says whose kind of move it is, @owner says exactly who is making it.
+	claimedBadge = lipgloss.NewStyle().
+			Background(lipgloss.Color("37")).
+			Foreground(lipgloss.Color("232")).
+			Bold(true).
+			Padding(0, 1)
+
+	// expiredBadge renders a LAPSED lease: the holder stopped renewing, so
+	// the row is claimable by takeover. Grey — stale, not urgent.
+	expiredBadge = lipgloss.NewStyle().
+			Background(lipgloss.Color("244")).
+			Foreground(lipgloss.Color("232")).
+			Bold(true).
+			Padding(0, 1)
+
 	// reviewMarkStyle renders the ◆ glyph prefixed to review-sourced
 	// (label=roborev) titles — a per-row provenance marker, deliberately
 	// separate from the owner column's ownership badges. Amber reads as "a
@@ -244,6 +262,18 @@ func ApplyTheme(t theme.Theme) {
 	}
 	if t.AgentHandoffFG != "" {
 		agentHandoffBadge = agentHandoffBadge.Foreground(lipgloss.Color(t.AgentHandoffFG))
+	}
+	if t.ClaimedBadgeBG != "" {
+		claimedBadge = claimedBadge.Background(lipgloss.Color(t.ClaimedBadgeBG))
+	}
+	if t.ClaimedBadgeFG != "" {
+		claimedBadge = claimedBadge.Foreground(lipgloss.Color(t.ClaimedBadgeFG))
+	}
+	if t.ExpiredBadgeBG != "" {
+		expiredBadge = expiredBadge.Background(lipgloss.Color(t.ExpiredBadgeBG))
+	}
+	if t.ExpiredBadgeFG != "" {
+		expiredBadge = expiredBadge.Foreground(lipgloss.Color(t.ExpiredBadgeFG))
 	}
 	if t.Cursor != "" {
 		cursorStyle = cursorStyle.Foreground(lipgloss.Color(t.Cursor))

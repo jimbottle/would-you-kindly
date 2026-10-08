@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/jimbottle/would-you-kindly/internal/lease"
 )
 
 // agentInboxQuery and humanTasksQuery are the canonical bd query
@@ -72,6 +74,28 @@ work (so nothing filed without routing is stranded); add '-strict' for
 routed-only. With no identity, everything behaves exactly as the
 collective inbox above — single-agent workflows are unchanged.
 
+Claims are expiring leases (several agents, one workspace, wyk-contract/v4)
+---------------------------------------------------------------------------
+
+Work on your own git branch, and check work out before starting it:
+
+    wyk next -claim          # inbox → ready → lapsed claims; claims the top pick
+    wyk claim <id>           # claim a specific issue (exit 3: another agent holds it)
+    wyk claim -renew         # keep everything you hold alive
+    wyk claim -release <id>  # give it back
+
+A claim is a LEASE owned by your agent identity ($WYK_AGENT_IDENTITY;
+else bd's actor) and it EXPIRES after claim_ttl (default 2h) unless
+renewed — the Stop hook renews on every turn. It is stored on the issue
+as bd metadata wyk.lease.owner / .until / .branch alongside bd's own
+assignee + in_progress. Expiry is computed on read; nothing sweeps.
+
+  - A row badged @<owner> is checked out by that agent: do NOT touch it.
+  - EXPIRED means its holder stopped renewing: claimable (wyk next offers
+    it; claiming leaves a note naming the previous holder).
+  - Several agents on one machine must each set WYK_AGENT_IDENTITY, or
+    they all claim as the same bd actor.
+
 Prefer 'wyk handoff <id>' over hand-rolling these labels — it applies the
 right labels AND lets you attach a runbook from stdin in one shot.
 'wyk handoff -create "<title>"' files a new bd issue and hands it off
@@ -105,8 +129,8 @@ bd (1.0.4) has seven built-in statuses; the convention is when to
 use each:
 
   - open         actionable now; ready to work or to hand off.
-  - in_progress  someone has claimed it. 'bd update --claim' is
-                 the canonical way to set this; it also assigns.
+  - in_progress  someone has claimed it. 'wyk claim' (an expiring
+                 lease) or 'bd update --claim' sets this; both assign.
   - hooked       attached to an agent's hook — bd's own in-flight
                  marker for hook-driven agent work. Treat like
                  in_progress belonging to someone else; excluded
@@ -253,7 +277,11 @@ type conventionsJSON struct {
 	// IdentityEnvVar names the env var that sets the ambient agent
 	// identity for `wyk inbox` / `wyk handoff` when no -identity flag is
 	// given (wyk-contract/v3).
-	IdentityEnvVar   string           `json:"identity_env_var"`
+	IdentityEnvVar string `json:"identity_env_var"`
+	// Lease describes wyk-contract/v4 claims: where the lease lives on
+	// the issue, how long it lasts, and the commands that drive it.
+	Lease leaseConventions `json:"lease"`
+
 	Statuses         []statusGuidance `json:"statuses"`
 	InboxRule        string           `json:"inbox_rule"`
 	PreferredCommand string           `json:"preferred_command"`
@@ -265,6 +293,18 @@ type conventionsJSON struct {
 	// carries either middle heading and rejects one with neither.
 	QuestionSections []runbookSection `json:"question_sections"`
 	ContractURL      string           `json:"contract_url"`
+}
+
+// leaseConventions is the structured form of the v4 lease rules.
+type leaseConventions struct {
+	OwnerKey     string `json:"owner_key"`
+	UntilKey     string `json:"until_key"`
+	BranchKey    string `json:"branch_key"`
+	DefaultTTL   string `json:"default_ttl"`
+	TTLEnvVar    string `json:"ttl_env_var"`
+	TTLConfigKey string `json:"ttl_config_key"`
+	PickCommand  string `json:"pick_command"`
+	Rule         string `json:"rule"`
 }
 
 // statusGuidance pairs a bd status name with a one-line rule for
@@ -294,10 +334,20 @@ func conventionsStructured() conventionsJSON {
 	c.Queries.AgentInbox = agentInboxQuery
 	c.Queries.AgentInboxIdentity = inboxQueryFor("<name>")
 	c.IdentityEnvVar = identityEnvVar
+	c.Lease = leaseConventions{
+		OwnerKey:     lease.KeyOwner,
+		UntilKey:     lease.KeyUntil,
+		BranchKey:    lease.KeyBranch,
+		DefaultTTL:   lease.DefaultTTL.String(),
+		TTLEnvVar:    claimTTLEnvVar,
+		TTLConfigKey: "claim_ttl",
+		PickCommand:  "wyk next -claim -json",
+		Rule:         "Claim before starting (`wyk next -claim` or `wyk claim <id>`), on your own git branch. Never work an issue holding another identity's LIVE lease (exit 3 / badge @owner). An EXPIRED lease is claimable. Leases lapse after the TTL unless renewed (`wyk claim -renew`; the Stop hook renews each turn).",
+	}
 	c.InboxRule = "If `wyk inbox` returns items, work them now rather than acknowledging and moving on. The inbox holds tasks where the human is no longer blocking; treating them as 'handle later' defeats the round-trip. Exception: the user is mid-conversation about something explicitly urgent, or the expected unblocker artifact is missing (re-flag `human` and note, don't sit)."
 	c.Statuses = []statusGuidance{
 		{Status: "open", When: "actionable now; default for newly-filed issues"},
-		{Status: "in_progress", When: "someone has claimed it; set via `bd update --claim` which also assigns"},
+		{Status: "in_progress", When: "someone has claimed it; set via `wyk claim` (an expiring lease) or `bd update --claim`, both of which also assign"},
 		{Status: "blocked", When: "waiting on another tracked bd issue; pair with `--add-dependency <id>`"},
 		{Status: "deferred", When: "waiting on a subsystem that hasn't stabilised yet (WIP UI, redesigned API, etc.); hidden from `bd ready` and the TUI's `ready` preset"},
 		{Status: "closed", When: "done; the post-commit hook auto-closes from `Closes:`/`Fixes:`/`Resolves:` trailers"},

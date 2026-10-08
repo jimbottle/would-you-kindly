@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jimbottle/would-you-kindly/internal/beads"
+	"github.com/jimbottle/would-you-kindly/internal/lease"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/skills"
 )
@@ -1103,5 +1105,36 @@ func TestRunDoctorFix_StaleHooksPathIsNotCountedAsInstalled(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "post-commit")); err == nil {
 		t.Error("doctor -fix wrote into the out-of-repo hooks dir")
+	}
+}
+
+func TestCheckAgentIdentity(t *testing.T) {
+	prevGit, prevList := gitConfigValue, doctorListInProgress
+	t.Cleanup(func() { gitConfigValue, doctorListInProgress = prevGit, prevList })
+	gitConfigValue = func(string) string { return "jimbottle" }
+	t.Setenv("BEADS_ACTOR", "")
+	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	held := func(owner string) beads.Issue {
+		return beads.Issue{Status: "in_progress", Metadata: beads.Metadata{lease.KeyOwner: owner, lease.KeyUntil: until}}
+	}
+	var issues []beads.Issue
+	doctorListInProgress = func(registry.Repo) ([]beads.Issue, error) { return issues, nil }
+	repos := []registry.Repo{{Name: "r", Path: "/r"}}
+
+	t.Setenv(identityEnvVar, "claude-a")
+	if c := checkAgentIdentity(repos); c.status != statusPass || !strings.Contains(c.detail, "claude-a") {
+		t.Fatalf("explicit identity: %+v", c)
+	}
+
+	t.Setenv(identityEnvVar, "")
+	issues = []beads.Issue{held("jimbottle")}
+	if c := checkAgentIdentity(repos); c.status != statusPass || !strings.Contains(c.detail, "fine for one agent") {
+		t.Fatalf("single holder, no identity: %+v", c)
+	}
+
+	issues = []beads.Issue{held("jimbottle"), held("codex-1")}
+	c := checkAgentIdentity(repos)
+	if c.status != statusWarn || !strings.Contains(c.detail, "codex-1, jimbottle") || !strings.Contains(c.detail, identityEnvVar) {
+		t.Fatalf("two holders, no identity: %+v", c)
 	}
 }

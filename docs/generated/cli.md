@@ -110,6 +110,63 @@ wyk inbox -json    # structured, for agent ingestion
 | `-identity` | `_(empty)_` | scope the inbox to a single agent identity (src:agent:<name>); falls back to $WYK_AGENT_IDENTITY, then the collective inbox when unset |
 | `-strict` | `false` | with -identity, show ONLY work routed to that identity; default also includes un-routed collective work so it isn't stranded |
 
+## `wyk claim`
+
+Take, renew, or release an identity-owned, EXPIRING lease on an issue (wyk-contract/v4), so several agents can share one workspace. Wraps bd's atomic `update --claim` and stamps `wyk.lease.{owner,until,branch}` metadata; a lease nobody renews lapses after the TTL and the issue flows back into `wyk next`. A claim on a live lease held by another identity exits 3 and names the holder; an expired one is taken over with a note.
+
+```
+wyk claim [-C <dir>] [-identity name] [-ttl <dur>] [-force] [-json] <issue-id>
+   or: wyk claim -renew [<issue-id>]       # no id: renew every lease I hold
+   or: wyk claim -release [-force] <issue-id>
+```
+
+Common case:
+
+```
+wyk claim would-you-kindly-1k2j            # claim as $WYK_AGENT_IDENTITY for the configured TTL
+wyk claim -renew                           # keep everything I hold alive (the Stop hook does this too)
+wyk claim -release would-you-kindly-1k2j   # give it back: unassign, reopen, drop the lease
+wyk claim -force would-you-kindly-1k2j     # take over a LIVE lease (leaves a note naming the holder)
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-C` | `_(empty)_` | workspace the issue lives in; default: the cwd workspace, then the registered repo whose name prefixes the id |
+| `-identity` | `_(empty)_` | claim as this agent identity; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER) |
+| `-ttl` | `_(empty)_` | lease length for THIS claim (duration like 2h / 90m, or whole minutes); default: $WYK_CLAIM_TTL, then config claim_ttl, then 2h |
+| `-renew` | `false` | extend a lease I already hold (with no <id>: every lease I hold, across the configured scope) |
+| `-release` | `false` | give the issue back: clear my lease, unassign, and reopen it |
+| `-force` | `false` | take over (or release) a LIVE lease held by someone else — leaves a note naming them; use only when you know the holder is gone |
+| `-json` | `false` | emit the outcome as JSON ({id, action, owner, until, branch, previous_owner}; a refusal adds held_by / held_until) |
+| `-compact` | `false` | with -json, emit non-indented JSON |
+
+## `wyk next`
+
+What should I work on? One ranked list for an agent: inbox items first (work a human bounced back), then `bd ready`, minus anything another identity holds a LIVE lease on, minus `agent-handoff` and `human` rows. -claim atomically claims the top pick (wyk-contract/v4).
+
+```
+wyk next [-C <dir>] [-all] [-repo name] [-identity name] [-limit N] [-claim] [-json] [-compact] [-slim]
+```
+
+Common case:
+
+```
+wyk next                 # ranked, with each row's lease state
+wyk next -claim -json    # claim the top pick and print it (the agent-loop one-liner)
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-C` | `_(empty)_` | scope to a single workspace; default is the configured scope (every registered repo unless default_scope=cwd — see 'wyk config') |
+| `-all` | `false` | query every registered repo, ignoring the configured default scope |
+| `-repo` | `_(empty)_` | restrict to the registered repo with this name (mutually exclusive with -C/-all) |
+| `-identity` | `_(empty)_` | the agent asking; falls back to $WYK_AGENT_IDENTITY, then bd's actor ($BEADS_ACTOR / git user.name / $USER). Leases held by this identity count as mine |
+| `-limit` | `-1` | cap the list at N rows (-1 disables) |
+| `-claim` | `false` | atomically claim the top pick (same lease as `wyk claim`); exit 4 when there is nothing to claim |
+| `-json` | `false` | emit a JSON {issues, degraded, errors, identity, claimed} envelope; each issue carries its lease {owner, until, state} |
+| `-compact` | `false` | with -json, emit non-indented JSON |
+| `-slim` | `false` | with -json, drop the heavy description/notes bodies |
+
 ## `wyk stats`
 
 Aggregate snapshot across registered repos: counts by status, human-flagged splits, time-to-close.

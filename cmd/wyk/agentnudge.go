@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -41,6 +42,31 @@ var nudgeFetchInbox = func() ([]beads.Issue, error) {
 	}
 	all, _ := fetchInbox(subs, inboxQuery) // partial results are fine; ignore sub-errors
 	return all, nil
+}
+
+// nudgeRenewLeases keeps every lease the current identity holds alive on
+// each Stop-hook turn — the automatic heartbeat behind wyk-contract/v4's
+// "an agent that goes silent for one TTL loses its items". A seam so the
+// hook's state machine is testable without bd; the default renews across
+// every registered repo (registry-wide like the nudge itself) under the
+// configured TTL. Best-effort: any failure is swallowed, since a missed
+// renewal only means an earlier expiry.
+var nudgeRenewLeases = func() {
+	me, _, err := resolveClaimIdentity("")
+	if err != nil {
+		return
+	}
+	ttl, err := resolveClaimTTL(loadConfigBestEffort())
+	if err != nil {
+		return
+	}
+	subs, code := inboxSubs("", "", true)
+	if code != 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*beads.BDTimeoutFromEnv())
+	defer cancel()
+	_, _ = renewHeld(ctx, subs, me, ttl, time.Now())
 }
 
 // runHookInstallNudge installs (or removes) the agent-nudge Stop hook in a
@@ -154,6 +180,10 @@ func runHookAgentNudge(stdin io.Reader) int {
 	if in.StopHookActive {
 		return 0 // already continuing from a stop hook; don't loop
 	}
+
+	// Heartbeat first: the agent is demonstrably alive (it just finished a
+	// turn), so extend whatever it holds before deciding whether to nudge.
+	nudgeRenewLeases()
 
 	all, err := nudgeFetchInbox()
 	if err != nil {

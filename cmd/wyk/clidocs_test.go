@@ -25,6 +25,8 @@ var sweptFlagSets = []struct {
 }{
 	{"handoff", runHandoff, []string{"-h"}},
 	{"inbox", runInbox, []string{"-h"}},
+	{"claim", runClaim, []string{"-h"}},
+	{"next", runNext, []string{"-h"}},
 	{"init", runInit, []string{"-h"}},
 	{"depgraph", runDepgraph, []string{"-h"}},
 	{"update", runUpdate, []string{"-h"}},
@@ -269,6 +271,8 @@ func TestSubcommands_RejectStrayPositionals(t *testing.T) {
 		{"skills uninstall", runSkills, []string{"uninstall", "stray"}},
 		{"doctor", runDoctor, []string{"stray"}},
 		{"inbox", runInbox, []string{"stray"}},
+		{"next", runNext, []string{"stray"}},
+		{"claim", runClaim, []string{"one", "two"}},
 		{"stats", runStats, []string{"stray"}},
 		{"dashboard", runDashboard, []string{"stray"}},
 		{"activity", runActivity, []string{"stray"}},

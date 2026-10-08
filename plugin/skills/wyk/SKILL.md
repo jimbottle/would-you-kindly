@@ -11,36 +11,51 @@ for the authoritative label/inbox contract rather than guessing.
 
 ## "What should I work on?" / session start
 
-1. Check the agent inbox FIRST — work a human bounced back to you:
+Other agents may be working this repo at the same time, each on its own
+git branch. Work on yours, and **check work out before starting it** —
+a claim is a lease that tells every other agent "mine, hands off".
+
+1. Ask wyk, and claim the top pick in one step:
 
    ```bash
-   wyk inbox -json -compact -slim
+   wyk next -claim -json -compact -slim
    ```
 
-   These are issues where the human removed the `human` label to say
-   "back to you". The default move is to **work them now**, not defer —
-   that round-trip is the whole point. Exception: if the expected
-   unblocker is still missing, re-flag it with a note (see wyk-handoff)
-   rather than sitting silently.
+   `wyk next` ranks, in order: issues you already hold (resume them),
+   your inbox (work a human bounced back — the default move is to
+   **work it now**), then ready work and claims other agents abandoned.
+   It never offers an issue another identity holds a live lease on.
+   Exit 4 means nothing to claim. Use `wyk next -json` without `-claim`
+   to look first, then `wyk claim <id>` for the one you pick.
 
-2. Find unblocked work:
+   An inbox item whose expected unblocker is still missing: re-flag it
+   with a note (see wyk-handoff) rather than sitting silently.
+
+2. Read it: `bd show <id>` (details, dependencies, acceptance).
+
+3. Keep the lease alive while you work. It expires after the TTL
+   (default 2h) unless renewed. If the agent-nudge Stop hook is
+   installed it renews on every turn; otherwise run:
 
    ```bash
-   bd ready                 # issues with no open blockers
-   bd show <id>             # details, dependencies, acceptance
+   wyk claim -renew          # renews every lease you hold
    ```
 
-3. Claim before starting. bd writes do NOT persist without the
-   auto-commit flag:
+   Stopping without finishing? `wyk claim -release <id>` gives it back.
 
-   ```bash
-   bd update <id> --claim --dolt-auto-commit=on
-   ```
+**Leases, in short.** `wyk claim <id>` exits **3** and names the holder
+when another agent holds a live lease: pick something else. A row badged
+`@<owner>` in the TUI is checked out by that agent: don't touch it.
+`EXPIRED` means the holder stopped renewing; claiming it takes it over
+and leaves a note. Use `-force` only when you know the holder is gone.
+If several agents run on this machine, each needs its own
+`WYK_AGENT_IDENTITY`, or they all claim as the same bd actor.
 
 ## File new work
 
 The TUI's owner column is driven by **labels** (not bd's `owner`/`assignee`
-fields, which this project ignores; `-a`/`--claim` don't set the badge). A
+fields; `-a`/`--claim` don't set the HUMAN/AGENT badge, though a live
+`wyk claim` lease shows as `@<owner>` in its place). A
 task with no owner label **defaults to AGENT** — the column is never blank.
 
 So the one thing that matters: **if a task needs a human, hand it off** —
@@ -67,8 +82,7 @@ this reason. Flag a task that way with `bd label add <id> agent-handoff
   ```
   (`--dolt-auto-commit=on` is added for you. A bare `bd create` still
   works and badges AGENT, but won't record the session.) Starting it
-  right now? Also mark it in progress:
-  `bd update <new-id> --claim --dolt-auto-commit=on`.
+  right now? Claim it: `wyk claim <new-id>`.
 
 ## Finish a task
 
