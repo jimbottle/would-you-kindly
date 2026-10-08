@@ -252,6 +252,18 @@ func claimIssue(ctx context.Context, c claimClient, id string, o claimOpts) (cla
 	stamp := lease.Stamp(o.me, until, o.branch)
 	out := claimOutcome{ID: id, Owner: o.me, Until: until, Branch: o.branch}
 	l := lease.Of(i, o.now, o.ttl)
+	// Fences: a `human` issue is the human's move and an `agent-handoff`
+	// issue belongs to another agent by human orchestration — neither is
+	// ours to check out, whatever bd's assignee says. `wyk next` never
+	// offers them; a direct `wyk claim` needs -force. My own existing
+	// lease is exempt so renewing it keeps working.
+	if !o.force && (i.IsHuman() || i.IsAgentHandoff()) && !(l.State != lease.None && l.Owner == o.me) {
+		label := "human"
+		if !i.IsHuman() {
+			label = beads.LabelAgentHandoff
+		}
+		return out, &errFenced{id: id, label: label}
+	}
 
 	switch {
 	case l.State != lease.None && l.Owner == o.me:
@@ -294,16 +306,19 @@ func claimIssue(ctx context.Context, c claimClient, id string, o claimOpts) (cla
 // named agent) without being checked out, and bd's --claim refuses any
 // issue whose assignee isn't the claimer. Assignment is not a checkout —
 // the lease contract's lock is assignee + in_progress — so an open issue
-// assigned to someone else is claimable: clear the assignee, then claim
-// atomically, then re-read to confirm the win.
+// assigned to someone else is claimable: clear the assignee, then claim.
 //
-// Concurrency: bd's --claim is the only compare-and-set bd offers, and
-// it only succeeds on an empty (or own) assignee. Two agents racing for
-// the same issue both clear it, but only one --claim lands; the loser is
-// refused and reports the winner. The re-read catches the narrower case
-// where a slower agent's clear lands after the winner's claim and lets
-// the slower agent claim over it: whoever the re-read shows is the
-// holder, the other gets errHeldByOther.
+// Concurrency: bd's --claim is the only compare-and-set bd offers. It
+// refuses an in_progress issue outright and a foreign assignee, so two
+// agents racing for the same issue can never BOTH win the claim. What the
+// clear CAN do is land late: A clears and claims, then B's clear (from a
+// read taken before A's claim) wipes A's assignee. The lease survives in
+// metadata, but `ListInProgressBy(A)` would stop returning the issue, so
+// A's heartbeat would never renew it and it would lapse mid-work. So every
+// time our clear may have hit someone else's claim — right after it, and
+// after a refused claim — repairCleared re-reads and hands the assignee
+// back to the lease owner recorded in metadata. Residual gap: a claimer
+// using bare `bd --claim` (no wyk stamp) records no owner to restore.
 func claimUnleased(ctx context.Context, c claimClient, i beads.Issue, o claimOpts, stamp beads.Metadata, out claimOutcome) (claimOutcome, error) {
 	id := i.ID
 	prevAssignee := ""
@@ -312,40 +327,85 @@ func claimUnleased(ctx context.Context, c claimClient, i beads.Issue, o claimOpt
 		if err := c.SetAssignee(ctx, id, ""); err != nil {
 			return out, fmt.Errorf("%s is assigned to %s (not in progress); clearing the assignment to claim it failed: %w", id, sanitize.Inline(prevAssignee), err)
 		}
+		// Did someone check it out between our read and our clear?
+		cur, err := c.Show(ctx, id)
+		if err != nil {
+			return out, fmt.Errorf("cleared the assignment on %s but could not re-read it: %w", id, err)
+		}
+		if cur.Status != i.Status {
+			repairCleared(ctx, c, cur, i, prevAssignee, o.me)
+			return out, &errHeldByOther{id: id, l: lease.Of(cur, o.now, o.ttl), now: o.now}
+		}
 	}
 	if err := c.Claim(ctx, id, o.me, stamp); err != nil {
 		cur, rerr := c.Show(ctx, id)
-		if rerr == nil {
-			if l := lease.Of(cur, o.now, o.ttl); l.State == lease.Live && l.Owner != o.me {
-				return out, &errHeldByOther{id: id, l: l, now: o.now}
-			}
-			// Our clear landed but the claim didn't, and nobody else took it:
-			// put the assignment back rather than orphan the issue.
-			if prevAssignee != "" && cur.Assignee == "" && cur.Status == i.Status {
-				_ = c.SetAssignee(ctx, id, prevAssignee)
-			}
-			if beads.IsAlreadyClaimed(err) {
-				return out, fmt.Errorf("%s: bd refused the claim (assigned to %s, status %s, not checked out); retry: %w",
-					id, orUnrecorded(cur.Assignee), cur.Status, err)
-			}
+		if rerr != nil {
+			return out, err
+		}
+		repairCleared(ctx, c, cur, i, prevAssignee, o.me)
+		if l := lease.Of(cur, o.now, o.ttl); l.State == lease.Live && l.Owner != o.me {
+			return out, &errHeldByOther{id: id, l: l, now: o.now}
+		}
+		if beads.IsAlreadyClaimed(err) {
+			return out, fmt.Errorf("%s: bd refused the claim (assigned to %s, status %s, not checked out); retry: %w",
+				id, orUnrecorded(cur.Assignee), cur.Status, err)
 		}
 		return out, err
 	}
 	if prevAssignee != "" {
-		// We took the slow path, so confirm the win (see the race note above).
-		cur, err := c.Show(ctx, id)
-		if err != nil {
-			return out, fmt.Errorf("claimed %s but could not confirm it: %w", id, err)
-		}
-		if l := lease.Of(cur, o.now, o.ttl); l.Owner != o.me {
-			return out, &errHeldByOther{id: id, l: l, now: o.now}
-		}
 		out.Previous = prevAssignee
 		_ = c.Note(ctx, id, fmt.Sprintf("wyk claim: was assigned to %s (open, not checked out); claimed by %s at %s",
 			prevAssignee, o.me, o.now.UTC().Format(time.RFC3339)))
 	}
 	out.Action = actionClaimed
 	return out, nil
+}
+
+// repairCleared undoes collateral damage from our assignee clear, given a
+// fresh read cur of an issue we read earlier as orig:
+//
+//   - someone checked it out meanwhile (in_progress, empty assignee, a
+//     wyk lease owner in metadata) → our clear wiped THEIR assignee: give
+//     it back, so their heartbeat keeps finding and renewing it;
+//   - nobody took it (still orig's status, still unassigned) → our claim
+//     failed after the clear: restore the original assignment rather
+//     than orphan the issue.
+//
+// Best-effort: a failed repair leaves the issue as the next read finds it.
+func repairCleared(ctx context.Context, c claimClient, cur, orig beads.Issue, prevAssignee, me string) {
+	if prevAssignee == "" || cur.Assignee != "" {
+		return
+	}
+	if cur.Status == orig.Status {
+		_ = c.SetAssignee(ctx, cur.ID, prevAssignee)
+		return
+	}
+	if owner := cur.Metadata[lease.KeyOwner]; owner != "" && owner != me && cur.Status == "in_progress" {
+		_ = c.SetAssignee(ctx, cur.ID, owner)
+	}
+}
+
+// errFenced is a claim refused because the issue is fenced off for a
+// human (`human`) or another agent (`agent-handoff`). Exit 3 like a live
+// lease: "not yours — pick something else".
+type errFenced struct {
+	id    string
+	label string
+}
+
+func (e *errFenced) Error() string {
+	if e.label == "human" {
+		return fmt.Sprintf("%s carries the human label — it is a human's move, not an agent's; pick something else (or -force if a human handed it back without removing the label)", e.id)
+	}
+	return fmt.Sprintf("%s carries the %s label — another agent owns it and a human coordinates; pick something else (or -force once the coordination is resolved)", e.id, e.label)
+}
+
+// isNotYours reports whether err means "someone else's — pick another":
+// a live lease or a fence. Both map to exit 3.
+func isNotYours(err error) bool {
+	var held *errHeldByOther
+	var fenced *errFenced
+	return errors.As(err, &held) || errors.As(err, &fenced)
 }
 
 // takeoverNote is the audit line left on an issue whose lease was
@@ -512,7 +572,7 @@ func runClaim(args []string) int {
 	ttlFlag := fs.String("ttl", "", "lease length for THIS claim (duration like 2h / 90m, or whole minutes); default: $WYK_CLAIM_TTL, then config claim_ttl, then "+lease.DefaultTTL.String())
 	renew := fs.Bool("renew", false, "extend a lease I already hold (with no <id>: every lease I hold, across the configured scope)")
 	release := fs.Bool("release", false, "give the issue back: clear my lease, unassign, and reopen it")
-	force := fs.Bool("force", false, "take over (or release) a LIVE lease held by someone else — leaves a note naming them; use only when you know the holder is gone")
+	force := fs.Bool("force", false, "take over (or release) a LIVE lease held by someone else, or claim an issue labelled human / agent-handoff — leaves a note naming the holder; use only when you know the holder is gone")
 	asJSON := fs.Bool("json", false, "emit the outcome as JSON ({id, action, owner, until, branch, previous_owner})")
 	compact := fs.Bool("compact", cfg.CompactJSON, "with -json, emit non-indented JSON")
 	fs.SetOutput(os.Stderr)
@@ -612,6 +672,9 @@ func runClaim(args []string) int {
 					Until  time.Time `json:"held_until,omitzero"`
 				}{out, held.l.Owner, held.l.Until}, *compact)
 			}
+			return exitHeldByOther
+		}
+		if isNotYours(err) {
 			return exitHeldByOther
 		}
 		if out.Action == actionTookOver {

@@ -290,8 +290,7 @@ func runNext(args []string) int {
 		out.Repo = top.Repo
 		if cerr != nil {
 			fmt.Fprintln(os.Stderr, "wyk next:", cerr)
-			var held *errHeldByOther
-			if errors.As(cerr, &held) {
+			if isNotYours(cerr) {
 				return exitHeldByOther
 			}
 			return 1

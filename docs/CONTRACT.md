@@ -196,6 +196,13 @@ wyk claim -release <id>    # unassign, reopen, drop the stamp
 wyk claim -force <id>      # take over a LIVE lease (leaves a note naming the previous holder)
 ```
 
+An open issue that is merely *assigned* (this project assigns at
+creation) is not checked out: `wyk claim` clears the assignment and
+claims atomically, noting the previous assignee. If its clear raced
+another agent's successful claim, it hands that agent's assignee back.
+Issues labelled `human` or `agent-handoff` are fenced: `wyk next` never
+offers them and `wyk claim` refuses them (exit 3) without `-force`.
+
 Taking over an expired lease is not an error: it reassigns the issue
 and appends a note (`lease from <old> expired at <t>; taken over by
 <new>`), so the trail stays on the issue. A row still assigned to me

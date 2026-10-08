@@ -23,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-force`, `-ttl`, `-json`; exit 3 names the holder of a live lease;
   an expired one is taken over with a note; an open issue merely
   *assigned* to someone else is not checked out, so it is claimed by
-  clearing the assignment and claiming atomically, with a note) and
+  clearing the assignment and claiming atomically, with a note, and
+  repairing the winner's assignee if that clear raced another claim;
+  `human` / `agent-handoff` issues are refused without `-force`) and
   `wyk next [-claim]`
   (held work, then the inbox, then ready work and lapsed claims, minus
   other identities' live leases and `agent-handoff`/`human` rows; exit 4

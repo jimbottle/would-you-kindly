@@ -398,8 +398,8 @@ func TestClaimIssue_OpenButAssignedElsewhereIsClearedThenClaimed(t *testing.T) {
 	if err != nil || out.Action != actionClaimed || out.Previous != "jimbottle" {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
-	if got := strings.Join(f.calls, " "); got != "show assign: claim:claude-a show note" {
-		t.Fatalf("calls=%q, want clear → claim → confirm → note", got)
+	if got := strings.Join(f.calls, " "); got != "show assign: show claim:claude-a note" {
+		t.Fatalf("calls=%q, want clear → re-check → claim → note", got)
 	}
 	if !strings.Contains(f.noteText, "was assigned to jimbottle") {
 		t.Fatalf("note=%q", f.noteText)
@@ -482,5 +482,86 @@ func TestNeedsRenewal(t *testing.T) {
 		if got := needsRenewal(tc.l, "me", claimNow, tc.below); got != tc.want {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestClaimIssue_LateClearRestoresTheWinnersAssignee(t *testing.T) {
+	// Our read saw it open and assigned to jimbottle; by the time our clear
+	// landed, codex-1 had claimed it — so the clear wiped codex-1's
+	// assignee. bd keeps status in_progress and the wyk owner stamp. We
+	// must hand the assignee back (or codex-1's heartbeat loses it) and
+	// refuse.
+	f := &assignTracker{fakeClaimClient: &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Assignee: "jimbottle"}}}
+	shows := 0
+	rc := &racingClient{fakeClaimClient: f.fakeClaimClient, onShow: func() {
+		shows++
+		if shows == 2 { // the post-clear re-check
+			f.issue = beads.Issue{ID: "x-1", Status: "in_progress", Assignee: "", UpdatedAt: claimNow,
+				Metadata: beads.Metadata{lease.KeyOwner: "codex-1", lease.KeyUntil: stampAt(claimNow.Add(time.Hour))}}
+		}
+	}}
+	_, err := claimIssue(context.Background(), &trackedRacer{rc, f}, "x-1", baseOpts())
+	var held *errHeldByOther
+	if !errors.As(err, &held) || held.l.Owner != "codex-1" {
+		t.Fatalf("err=%v, want held by codex-1", err)
+	}
+	if got := strings.Join(f.calls, " "); got != "show assign: show assign:codex-1" {
+		t.Fatalf("calls=%q, want our clear, the re-check, then codex-1's assignee restored — and no claim", got)
+	}
+}
+
+func TestClaimIssue_RefusedClaimRepairsAWipedWinner(t *testing.T) {
+	// The interleaving lands between our re-check and our claim: bd refuses
+	// ("not claimable: status in_progress") and the re-read shows the
+	// winner's stamp with our clear's empty assignee.
+	f := &assignTracker{fakeClaimClient: &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Assignee: "jimbottle"},
+		claimErr: errors.New("bd update x-1: Error claiming x-1: issue not claimable: status in_progress")}}
+	f.afterClaim = func() {
+		f.issue = beads.Issue{ID: "x-1", Status: "in_progress", UpdatedAt: claimNow,
+			Metadata: beads.Metadata{lease.KeyOwner: "codex-1", lease.KeyUntil: stampAt(claimNow.Add(time.Hour))}}
+	}
+	_, err := claimIssue(context.Background(), f, "x-1", baseOpts())
+	if !isNotYours(err) {
+		t.Fatalf("err=%v, want held-by-other", err)
+	}
+	if last := f.calls[len(f.calls)-1]; last != "assign:codex-1" {
+		t.Fatalf("calls=%v, want codex-1's assignee restored", f.calls)
+	}
+}
+
+// trackedRacer combines racingClient's Show hook with assignTracker's
+// SetAssignee recording.
+type trackedRacer struct {
+	*racingClient
+	t *assignTracker
+}
+
+func (r *trackedRacer) SetAssignee(ctx context.Context, id, who string) error {
+	return r.t.SetAssignee(ctx, id, who)
+}
+
+func TestClaimIssue_FencedLabelsNeedForce(t *testing.T) {
+	for _, label := range []string{"human", "agent-handoff"} {
+		f := &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Assignee: "jimbottle", Labels: []string{"src:agent", label}}}
+		_, err := claimIssue(context.Background(), f, "x-1", baseOpts())
+		var fenced *errFenced
+		if !errors.As(err, &fenced) || !isNotYours(err) {
+			t.Fatalf("%s: err=%v, want a fence refusal", label, err)
+		}
+		if len(f.calls) != 1 {
+			t.Fatalf("%s: calls=%v, want no write", label, f.calls)
+		}
+		o := baseOpts()
+		o.force = true
+		f = &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Labels: []string{label}}}
+		if _, err := claimIssue(context.Background(), f, "x-1", o); err != nil {
+			t.Fatalf("%s with -force: %v", label, err)
+		}
+	}
+	// My own lease on a fenced issue still renews.
+	f := &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "in_progress", Labels: []string{"agent-handoff"},
+		Metadata: beads.Metadata{lease.KeyOwner: "claude-a", lease.KeyUntil: stampAt(claimNow.Add(time.Hour))}}}
+	if out, err := claimIssue(context.Background(), f, "x-1", baseOpts()); err != nil || out.Action != actionRenewed {
+		t.Fatalf("own lease on a fenced issue: out=%+v err=%v", out, err)
 	}
 }

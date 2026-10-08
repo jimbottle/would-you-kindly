@@ -112,7 +112,7 @@ wyk inbox -json    # structured, for agent ingestion
 
 ## `wyk claim`
 
-Take, renew, or release an identity-owned, EXPIRING lease on an issue (wyk-contract/v4), so several agents can share one workspace. Wraps bd's atomic `update --claim` and stamps `wyk.lease.{owner,until,branch}` metadata; a lease nobody renews lapses after the TTL and the issue flows back into `wyk next`. A claim on a live lease held by another identity exits 3 and names the holder; an expired one is taken over with a note.
+Take, renew, or release an identity-owned, EXPIRING lease on an issue (wyk-contract/v4), so several agents can share one workspace. Wraps bd's atomic `update --claim` and stamps `wyk.lease.{owner,until,branch}` metadata; a lease nobody renews lapses after the TTL and the issue flows back into `wyk next`. A claim on a live lease held by another identity, or on an issue labelled `human` / `agent-handoff`, exits 3; an expired lease is taken over with a note.
 
 ```
 wyk claim [-C <dir>] [-identity name] [-ttl <dur>] [-force] [-json] <issue-id>
@@ -136,7 +136,7 @@ wyk claim -force would-you-kindly-1k2j     # take over a LIVE lease (leaves a no
 | `-ttl` | `_(empty)_` | lease length for THIS claim (duration like 2h / 90m, or whole minutes); default: $WYK_CLAIM_TTL, then config claim_ttl, then 2h |
 | `-renew` | `false` | extend a lease I already hold (with no <id>: every lease I hold, across the configured scope) |
 | `-release` | `false` | give the issue back: clear my lease, unassign, and reopen it |
-| `-force` | `false` | take over (or release) a LIVE lease held by someone else — leaves a note naming them; use only when you know the holder is gone |
+| `-force` | `false` | take over (or release) a LIVE lease held by someone else, or claim an issue labelled human / agent-handoff — leaves a note naming the holder; use only when you know the holder is gone |
 | `-json` | `false` | emit the outcome as JSON ({id, action, owner, until, branch, previous_owner}; a refusal adds held_by / held_until) |
 | `-compact` | `false` | with -json, emit non-indented JSON |
 

@@ -132,7 +132,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	},
 	{
 		Name:    "claim",
-		Summary: "Take, renew, or release an identity-owned, EXPIRING lease on an issue (wyk-contract/v4), so several agents can share one workspace. Wraps bd's atomic `update --claim` and stamps `wyk.lease.{owner,until,branch}` metadata; a lease nobody renews lapses after the TTL and the issue flows back into `wyk next`. A claim on a live lease held by another identity exits 3 and names the holder; an expired one is taken over with a note.",
+		Summary: "Take, renew, or release an identity-owned, EXPIRING lease on an issue (wyk-contract/v4), so several agents can share one workspace. Wraps bd's atomic `update --claim` and stamps `wyk.lease.{owner,until,branch}` metadata; a lease nobody renews lapses after the TTL and the issue flows back into `wyk next`. A claim on a live lease held by another identity, or on an issue labelled `human` / `agent-handoff`, exits 3; an expired lease is taken over with a note.",
 		Usage:   "wyk claim [-C <dir>] [-identity name] [-ttl <dur>] [-force] [-json] <issue-id>\n   or: wyk claim -renew [<issue-id>]       # no id: renew every lease I hold\n   or: wyk claim -release [-force] <issue-id>",
 		Examples: []string{
 			"wyk claim would-you-kindly-1k2j            # claim as $WYK_AGENT_IDENTITY for the configured TTL",
@@ -146,7 +146,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-ttl", Default: "", Description: "lease length for THIS claim (duration like 2h / 90m, or whole minutes); default: $WYK_CLAIM_TTL, then config claim_ttl, then 2h"},
 			{Name: "-renew", Default: "false", Description: "extend a lease I already hold (with no <id>: every lease I hold, across the configured scope)"},
 			{Name: "-release", Default: "false", Description: "give the issue back: clear my lease, unassign, and reopen it"},
-			{Name: "-force", Default: "false", Description: "take over (or release) a LIVE lease held by someone else — leaves a note naming them; use only when you know the holder is gone"},
+			{Name: "-force", Default: "false", Description: "take over (or release) a LIVE lease held by someone else, or claim an issue labelled human / agent-handoff — leaves a note naming the holder; use only when you know the holder is gone"},
 			{Name: "-json", Default: "false", Description: "emit the outcome as JSON ({id, action, owner, until, branch, previous_owner}; a refusal adds held_by / held_until)"},
 			{Name: "-compact", Default: "false", Description: "with -json, emit non-indented JSON"},
 		},
