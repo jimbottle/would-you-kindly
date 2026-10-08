@@ -232,13 +232,17 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible()
 		return m, nil
 	}
-	// esc, enter, and / all close the prompt and KEEP the query. The
-	// filter already applies live as the user types, so closing is
-	// just "done typing" — no separate apply step, and no way to lose
-	// the filter by reaching for the wrong key. The status bar's
+	// esc and enter close the prompt and KEEP the query. The filter
+	// already applies live as the user types, so closing is just
+	// "done typing" — no separate apply step, and no way to lose the
+	// filter by reaching for the wrong key. The status bar's
 	// filter:"…" chip explains the narrowed list once the prompt is
 	// gone, and esc in the list (or / + clearing the text) drops it.
-	if msg.Type == tea.KeyEsc || msg.Type == tea.KeyEnter || keyHit(msg, m.keys.Filter) {
+	// / closes too, but only on an empty input: once there's text it
+	// types a literal slash, since branches (feat/x) and paths in
+	// descriptions are matched fields that need one.
+	if msg.Type == tea.KeyEsc || msg.Type == tea.KeyEnter ||
+		(keyHit(msg, m.keys.Filter) && m.input.Value() == "") {
 		// Trim once so the lookup key, the applied query, and the
 		// status banner all agree — a stray trailing space on
 		// "@nope " used to keep the raw value as the literal

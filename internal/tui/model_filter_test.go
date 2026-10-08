@@ -249,17 +249,16 @@ func typeFilter(t *testing.T, m Model, q string) Model {
 }
 
 func TestFilter_ClosingPromptKeepsFilter(t *testing.T) {
-	// The query applies live as the user types, so every way out of
-	// the prompt — esc, enter, or / again — just closes it and keeps
-	// the filter. There's no separate "apply" step to forget, and
-	// reaching for esc doesn't throw the typed query away.
+	// The query applies live as the user types, so esc and enter just
+	// close the prompt and keep the filter. There's no separate
+	// "apply" step to forget, and reaching for esc doesn't throw the
+	// typed query away.
 	for _, tc := range []struct {
 		name string
 		key  tea.KeyMsg
 	}{
 		{"esc", tea.KeyMsg{Type: tea.KeyEsc}},
 		{"enter", tea.KeyMsg{Type: tea.KeyEnter}},
-		{"slash", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := &stubSource{issues: sampleIssues()}
@@ -287,6 +286,34 @@ func TestFilter_ClosingPromptKeepsFilter(t *testing.T) {
 				t.Errorf("reopened prompt should hold the kept query; got %q", v)
 			}
 		})
+	}
+}
+
+func TestFilter_SlashClosesEmptyPromptOnly(t *testing.T) {
+	// / on an empty prompt closes it (the / toggle), but once there's
+	// text it's a literal slash — branches like feat/x are matched
+	// fields and must stay searchable.
+	src := &stubSource{issues: sampleIssues()}
+	m := applyFetched(New(src), src)
+	m = typeFilter(t, m, "feat/x")
+	if m.mode != modeFilter {
+		t.Fatalf("/ inside a non-empty query must not close the prompt; mode=%v", m.mode)
+	}
+	if m.query != "feat/x" {
+		t.Errorf("/ should be typed as text; query=%q", m.query)
+	}
+
+	// Empty prompt: / closes it.
+	m = applyFetched(New(src), src)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	if m.mode != modeFilter {
+		t.Fatalf("setup: / should open the prompt; mode=%v", m.mode)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = model.(Model)
+	if m.mode != modeList {
+		t.Errorf("/ on an empty prompt should close it; mode=%v", m.mode)
 	}
 }
 
