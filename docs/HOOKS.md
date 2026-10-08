@@ -177,7 +177,13 @@ loudly and distinctly:
   an agent can tell "the handoff failed, retry it" (1) from "the human
   has the task; the mirror is missing" (3). It names the replay command.
 - A timeout (`timeout_seconds`, default 15) is reported as such with the
-  config key to raise.
+  config key to raise. The hook runs in its own process group and the
+  whole group is killed at the timeout, so a child the script forked
+  cannot keep the run alive.
+- Ctrl-C (or SIGTERM to wyk) while the hook runs kills the hook and its
+  children too, and is reported as interrupted. Nothing of the hook
+  outlives wyk, so an interrupted handoff never leaves a mirror whose ref
+  wyk was not around to record.
 - `ref` came back but could not be written to bd: also a failure with
   the replay command, because losing the link is the duplicate risk the
   ref exists to prevent. Replaying sends the (absent) ref and lets the

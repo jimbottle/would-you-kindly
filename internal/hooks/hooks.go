@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
 	"time"
@@ -210,6 +211,11 @@ var ErrTimedOut = errors.New("handoff hook timed out")
 // lost ref is exactly what makes a later handoff create a duplicate.
 var ErrMalformedResult = errors.New("handoff hook printed something that is not a JSON result")
 
+// ErrInterrupted is wrapped when wyk itself received SIGINT/SIGTERM
+// while the hook was running. The hook's whole process group was killed
+// first, so nothing of it survives wyk; the mirror is simply not made.
+var ErrInterrupted = errors.New("handoff hook interrupted")
+
 // ExecError is returned when the hook exits non-zero. Stderr is
 // captured so the caller can show the script's own explanation.
 type ExecError struct {
@@ -283,6 +289,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, p Payload) (res Result, fired
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return Result{}, true, fmt.Errorf("%w after %s", ErrTimedOut, timeout)
 		}
+		if errors.Is(err, ErrInterrupted) {
+			return Result{}, true, err
+		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			return Result{}, true, &ExecError{ExitCode: ee.ExitCode(), Stderr: string(stderr)}
@@ -335,35 +344,37 @@ func ParseResult(stdout []byte) (Result, error) {
 // labels — is ever interpolated into it; all of that travels on
 // stdin as JSON and in WYK_* variables, which the shell does not
 // re-parse. Keep it that way when touching this function.
+//
+// Two things make the run END when it should:
+//
+//   - The timeout has to end the whole run, not just `sh`. With
+//     buffered stdout/stderr, Run waits until every writer has closed
+//     the pipes; a child the shell forked (`cd x && node hook.mjs`,
+//     `a | b`, a script that daemonises) would keep them open after sh
+//     was killed and hang `wyk handoff` past the deadline. So the hook
+//     runs in its own process group and the group is killed on cancel
+//     (isolateProcessGroup, Unix only), and WaitDelay caps the wait
+//     after cancel so even a stray grandchild cannot hold Run open.
+//   - Its own process group means the terminal's Ctrl-C no longer
+//     reaches the hook on its own. So the run is also cancelled on
+//     SIGINT/SIGTERM to wyk: the same cancel kills the group, and the
+//     caller gets ErrInterrupted rather than a half-finished mirror
+//     whose ref wyk is no longer around to record.
 func shellRunner(ctx context.Context, command string, stdin []byte, env []string) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	sigCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	cmd := exec.CommandContext(sigCtx, "sh", "-c", command)
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Env = append(os.Environ(), env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	// The timeout has to end the whole run, not just `sh`. With buffered
-	// stdout/stderr, Run waits until every writer has closed the pipes;
-	// a child the shell forked (`cd x && node hook.mjs`, `a | b`, a script
-	// that daemonises) would keep them open after sh was killed and hang
-	// `wyk handoff` past the deadline. So: run the hook in its own process
-	// group, kill the group on cancel, and cap the post-cancel wait with
-	// WaitDelay so even a child that ignores SIGKILL's reach (a grandchild
-	// that re-parented first) cannot hold Run open.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		// Negative pid = the whole group. Fall back to the process alone
-		// if the group is already gone.
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-			return cmd.Process.Kill()
-		}
-		return nil
-	}
+	isolateProcessGroup(cmd)
 	cmd.WaitDelay = waitDelayAfterCancel
 	err := cmd.Run()
+	if err != nil && sigCtx.Err() != nil && ctx.Err() == nil {
+		return out.Bytes(), errb.Bytes(), fmt.Errorf("%w (the hook and its children were killed)", ErrInterrupted)
+	}
 	return out.Bytes(), errb.Bytes(), err
 }
 

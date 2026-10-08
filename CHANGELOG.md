@@ -44,7 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exists to prevent); a lost-ref failure names the ref and the by-hand
   `bd update --external-ref` instead of calling the mirror missing; all
   hook diagnostics share the `wyk: hook:` prefix; a test pins
-  `wykconfig.HandoffHookEvents` to `hooks.AllEvents`.
+  `wykconfig.HandoffHookEvents` to `hooks.AllEvents`. Then (roborev
+  #5547): the runner cancels on SIGINT/SIGTERM to wyk via
+  `signal.NotifyContext`, so Ctrl-C kills the now-isolated process group
+  instead of leaving it running without wyk (`hooks.ErrInterrupted`);
+  the Unix-only `Setpgid`/`Kill` moved to `procgroup_unix.go` with a
+  no-op `procgroup_other.go`, so `GOOS=windows go build` compiles again.
 
 - **Split layout: the list and the selected issue's runbook side by
   side** (would-you-kindly-g1ud). On a terminal of at least 140×36 the
