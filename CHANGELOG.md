@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Handoff hook: mirror human tasks into any task manager**
+  (would-you-kindly-2pwr.1–.4). `wyk config set hooks.handoff.command
+  <cmd>` names a command wyk runs — via `sh -c`, with one JSON payload
+  on stdin — whenever an issue changes hands on the human side of the
+  contract: `handoff` (the `human` label added through `wyk handoff` /
+  `-create`), `bounce` and `close` (replayable now, wired to the TUI
+  and the auto-close in .5/.6), and `ping` (for `wyk doctor`). The
+  payload carries the whole bd issue (labels, notes, `due_at`,
+  `external_ref`, dependencies), the runbook and its kind
+  (task/question), the repo (registry name, path, issue prefix), the
+  identity, session and note, the actor and wyk version. The command
+  may print `{"ref","url"}`; wyk stores `ref` in bd's own
+  `external_ref` field and `url` in a note, and echoes the ref back on
+  later events so an adapter can update instead of duplicate. The hook
+  runs after every bd write and never rolls one back: a hook failure
+  exits **3** (distinct from 1) with the script's stderr and the replay
+  command, `wyk hook dispatch <event> <id>`. `wyk handoff -dry-run`
+  prints the hook it would run. New config keys
+  `hooks.handoff.{command,timeout_seconds,events}` (`$WYK_HANDOFF_HOOK`
+  overrides the command), new `wyk handoff -create -due <when>`
+  (forwarded to `bd create --due`; the hook sees it as
+  `issue.due_at`), `beads.Issue` gains `DueAt`/`ExternalRef`,
+  `beads.Client` gains `SetExternalRef`, `CreateOptions` gains `Due`.
+  New package `internal/hooks` (payload types, dispatcher with
+  timeout + injectable runner, result parsing). Contract and adapter
+  guide: `docs/HOOKS.md`; the BasicDo adapter lives in the basicdo
+  repo. Agent-owned issues never fire the hook; raw `bd label add`
+  does not either (documented).
+
 - **Split layout: the list and the selected issue's runbook side by
   side** (would-you-kindly-g1ud). On a terminal of at least 140×36 the
   list takes a left pane and the cursor row's detail — owner badge,

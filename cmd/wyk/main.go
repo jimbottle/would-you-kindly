@@ -44,6 +44,7 @@ import (
 	"github.com/jimbottle/would-you-kindly/internal/beads"
 	"github.com/jimbottle/would-you-kindly/internal/filter"
 	"github.com/jimbottle/would-you-kindly/internal/filters"
+	"github.com/jimbottle/would-you-kindly/internal/hooks"
 	"github.com/jimbottle/would-you-kindly/internal/registry"
 	"github.com/jimbottle/would-you-kindly/internal/sanitize"
 	"github.com/jimbottle/would-you-kindly/internal/theme"
@@ -813,6 +814,8 @@ description), then bounce it back with H. Close instead if the question is moot.
 //	0   success (also returned for --help, which is a deliberate request)
 //	1   generic failure (bd error, IO error, …)
 //	2   bd missing or no workspace
+//	3   the handoff landed in bd but the configured handoff hook failed
+//	    (replay with `wyk hook dispatch handoff <id>`; see docs/HOOKS.md)
 //	64  usage error (bad flags / missing args / TTY-stdin without --allow-empty)
 func runHandoff(args []string) int {
 	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
@@ -827,6 +830,8 @@ func runHandoff(args []string) int {
 		"priority for the newly-created issue (only used with -create; 0-4 or P0-P4)")
 	issueType := fs.String("type", "task",
 		"issue type for the newly-created issue (only used with -create)")
+	due := fs.String("due", "",
+		"due date for the newly-created issue, in any form bd create --due accepts, e.g. +1d, tomorrow, 2026-01-15 (only used with -create; the handoff hook receives it as issue.due_at)")
 	note := fs.String("note", "",
 		"after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook")
 	identity := fs.String("identity", "",
@@ -902,6 +907,11 @@ func runHandoff(args []string) int {
 		} else {
 			fmt.Fprintln(os.Stderr, "usage: wyk handoff [flags] <issue-id>")
 		}
+		return 64
+	}
+
+	if *due != "" && *createTitle == "" {
+		fmt.Fprintln(os.Stderr, "wyk handoff: -due only applies with -create (set a due date on an existing issue with bd update <id> --due …)")
 		return 64
 	}
 
@@ -989,6 +999,9 @@ func runHandoff(args []string) int {
 			// exists for (roborev #2048).
 			fmt.Printf("would create: title=%q priority=%s type=%s labels=%v\n",
 				*createTitle, beads.CanonicalPriority(*priority), *issueType, createLabels)
+			if *due != "" {
+				fmt.Printf("would set due: %s\n", *due)
+			}
 			fmt.Println("would hand off the new issue to human (label=human added, description replaced)")
 			if ident != "" {
 				fmt.Printf("would route the new issue to identity %q (label=%s)\n", ident, identityLabel(ident))
@@ -1005,6 +1018,12 @@ func runHandoff(args []string) int {
 		fmt.Println("---")
 		if *note != "" {
 			fmt.Printf("would note: %s\n", *note)
+		}
+		// Say whether the handoff hook would fire, and with what, so a
+		// dry run vouches for the whole side-effect set — an agent
+		// should not learn about the external task only after the fact.
+		if hd := newHandoffHookDispatcher(); hd.Config.Wants(hooks.EventHandoff) {
+			fmt.Printf("would run handoff hook: %s\n", hd.Config.Command)
 		}
 		return 0
 	}
@@ -1031,6 +1050,7 @@ func runHandoff(args []string) int {
 			Labels:    createLabels,
 			Priority:  beads.CanonicalPriority(*priority),
 			IssueType: *issueType,
+			Due:       *due,
 		})
 		if err != nil {
 			return handoffErrExit(err, "wyk handoff: create:")
@@ -1084,7 +1104,21 @@ func runHandoff(args []string) int {
 			fmt.Printf("noted %s: %s\n", id, *note)
 		}
 	}
-	return 0
+
+	// The handoff hook runs LAST, once every bd write has landed, so
+	// the script sees the issue exactly as the human will (labels,
+	// runbook, note). Its failure is the one exit code that does not
+	// mean "retry the handoff": the human has the task; only the
+	// external mirror is missing (exitHookFailed, replay printed).
+	return fireHandoffHook(context.Background(), client, newHandoffHookDispatcher(), handoffHookInput{
+		Event:    hooks.EventHandoff,
+		Actor:    hooks.ActorCLI,
+		ID:       id,
+		Dir:      *dir,
+		Runbook:  runbook,
+		Identity: ident,
+		Note:     *note,
+	}, os.Stdout, os.Stderr)
 }
 
 // handoffErrExit centralises the error → exit-code mapping so both

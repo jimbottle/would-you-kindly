@@ -55,8 +55,8 @@ type cliFlag struct {
 var cliSubcommandDocs = []cliSubcommandDoc{
 	{
 		Name:    "handoff",
-		Summary: "Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file. The runbook must be a TASK (`## Steps` — directions the human follows) or a QUESTION (`## Question` — something the human answers); one with neither heading is refused.",
-		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-identity name] [-file <path>] [-dry-run]\n   or: wyk handoff -template [-question]",
+		Summary: "Hand a runbook to a human: tag the issue with `human`, set its description from stdin / -file. The runbook must be a TASK (`## Steps` — directions the human follows) or a QUESTION (`## Question` — something the human answers); one with neither heading is refused. If a handoff hook is configured (`wyk config set hooks.handoff.command …`, see `docs/HOOKS.md`) it runs last, after every bd write; a hook failure exits 3 — the human has the task, only the external mirror is missing — and names the replay command (`wyk hook dispatch handoff <id>`).",
+		Usage:   "wyk handoff [-C <dir>] [-file <path>] [-allow-empty] [-note <text>] [-identity name] [-dry-run] <issue-id>\n   or: wyk handoff -create \"<title>\" [-priority N] [-type task] [-due <when>] [-identity name] [-file <path>] [-dry-run]\n   or: wyk handoff -template [-question]",
 		Examples: []string{
 			"cat runbook.md | wyk handoff -create \"Rotate the staging DB password\" -priority 1",
 			"wyk handoff wyk-42 < runbook.md",
@@ -70,6 +70,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-create", Default: "", Description: "file a NEW bd issue with this title and hand it off; mutually exclusive with the <id> positional"},
 			{Name: "-priority", Default: "1", Description: "priority for the newly-created issue (only used with -create; 0-4 or P0-P4)"},
 			{Name: "-type", Default: "task", Description: "issue type for the newly-created issue (only used with -create)"},
+			{Name: "-due", Default: "", Description: "due date for the newly-created issue, in any form `bd create --due` accepts, e.g. `+1d`, `tomorrow`, `2026-01-15` (only used with -create; the handoff hook receives it as `issue.due_at`)"},
 			{Name: "-note", Default: "", Description: "after the handoff lands, append this one-line note to the issue (via bd note) — useful for 'back to you, see X' annotations without nuking the runbook"},
 			{Name: "-identity", Default: "", Description: "route this handoff to the named agent identity (adds the src:agent:<name> label) so it lands in that identity's `wyk inbox` when bounced back; falls back to $WYK_AGENT_IDENTITY"},
 			{Name: "-dry-run", Default: "false", Description: "print the runbook, labels, and destination ID that would be written without invoking bd; useful for verifying a runbook is well-formed before committing the human to it"},
@@ -189,10 +190,11 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 	},
 	{
 		Name:    "config",
-		Summary: "Get/set machine-wide wyk settings in ~/.config/wyk/config.json (e.g. default_scope, which repos the multi-repo commands query by default).",
+		Summary: "Get/set machine-wide wyk settings in ~/.config/wyk/config.json (e.g. default_scope, which repos the multi-repo commands query by default; hooks.handoff.*, the external command run when an issue is handed to a human — see `docs/HOOKS.md`).",
 		Usage:   "wyk config <list | get <key> | set <key> <value>>",
 		Examples: []string{
 			"wyk config set default_scope cwd   # scope inbox/stats/… to the cwd's repo",
+			"wyk config set hooks.handoff.command 'node ~/bin/basicdo-hook.mjs'   # mirror handoffs into another task manager",
 			"wyk config list",
 		},
 		Flags: nil,

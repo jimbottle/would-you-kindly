@@ -320,6 +320,27 @@ query, the preferred handoff command, and a concrete filing example.
 convention into bd's `remember` store, so `bd prime` surfaces it on
 every agent session start without an extra command.
 
+### Mirroring handoffs into another task manager (handoff hook)
+
+The human's side of the loop usually already lives somewhere — a to-do
+app, a calendar, a channel. One config key makes wyk tell it:
+
+```bash
+wyk config set hooks.handoff.command 'node ~/Projects/basicdo/scripts/wyk-handoff-hook.mjs'
+```
+
+From then on every handoff (and bounce-back, and close of a
+human-labelled issue) pipes a JSON description of the issue — runbook,
+priority, due date, repo, who filed it — to that command. The command
+may answer with a reference and a link; wyk stores them on the issue
+(`external_ref` and a note) and sends the reference back on later
+events so the mirror is never duplicated. Agent-owned issues never
+reach the hook. `wyk handoff -dry-run` says whether it would fire, a
+hook failure exits 3 with the replay command, and `wyk hook dispatch
+<event> <id>` re-sends any event. Contract, payload, and how to write
+an adapter: [`docs/HOOKS.md`](docs/HOOKS.md). The first adapter is
+BasicDo's.
+
 ### Picking up bounced-back work (agent inbox)
 
 The other direction of the handoff loop: when a human presses `H` to

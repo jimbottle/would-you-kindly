@@ -6,7 +6,10 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
+	"github.com/jimbottle/would-you-kindly/internal/hooks"
 	"github.com/jimbottle/would-you-kindly/internal/wykconfig"
 )
 
@@ -55,6 +58,83 @@ var configKeys = []configKey{
 			return nil
 		},
 		effectiveDefault: wykconfig.ColorAuto,
+	},
+	{
+		name: "hooks.handoff.command",
+		desc: "command run (via sh -c) when an issue is handed to / bounced from a human; empty disables (see docs/HOOKS.md)",
+		get: func(c wykconfig.Config) string {
+			if c.Hooks.Handoff == nil {
+				return ""
+			}
+			return c.Hooks.Handoff.Command
+		},
+		set: func(c *wykconfig.Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				// Clearing the command disables the hook; drop the whole
+				// block so the file reads as it did before.
+				c.Hooks.Handoff = nil
+				return nil
+			}
+			if c.Hooks.Handoff == nil {
+				c.Hooks.Handoff = &wykconfig.HandoffHook{}
+			}
+			c.Hooks.Handoff.Command = v
+			return nil
+		},
+		effectiveDefault: "(none)",
+	},
+	{
+		name: "hooks.handoff.timeout_seconds",
+		desc: "seconds one handoff-hook run may take before wyk gives up (0 = built-in default)",
+		get: func(c wykconfig.Config) string {
+			if c.Hooks.Handoff == nil || c.Hooks.Handoff.TimeoutSeconds == 0 {
+				return ""
+			}
+			return strconv.Itoa(c.Hooks.Handoff.TimeoutSeconds)
+		},
+		set: func(c *wykconfig.Config, v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil {
+				return fmt.Errorf("%w %q for hooks.handoff.timeout_seconds (use a whole number of seconds)", wykconfig.ErrInvalidValue, v)
+			}
+			if err := wykconfig.ValidateHandoffTimeout(n); err != nil {
+				return err
+			}
+			if c.Hooks.Handoff == nil {
+				c.Hooks.Handoff = &wykconfig.HandoffHook{}
+			}
+			c.Hooks.Handoff.TimeoutSeconds = n
+			return nil
+		},
+		effectiveDefault: strconv.Itoa(int(hooks.DefaultTimeout / time.Second)),
+	},
+	{
+		name: "hooks.handoff.events",
+		desc: "comma-separated events the handoff hook receives (handoff, bounce, close, ping); empty = all",
+		get: func(c wykconfig.Config) string {
+			if c.Hooks.Handoff == nil {
+				return ""
+			}
+			return strings.Join(c.Hooks.Handoff.Events, ",")
+		},
+		set: func(c *wykconfig.Config, v string) error {
+			var events []string
+			for _, e := range strings.Split(v, ",") {
+				if e = strings.TrimSpace(e); e != "" {
+					events = append(events, e)
+				}
+			}
+			if err := wykconfig.ValidateHandoffEvents(events); err != nil {
+				return err
+			}
+			if c.Hooks.Handoff == nil {
+				c.Hooks.Handoff = &wykconfig.HandoffHook{}
+			}
+			c.Hooks.Handoff.Events = events
+			return nil
+		},
+		effectiveDefault: "all",
 	},
 	{
 		name:             "disable_update_check",
@@ -166,11 +246,12 @@ Subcommands:
 Keys:
 `)
 	for _, k := range sortedConfigKeys() {
-		fmt.Fprintf(w, "  %-16s %s\n", k.name, k.desc)
+		fmt.Fprintf(w, "  %-30s %s\n", k.name, k.desc)
 	}
 	fmt.Fprint(w, `
 The config lives at ~/.config/wyk/config.json (XDG-aware). $WYK_DEFAULT_SCOPE
-overrides default_scope for a single run.
+overrides default_scope for a single run; $WYK_HANDOFF_HOOK overrides
+hooks.handoff.command the same way.
 `)
 }
 
@@ -197,9 +278,9 @@ func runConfigList(args []string) int {
 	for _, k := range sortedConfigKeys() {
 		v := k.get(cfg)
 		if v == "" {
-			fmt.Printf("%-16s %s   (default; unset)\n", k.name, k.effectiveDefault)
+			fmt.Printf("%-30s %s   (default; unset)\n", k.name, k.effectiveDefault)
 		} else {
-			fmt.Printf("%-16s %s\n", k.name, v)
+			fmt.Printf("%-30s %s\n", k.name, v)
 		}
 	}
 	return 0

@@ -112,3 +112,51 @@ func TestRunConfig_ListAndUsage(t *testing.T) {
 		t.Fatalf("unknown-sub exit %d, want 64", code)
 	}
 }
+
+func TestRunConfig_HandoffHookKeys(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	withSilencedStderr(t)
+	path, _ := wykconfig.DefaultPath()
+
+	if code := runConfig([]string{"set", "hooks.handoff.command", "node ~/bin/hook.mjs"}); code != 0 {
+		t.Fatalf("set command exit %d, want 0", code)
+	}
+	if code := runConfig([]string{"set", "hooks.handoff.timeout_seconds", "30"}); code != 0 {
+		t.Fatalf("set timeout exit %d, want 0", code)
+	}
+	if code := runConfig([]string{"set", "hooks.handoff.events", "handoff, close"}); code != 0 {
+		t.Fatalf("set events exit %d, want 0", code)
+	}
+	cfg, err := wykconfig.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	h := cfg.Hooks.Handoff
+	if h == nil || h.Command != "node ~/bin/hook.mjs" || h.TimeoutSeconds != 30 || len(h.Events) != 2 || h.Events[1] != "close" {
+		t.Fatalf("persisted hook = %+v", h)
+	}
+
+	// Validation maps to the usage exit code and leaves the file alone.
+	for _, bad := range [][]string{
+		{"set", "hooks.handoff.timeout_seconds", "soon"},
+		{"set", "hooks.handoff.timeout_seconds", "-5"},
+		{"set", "hooks.handoff.events", "handoff,reopen"},
+	} {
+		if code := runConfig(bad); code != 64 {
+			t.Errorf("%v: exit %d, want 64", bad, code)
+		}
+	}
+	cfg, _ = wykconfig.Load(path)
+	if cfg.Hooks.Handoff.TimeoutSeconds != 30 || len(cfg.Hooks.Handoff.Events) != 2 {
+		t.Fatalf("rejected values leaked into the file: %+v", cfg.Hooks.Handoff)
+	}
+
+	// Clearing the command disables the hook and drops the block.
+	if code := runConfig([]string{"set", "hooks.handoff.command", ""}); code != 0 {
+		t.Fatalf("clear command exit %d, want 0", code)
+	}
+	cfg, _ = wykconfig.Load(path)
+	if cfg.Hooks.Handoff != nil {
+		t.Fatalf("hook block survived clearing the command: %+v", cfg.Hooks.Handoff)
+	}
+}

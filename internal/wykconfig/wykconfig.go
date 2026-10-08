@@ -1,10 +1,11 @@
 // Package wykconfig persists machine-wide wyk behavior settings that
 // survive across invocations — things that change what a command DOES,
 // as opposed to internal/uiconfig (TUI display prefs) or
-// internal/registry (the workspace list). Today that's a single key,
-// default_scope, governing whether the multi-repo commands (inbox,
-// stats, activity, dashboard, depgraph, export) default to querying
-// every registered repo or just the one containing the cwd.
+// internal/registry (the workspace list). default_scope governs
+// whether the multi-repo commands (inbox, stats, activity, dashboard,
+// depgraph, export) default to querying every registered repo or just
+// the one containing the cwd; hooks.handoff names the external command
+// run when an issue changes hands between an agent and a human.
 //
 // The file is intentionally small JSON so users can edit it by hand;
 // `wyk config get/set` is the supported front door. New settings slot
@@ -21,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // CurrentVersion is the JSON file's schema version. Any other version
@@ -85,6 +87,64 @@ type Config struct {
 	// Color: "" (unset → "auto"), "auto", or "never". NO_COLOR /
 	// WYK_NO_COLOR / --no-color still force color off regardless.
 	Color string `json:"color,omitempty"`
+	// Hooks holds the external commands wyk runs on label transitions.
+	// omitzero (not omitempty): encoding/json only elides a struct with
+	// omitzero, and a config without hooks should serialise exactly as
+	// it did before the key existed.
+	Hooks HooksConfig `json:"hooks,omitzero"`
+}
+
+// HooksConfig groups the hook settings. Pointer-valued so Config stays
+// comparable (tests compare whole Configs with ==) while the hook can
+// carry a slice of events.
+type HooksConfig struct {
+	// Handoff is the command run when an issue changes hands between
+	// an agent and a human through wyk (internal/hooks). Nil = no hook.
+	Handoff *HandoffHook `json:"handoff,omitempty"`
+}
+
+// HandoffHook is the on-disk shape of hooks.handoff.
+type HandoffHook struct {
+	// Command is run through `sh -c` with the event payload on stdin.
+	Command string `json:"command"`
+	// TimeoutSeconds bounds one invocation; 0 means the built-in default.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// Events narrows which events fire the hook; empty means all.
+	// Valid names: handoff, bounce, close, ping.
+	Events []string `json:"events,omitempty"`
+}
+
+// HandoffHookEvents is the vocabulary ValidateHandoffEvents accepts.
+// Kept here (not imported from internal/hooks) so the config package
+// stays dependency-free; internal/hooks pins the two lists equal.
+var HandoffHookEvents = []string{"handoff", "bounce", "close", "ping"}
+
+// ValidateHandoffEvents accepts an empty list (all events) or any
+// subset of HandoffHookEvents. Unknown names wrap ErrInvalidValue so
+// the CLI maps a typo to a usage error instead of silently never
+// firing.
+func ValidateHandoffEvents(events []string) error {
+	for _, e := range events {
+		ok := false
+		for _, k := range HandoffHookEvents {
+			if e == k {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return fmt.Errorf("%w %q for hooks.handoff.events (valid: %s)", ErrInvalidValue, e, strings.Join(HandoffHookEvents, ", "))
+		}
+	}
+	return nil
+}
+
+// ValidateHandoffTimeout rejects a negative timeout. Zero is "default".
+func ValidateHandoffTimeout(secs int) error {
+	if secs < 0 {
+		return fmt.Errorf("%w %d for hooks.handoff.timeout_seconds (must be >= 0)", ErrInvalidValue, secs)
+	}
+	return nil
 }
 
 // DefaultPath returns the canonical config-file location, honoring

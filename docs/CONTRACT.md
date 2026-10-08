@@ -180,6 +180,19 @@ orphan, and a recoverable orphan can be retried. The CLI prints an
 explicit WARNING with the orphan ID and cleanup commands; agents
 consuming the CLI's exit codes should check stderr too.
 
+**The handoff hook and `external_ref`.** When a handoff hook is
+configured (`wyk config set hooks.handoff.command …`), every
+transition on the human side of this contract — `human` added,
+`human` removed, a human-labelled issue closed — is also sent to that
+command as JSON, so another task manager can mirror the human's list.
+The hook runs after every bd write has landed and never rolls one
+back. Whatever reference the hook returns is stored in bd's own
+`external_ref` field on the issue (not a label), and echoed back on
+later events so the script can update rather than duplicate. The
+full payload and result contract is [`HOOKS.md`](HOOKS.md). Nothing
+here changes for workspaces without a hook, and transitions made with
+the raw `bd` CLI do not fire it.
+
 ## Acting on the inbox
 
 The inbox query (`label=src:agent AND NOT label=human AND NOT

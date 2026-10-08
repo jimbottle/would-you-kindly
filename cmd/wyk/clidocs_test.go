@@ -40,6 +40,7 @@ var sweptFlagSets = []struct {
 	{"help", runHelp, []string{"-h"}},
 	{"hook post-commit", runHook, []string{"post-commit", "-h"}},
 	{"hook install-nudge", runHook, []string{"install-nudge", "-h"}},
+	{"hook dispatch", runHook, []string{"dispatch", "-h"}},
 	{"registry add", runRegistry, []string{"add", "-h"}},
 	{"registry list", runRegistry, []string{"list", "-h"}},
 	{"registry prune", runRegistry, []string{"prune", "-h"}},

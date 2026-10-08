@@ -54,12 +54,13 @@ func parseCloseRefs(commitMessage string) []string {
 	return out
 }
 
-// runHook is the top-level dispatcher for `wyk hook <subcommand>`.
-// Only post-commit is implemented today; the indirection leaves room
-// for pre-commit / pre-push variants without renaming the public CLI.
+// runHook is the top-level dispatcher for `wyk hook <subcommand>`:
+// the git post-commit hook, the Claude Code PreToolUse/Stop hooks, and
+// `dispatch`, which (re)sends one handoff-hook event for an issue
+// (cmd/wyk/handoffhook.go).
 func runHook(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: wyk hook <post-commit|bd-create-guard|agent-nudge|install-nudge> [args]")
+		fmt.Fprintln(os.Stderr, "usage: wyk hook <post-commit|bd-create-guard|agent-nudge|install-nudge|dispatch> [args]")
 		return 64
 	}
 	switch args[0] {
@@ -71,6 +72,8 @@ func runHook(args []string) int {
 		return runHookAgentNudge(os.Stdin)
 	case "install-nudge":
 		return runHookInstallNudge(args[1:])
+	case "dispatch":
+		return runHookDispatch(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "wyk hook: unknown subcommand %q\n", args[0])
 		return 64

@@ -44,6 +44,13 @@ type Issue struct {
 	ClosedAt  time.Time `json:"closed_at,omitzero"`
 	Notes     string    `json:"notes,omitempty"`
 	Labels    []string  `json:"labels,omitempty"`
+	// DueAt is bd's optional due date (`bd create --due`); ExternalRef
+	// is bd's free-form link to a record elsewhere (`--external-ref`).
+	// wyk reads both for the handoff hook payload and WRITES
+	// ExternalRef with what the hook returns (internal/hooks), so a
+	// later event for the same issue can find the external task.
+	DueAt       time.Time `json:"due_at,omitzero"`
+	ExternalRef string    `json:"external_ref,omitempty"`
 
 	// Dependencies is the issue's outgoing edge set, which bd embeds
 	// inline in `bd list --json` and `bd ready --json` (but NOT in

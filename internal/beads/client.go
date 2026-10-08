@@ -498,6 +498,9 @@ type CreateOptions struct {
 	// we want to make impossible at creation rather than chase
 	// down later.
 	Assignee string
+	// Due is forwarded as bd's `--due` (e.g. "+1d", "2026-01-15").
+	// Empty means no due date.
+	Due string
 }
 
 // Create runs `bd create <title> --silent` with the given options
@@ -517,6 +520,9 @@ func (c *Client) Create(ctx context.Context, opts CreateOptions) (string, error)
 	if opts.Assignee != "" {
 		args = append(args, "--assignee="+opts.Assignee)
 	}
+	if opts.Due != "" {
+		args = append(args, "--due="+opts.Due)
+	}
 	out, err := c.run(ctx, nil, args...)
 	if err != nil {
 		return "", err
@@ -533,6 +539,15 @@ func (c *Client) AddLabel(ctx context.Context, id, label string) error {
 // RemoveLabel removes a label from an issue (`bd label remove <id> <label>`).
 func (c *Client) RemoveLabel(ctx context.Context, id, label string) error {
 	_, err := c.run(ctx, nil, "label", "remove", id, label, autoCommitFlag)
+	return err
+}
+
+// SetExternalRef sets bd's external_ref field on an issue
+// (`bd update <id> --external-ref=<ref>`). The handoff hook stores
+// the reference the hook script returned here, so it rides along in
+// every `bd show`/`list --json` and is echoed back on later events.
+func (c *Client) SetExternalRef(ctx context.Context, id, ref string) error {
+	_, err := c.run(ctx, nil, "update", id, "--external-ref="+ref, autoCommitFlag)
 	return err
 }
 
