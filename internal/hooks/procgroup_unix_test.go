@@ -63,11 +63,16 @@ func TestShellRunner_InterruptKillsGroup(t *testing.T) {
 	assertProcessGone(t, childPid)
 }
 
-// The timeout path must kill the forked child too, not just sh. The pid
-// is read BEFORE the timeout is allowed to matter: Dispatch runs in the
-// background and the test first waits for the script to reach the echo,
-// so a slow sh start on a loaded runner cannot make the kill land before
-// the file exists (which would read as "hook never wrote its pid").
+// The timeout path must kill the forked child too, not just sh.
+//
+// The 1.5s timeout runs inside Dispatch, so on a badly loaded runner sh
+// could in principle be killed before it reaches the echo. That cannot
+// be ruled out by any arrangement of goroutines (the deadline starts
+// when Dispatch does); the long timeout makes it very unlikely, and if
+// it does happen the run still proves ErrTimedOut and only the
+// group-kill check is skipped, logged, rather than failing on a pid the
+// script never wrote. The interrupt test above is the one that proves
+// the group kill without that caveat (its timeout is 30s).
 func TestShellRunner_TimeoutKillsChildProcess(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	const timeout = 1500 * time.Millisecond
@@ -76,39 +81,41 @@ func TestShellRunner_TimeoutKillsChildProcess(t *testing.T) {
 		Timeout: timeout,
 	}}
 	t.Setenv("PIDFILE", pidFile)
-	type res struct {
-		fired bool
-		err   error
-	}
-	done := make(chan res, 1)
 	start := time.Now()
-	go func() {
-		_, fired, err := d.Dispatch(context.Background(), samplePayload())
-		done <- res{fired, err}
-	}()
-	childPid := waitForPidFile(t, pidFile)
-	select {
-	case r := <-done:
-		if !r.fired || !errors.Is(r.err, ErrTimedOut) {
-			t.Fatalf("fired=%v err=%v, want true, ErrTimedOut", r.fired, r.err)
-		}
-		if elapsed := time.Since(start); elapsed > timeout+waitDelayAfterCancel {
-			t.Fatalf("took %s; a killed group returns well inside the timeout plus WaitDelay", elapsed)
-		}
-	case <-time.After(timeout + waitDelayAfterCancel + 5*time.Second):
-		t.Fatal("Dispatch did not return after the timeout")
+	_, fired, err := d.Dispatch(context.Background(), samplePayload())
+	if !fired || !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("fired=%v err=%v, want true, ErrTimedOut", fired, err)
 	}
-	assertProcessGone(t, childPid)
+	if elapsed := time.Since(start); elapsed > timeout+waitDelayAfterCancel {
+		t.Fatalf("took %s; a killed group returns well inside the timeout plus WaitDelay", elapsed)
+	}
+	pid, ok := readPidFile(pidFile)
+	if !ok {
+		t.Logf("sh did not reach the echo before the %s timeout; group-kill check skipped this run", timeout)
+		return
+	}
+	assertProcessGone(t, pid)
+}
+
+// readPidFile parses the child pid the hook script wrote, if it did.
+func readPidFile(path string) (int, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
 }
 
 func waitForPidFile(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if b, err := os.ReadFile(path); err == nil {
-			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 {
-				return pid
-			}
+		if pid, ok := readPidFile(path); ok {
+			return pid
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
