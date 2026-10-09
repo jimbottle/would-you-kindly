@@ -414,10 +414,11 @@ func (e *errFenced) Error() string {
 
 // isNotYours reports whether err means "someone else's — pick another":
 // a live lease or a fence. Both map to exit 3.
+//
+// Defined via refusalJSON so there is one classifier: anything that gets
+// a refusal document gets exit 3, and vice versa.
 func isNotYours(err error) bool {
-	var held *errHeldByOther
-	var fenced *errFenced
-	return errors.As(err, &held) || errors.As(err, &fenced)
+	return refusalJSON(claimOutcome{}, err) != nil
 }
 
 // claimRefusal is the -json document for a "not yours" refusal (exit 3):
