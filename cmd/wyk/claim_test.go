@@ -587,15 +587,29 @@ func TestClaimIssue_ClosedDuringClearRestoresAssigneeAndSaysSo(t *testing.T) {
 	}
 }
 
-func TestRunClaim_FencedRefusalEmitsJSON(t *testing.T) {
-	// Exit 3 under -json must come with something to parse.
+func TestRefusalJSON(t *testing.T) {
+	// Drive the real refusals out of claimIssue, then the exact document
+	// runClaim emits for them under -json (exit 3).
+	f := &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Labels: []string{"human"}}}
+	out, err := claimIssue(context.Background(), f, "x-1", baseOpts())
+	doc := refusalJSON(out, err)
+	if doc == nil || doc.FencedBy != "human" || doc.HeldBy != "" {
+		t.Fatalf("fenced refusal: doc=%+v err=%v", doc, err)
+	}
 	var buf strings.Builder
-	fenced := &errFenced{id: "x-1", label: "human"}
-	_ = emitJSON(&buf, struct {
-		claimOutcome
-		FencedBy string `json:"fenced_by"`
-	}{claimOutcome{ID: "x-1"}, fenced.label}, true)
-	if !strings.Contains(buf.String(), `"fenced_by":"human"`) {
-		t.Fatalf("json=%s", buf.String())
+	if err := emitJSON(&buf, doc, true); err != nil || !strings.Contains(buf.String(), `"fenced_by":"human"`) || strings.Contains(buf.String(), "held_by") {
+		t.Fatalf("json=%s err=%v", buf.String(), err)
+	}
+
+	f = &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "in_progress", Metadata: beads.Metadata{
+		lease.KeyOwner: "codex-1", lease.KeyUntil: stampAt(claimNow.Add(time.Hour))}}}
+	out, err = claimIssue(context.Background(), f, "x-1", baseOpts())
+	doc = refusalJSON(out, err)
+	if doc == nil || doc.HeldBy != "codex-1" || doc.HeldUntil.IsZero() || doc.FencedBy != "" {
+		t.Fatalf("held refusal: doc=%+v err=%v", doc, err)
+	}
+
+	if refusalJSON(claimOutcome{}, errors.New("bd exploded")) != nil {
+		t.Fatal("a plain error is not a refusal")
 	}
 }

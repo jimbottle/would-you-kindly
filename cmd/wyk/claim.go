@@ -420,6 +420,39 @@ func isNotYours(err error) bool {
 	return errors.As(err, &held) || errors.As(err, &fenced)
 }
 
+// claimRefusal is the -json document for a "not yours" refusal (exit 3):
+// the outcome plus who holds it (a live lease) or which label fences it.
+type claimRefusal struct {
+	claimOutcome
+	HeldBy    string    `json:"held_by,omitempty"`
+	HeldUntil time.Time `json:"held_until,omitzero"`
+	FencedBy  string    `json:"fenced_by,omitempty"`
+}
+
+// refusalJSON returns the -json document for a "not yours" refusal, or
+// nil when err is not one — so runClaim's exit-3 path and its JSON are
+// decided in one place a test can drive.
+func refusalJSON(out claimOutcome, err error) *claimRefusal {
+	var held *errHeldByOther
+	if errors.As(err, &held) {
+		return &claimRefusal{claimOutcome: out, HeldBy: orUnrecordedRaw(held.l.Owner), HeldUntil: held.l.Until}
+	}
+	var fenced *errFenced
+	if errors.As(err, &fenced) {
+		return &claimRefusal{claimOutcome: out, FencedBy: fenced.label}
+	}
+	return nil
+}
+
+// orUnrecordedRaw keeps held_by non-empty in JSON for a holder with no
+// recorded name, without the terminal sanitizing (JSON escapes it).
+func orUnrecordedRaw(s string) string {
+	if s == "" {
+		return "unrecorded"
+	}
+	return s
+}
+
 // takeoverNote is the audit line left on an issue whose lease was
 // taken over. Previous owner and lapse time are what the next reader
 // needs to understand why the assignee changed under them.
@@ -675,24 +708,9 @@ func runClaim(args []string) int {
 	out.IdentitySource = source
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wyk claim:", err)
-		var held *errHeldByOther
-		if errors.As(err, &held) {
+		if doc := refusalJSON(out, err); doc != nil {
 			if *asJSON {
-				_ = emitJSON(os.Stdout, struct {
-					claimOutcome
-					HeldBy string    `json:"held_by"`
-					Until  time.Time `json:"held_until,omitzero"`
-				}{out, held.l.Owner, held.l.Until}, *compact)
-			}
-			return exitHeldByOther
-		}
-		var fenced *errFenced
-		if errors.As(err, &fenced) {
-			if *asJSON {
-				_ = emitJSON(os.Stdout, struct {
-					claimOutcome
-					FencedBy string `json:"fenced_by"`
-				}{out, fenced.label}, *compact)
+				_ = emitJSON(os.Stdout, doc, *compact)
 			}
 			return exitHeldByOther
 		}
