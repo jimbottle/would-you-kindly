@@ -137,7 +137,7 @@ wyk claim -force would-you-kindly-1k2j     # take over a LIVE lease (leaves a no
 | `-renew` | `false` | extend a lease I already hold (with no <id>: every lease I hold, across the configured scope) |
 | `-release` | `false` | give the issue back: clear my lease, unassign, and reopen it |
 | `-force` | `false` | take over (or release) a LIVE lease held by someone else, or claim an issue labelled human / agent-handoff — leaves a note naming the holder; use only when you know the holder is gone |
-| `-json` | `false` | emit the outcome as JSON ({id, action, owner, until, branch, previous_owner}; a refusal adds held_by / held_until) |
+| `-json` | `false` | emit the outcome as JSON ({id, action, owner, until, branch, previous_owner}; a refusal adds held_by / held_until, or fenced_by for a human / agent-handoff label) |
 | `-compact` | `false` | with -json, emit non-indented JSON |
 
 ## `wyk next`

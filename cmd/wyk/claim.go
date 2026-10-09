@@ -334,8 +334,13 @@ func claimUnleased(ctx context.Context, c claimClient, i beads.Issue, o claimOpt
 			return out, fmt.Errorf("cleared the assignment on %s but could not re-read it: %w", id, err)
 		}
 		if cur.Status != i.Status {
-			repairCleared(ctx, c, cur, i, prevAssignee, o.me)
-			return out, &errHeldByOther{id: id, l: lease.Of(cur, o.now, o.ttl), now: o.now}
+			repairCleared(ctx, c, cur, prevAssignee, o.me)
+			if l := lease.Of(cur, o.now, o.ttl); l.State == lease.Live {
+				return out, &errHeldByOther{id: id, l: l, now: o.now}
+			}
+			// Closed, deferred, blocked… under us: not someone's checkout,
+			// just no longer claimable as read.
+			return out, fmt.Errorf("%s changed to status %s while claiming it; not claimed", id, cur.Status)
 		}
 	}
 	if err := c.Claim(ctx, id, o.me, stamp); err != nil {
@@ -343,7 +348,7 @@ func claimUnleased(ctx context.Context, c claimClient, i beads.Issue, o claimOpt
 		if rerr != nil {
 			return out, err
 		}
-		repairCleared(ctx, c, cur, i, prevAssignee, o.me)
+		repairCleared(ctx, c, cur, prevAssignee, o.me)
 		if l := lease.Of(cur, o.now, o.ttl); l.State == lease.Live && l.Owner != o.me {
 			return out, &errHeldByOther{id: id, l: l, now: o.now}
 		}
@@ -363,26 +368,32 @@ func claimUnleased(ctx context.Context, c claimClient, i beads.Issue, o claimOpt
 }
 
 // repairCleared undoes collateral damage from our assignee clear, given a
-// fresh read cur of an issue we read earlier as orig:
+// fresh read cur of the issue:
 //
 //   - someone checked it out meanwhile (in_progress, empty assignee, a
 //     wyk lease owner in metadata) → our clear wiped THEIR assignee: give
 //     it back, so their heartbeat keeps finding and renewing it;
-//   - nobody took it (still orig's status, still unassigned) → our claim
-//     failed after the clear: restore the original assignment rather
-//     than orphan the issue.
+//   - nobody checked it out (still open, or closed / deferred / blocked
+//     meanwhile) → our clear is the only change to the assignment:
+//     restore the original assignee rather than orphan the issue.
 //
 // Best-effort: a failed repair leaves the issue as the next read finds it.
-func repairCleared(ctx context.Context, c claimClient, cur, orig beads.Issue, prevAssignee, me string) {
+func repairCleared(ctx context.Context, c claimClient, cur beads.Issue, prevAssignee, me string) {
 	if prevAssignee == "" || cur.Assignee != "" {
 		return
 	}
-	if cur.Status == orig.Status {
+	switch cur.Status {
+	case "in_progress", "hooked":
+		// Someone checked it out; give them back the assignee our clear
+		// wiped, when the stamp says who they are.
+		if owner := cur.Metadata[lease.KeyOwner]; owner != "" && owner != me {
+			_ = c.SetAssignee(ctx, cur.ID, owner)
+		}
+	default:
+		// Nobody checked it out (still open, or closed / deferred / blocked
+		// meanwhile): our clear is the only change to the assignment, so
+		// undo it.
 		_ = c.SetAssignee(ctx, cur.ID, prevAssignee)
-		return
-	}
-	if owner := cur.Metadata[lease.KeyOwner]; owner != "" && owner != me && cur.Status == "in_progress" {
-		_ = c.SetAssignee(ctx, cur.ID, owner)
 	}
 }
 
@@ -574,7 +585,7 @@ func runClaim(args []string) int {
 	renew := fs.Bool("renew", false, "extend a lease I already hold (with no <id>: every lease I hold, across the configured scope)")
 	release := fs.Bool("release", false, "give the issue back: clear my lease, unassign, and reopen it")
 	force := fs.Bool("force", false, "take over (or release) a LIVE lease held by someone else, or claim an issue labelled human / agent-handoff — leaves a note naming the holder; use only when you know the holder is gone")
-	asJSON := fs.Bool("json", false, "emit the outcome as JSON ({id, action, owner, until, branch, previous_owner})")
+	asJSON := fs.Bool("json", false, "emit the outcome as JSON ({id, action, owner, until, branch, previous_owner}; a refusal adds held_by / held_until, or fenced_by)")
 	compact := fs.Bool("compact", cfg.CompactJSON, "with -json, emit non-indented JSON")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
@@ -675,7 +686,14 @@ func runClaim(args []string) int {
 			}
 			return exitHeldByOther
 		}
-		if isNotYours(err) {
+		var fenced *errFenced
+		if errors.As(err, &fenced) {
+			if *asJSON {
+				_ = emitJSON(os.Stdout, struct {
+					claimOutcome
+					FencedBy string `json:"fenced_by"`
+				}{out, fenced.label}, *compact)
+			}
 			return exitHeldByOther
 		}
 		if out.Action == actionTookOver {

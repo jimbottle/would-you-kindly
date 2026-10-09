@@ -147,7 +147,7 @@ var cliSubcommandDocs = []cliSubcommandDoc{
 			{Name: "-renew", Default: "false", Description: "extend a lease I already hold (with no <id>: every lease I hold, across the configured scope)"},
 			{Name: "-release", Default: "false", Description: "give the issue back: clear my lease, unassign, and reopen it"},
 			{Name: "-force", Default: "false", Description: "take over (or release) a LIVE lease held by someone else, or claim an issue labelled human / agent-handoff — leaves a note naming the holder; use only when you know the holder is gone"},
-			{Name: "-json", Default: "false", Description: "emit the outcome as JSON ({id, action, owner, until, branch, previous_owner}; a refusal adds held_by / held_until)"},
+			{Name: "-json", Default: "false", Description: "emit the outcome as JSON ({id, action, owner, until, branch, previous_owner}; a refusal adds held_by / held_until, or fenced_by for a human / agent-handoff label)"},
 			{Name: "-compact", Default: "false", Description: "with -json, emit non-indented JSON"},
 		},
 	},

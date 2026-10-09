@@ -565,3 +565,37 @@ func TestClaimIssue_FencedLabelsNeedForce(t *testing.T) {
 		t.Fatalf("own lease on a fenced issue: out=%+v err=%v", out, err)
 	}
 }
+
+func TestClaimIssue_ClosedDuringClearRestoresAssigneeAndSaysSo(t *testing.T) {
+	// Someone closes the issue between our read and our clear: not a
+	// checkout, so restore the assignee and report the status change —
+	// not "held by an unrecorded holder".
+	f := &assignTracker{fakeClaimClient: &fakeClaimClient{issue: beads.Issue{ID: "x-1", Status: "open", Assignee: "jimbottle"}}}
+	shows := 0
+	rc := &racingClient{fakeClaimClient: f.fakeClaimClient, onShow: func() {
+		shows++
+		if shows == 2 {
+			f.issue = beads.Issue{ID: "x-1", Status: "closed"}
+		}
+	}}
+	_, err := claimIssue(context.Background(), &trackedRacer{rc, f}, "x-1", baseOpts())
+	if err == nil || isNotYours(err) || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("err=%v, want a plain status-change error", err)
+	}
+	if last := f.calls[len(f.calls)-1]; last != "assign:jimbottle" {
+		t.Fatalf("calls=%v, want the assignee restored", f.calls)
+	}
+}
+
+func TestRunClaim_FencedRefusalEmitsJSON(t *testing.T) {
+	// Exit 3 under -json must come with something to parse.
+	var buf strings.Builder
+	fenced := &errFenced{id: "x-1", label: "human"}
+	_ = emitJSON(&buf, struct {
+		claimOutcome
+		FencedBy string `json:"fenced_by"`
+	}{claimOutcome{ID: "x-1"}, fenced.label}, true)
+	if !strings.Contains(buf.String(), `"fenced_by":"human"`) {
+		t.Fatalf("json=%s", buf.String())
+	}
+}
