@@ -257,7 +257,8 @@ func claimIssue(ctx context.Context, c claimClient, id string, o claimOpts) (cla
 	// ours to check out, whatever bd's assignee says. `wyk next` never
 	// offers them; a direct `wyk claim` needs -force. My own existing
 	// lease is exempt so renewing it keeps working.
-	if !o.force && (i.IsHuman() || i.IsAgentHandoff()) && !(l.State != lease.None && l.Owner == o.me) {
+	mine := l.State != lease.None && l.Owner == o.me
+	if !o.force && !mine && (i.IsHuman() || i.IsAgentHandoff()) {
 		label := "human"
 		if !i.IsHuman() {
 			label = beads.LabelAgentHandoff
